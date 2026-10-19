@@ -145,7 +145,7 @@
         }
       }
     });
-    const tools = A.el('div', { class: 'tools' }, A.el('button', { id: 'theme-btn', onclick: cycleTheme }, ''));
+    const tools = A.el('div', { class: 'tools' }, A.el('a', { class: 'btn', href: 'glossary.html' }, '术语表'), A.el('button', { id: 'theme-btn', onclick: cycleTheme }, ''));
     side.append(tools);
     updateThemeBtn();
     const mb = A.el('button', { id: 'menu-btn', onclick: () => side.classList.toggle('open') }, '☰ 目录');
@@ -188,6 +188,47 @@
       btn.onclick = () => { open = !open; br.forEach((d) => (d.open = open)); btn.textContent = open ? '只看主干' : '展开全部支线'; };
       h.before(A.el('div', { class: 'hist-bar' }, A.el('span', { class: 'small muted' }, '主干是一条因果链；支线是被淘汰的路线和争论，默认折叠。'), btn));
     });
+  }
+
+  /* ---------- concepts: <dfn data-t="id"> defines, <span class="term" data-t="id"> refers (registry: assets/terms.js) ---------- */
+  function initTerms() {
+    if (!A.$('[data-t], .prereq, #glossary')) return;
+    const go = () => {
+      const T = window.ATLAS_TERMS || {};
+      A.terms = T;
+      const here = currentSlug();
+      // rewritten chapters carry <dfn id="t-…">; older pages only have section anchors
+      const href = (id) => { const at = (T[id] && T[id].at) || ''; const [slug, sec] = at.split('#'); const c = A.ch(slug); const hash = c && c.st === 'new' ? 't-' + id : sec || ''; return (slug === here ? '' : slug + '.html') + (hash ? '#' + hash : ''); };
+      A.termHref = href;
+      A.$$('dfn[data-t]').forEach((d) => { if (!d.id) d.id = 't-' + d.dataset.t; d.classList.add('dfn'); });
+      A.$$('.term[data-t]').forEach((el) => {
+        const id = el.dataset.t, def = T[id];
+        if (!def) { el.classList.add('term-missing'); return; }
+        el.tabIndex = 0;
+        const c = A.ch(def.at.split('#')[0]);
+        const html = `<b>${def.t}</b> <span style="color:var(--muted)">${def.en}</span><br>${def.d}<br><span style="color:var(--muted);font-size:12px">定义在${c ? ' ' + (A.chLabel(c) || '') + ' · ' + c.t : '本页'}，点击跳转</span>`;
+        const show = (e) => { const r = el.getBoundingClientRect(); A.tip.show(html, e && e.clientX ? e.clientX : r.left, e && e.clientY ? e.clientY : r.bottom); };
+        el.addEventListener('mouseenter', show); el.addEventListener('focus', show);
+        el.addEventListener('mouseleave', () => A.tip.hide()); el.addEventListener('blur', () => A.tip.hide());
+        el.addEventListener('click', () => { A.tip.hide(); location.href = href(id); });
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.href = href(id); });
+      });
+      A.$$('.prereq').forEach((box) => {
+        const ds = A.$$('dfn[data-t]');
+        if (!ds.length) return;
+        const seen = new Set();
+        const list = A.el('div', { class: 'prereq-new' }, A.el('span', { class: 'lab' }, '本章会从零定义：'));
+        ds.forEach((d) => { if (seen.has(d.dataset.t)) return; seen.add(d.dataset.t); list.append(A.el('a', { href: '#t-' + d.dataset.t }, (T[d.dataset.t] || {}).t || d.textContent)); });
+        box.append(list);
+      });
+      if (location.hash.startsWith('#t-')) { const tg = document.getElementById(location.hash.slice(1)); if (tg) tg.scrollIntoView({ block: 'center' }); }
+      document.dispatchEvent(new Event('atlas-terms'));
+    };
+    if (window.ATLAS_TERMS) { go(); return; }
+    const s = document.createElement('script');
+    s.src = 'assets/terms.js' + (document.body.dataset.v ? '?v=' + document.body.dataset.v : '');
+    s.onload = go;
+    document.head.append(s);
   }
 
   /* ---------- math (KaTeX auto-render; delimiters \( \) and \[ \]) ---------- */
@@ -235,6 +276,7 @@
     buildNav();
     fillXrefs();
     initHistory();
+    initTerms();
     renderMath();
     loadDemos();
   });

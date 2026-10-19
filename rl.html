@@ -18,35 +18,121 @@
 
 <div class="bridge">SFT 和偏好优化（第 <a class="xref" data-ref="sft"></a> 章）都在模仿：模仿示范答案，或者模仿“更好的那个”回答。模仿有天花板：示范里没有的解法学不到，模型自己犯的错也没人纠正。这一章换一个思路：不给答案，只给对错。</div>
 
+<div class="prereq">
+  <ul>
+    <li>语言模型怎么逐 token 生成、交叉熵损失是什么：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>softmax 把分数变成概率：第 <a class="xref" data-ref="attention"></a> 章</li>
+    <li>梯度下降、期望与方差：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>不需要任何强化学习背景。下面「从零开始」一节会把用到的 RL 概念全部讲一遍。</li>
+  </ul>
+</div>
+
 <h2 id="why">为什么需要强化学习</h2>
 <p>把一道数学题交给模型。监督学习的做法是准备一份标准解答，让模型逐 token 地模仿它。这有三个问题：</p>
 <ul>
   <li><b>示范决定上限。</b>模型最多学到示范的水平。题目越难，越难写出足够多、足够好的示范。</li>
   <li><b>正确的解法不止一种。</b>示范只给了其中一条路。模型自己想出另一条同样正确的路，在交叉熵损失看来反而是“错”的。</li>
-  <li><b>暴露偏差（exposure bias）。</b>训练时模型永远看到的是正确的前文，推理时却要接着自己写的、可能已经出错的前文往下写。它从没练过“写错之后怎么办”。</li>
+  <li><b><dfn data-t="exposure-bias">暴露偏差</dfn>（exposure bias）。</b>训练时模型永远看到的是正确的前文，推理时却要接着自己写的、可能已经出错的前文往下写。它从没练过“写错之后怎么办”。</li>
 </ul>
 <p>强化学习把训练数据换成模型自己的输出：对同一道题采样几个回答，检查哪个答对了，提高答对回答的概率，降低答错回答的概率。模型学的是自己会走到的状态，示范也不再是上限。AlphaGo 靠自我对弈超过人类棋手，用的就是这个逻辑。</p>
-<p>放到语言模型上，强化学习的各个概念是这样对应的：</p>
-<div class="tablewrap"><table>
-  <tr><th>RL 概念</th><th>在语言模型里</th></tr>
-  <tr><td>策略 \(\pi_\theta\)</td><td>语言模型本身：给定前文，输出下一个 token 的分布</td></tr>
-  <tr><td>状态 \(s_t\)</td><td>题目 \(q\) 加上已经生成的前缀 \(y_{&lt;t}\)</td></tr>
-  <tr><td>动作 \(a_t\)</td><td>下一个 token \(y_t\)，动作空间就是整个词表（十几万个）</td></tr>
-  <tr><td>一局（episode）</td><td>生成一条完整的回答 \(y\)；智能体任务里是一整段“思考—调用工具—看结果”的轨迹</td></tr>
-  <tr><td>奖励 \(R\)</td><td>通常只在最后给一次：答案对不对、测试过没过、任务完成没有。中间的 token 没有奖励（稀疏奖励）</td></tr>
-</table></div>
+<p>强化学习有自己的一套概念和记号。下一节先用一个最小的例子把它们从零讲一遍；已经熟悉 RL 的读者可以直接跳到<a href="#pg">「一整条回答的策略梯度」</a>。</p>
 
-<h2 id="pg">策略梯度：一个公式说清“试错”</h2>
-<p>目标是让回答的期望奖励最大：</p>
+<h2 id="basics" data-short="RL 从零开始">从零开始：强化学习的基本概念</h2>
+<p>这一节不涉及语言模型。用一个只有四个按钮的游戏，把后面每一节都要用到的概念按顺序讲一遍：策略、奖励、策略梯度、基线与优势、熵、轨迹与价值函数、重要性采样与 KL 散度。每个概念先给直觉，再给公式。</p>
+
+<h3 id="rl0-game">一个只有四个按钮的游戏</h3>
+<p>面前有四个按钮 A、B、C、D。每按一次，按钮以一个固定但你不知道的概率给你 1 分，否则 0 分。你可以按几百次，目标是总分尽量高。这是强化学习最小的形态，叫多臂老虎机（multi-armed bandit）。</p>
+<ul>
+  <li>做决定的一方叫<dfn data-t="agent">智能体</dfn>（agent），这里就是你；给出反馈的一方叫<dfn data-t="environment">环境</dfn>（environment），这里就是按钮。</li>
+  <li><dfn data-t="policy">策略</dfn>（policy）是“按哪个按钮”的<b>概率分布</b> \(\pi(a)\)：比如 40% 按 A、30% 按 B、20% 按 C、10% 按 D。它带随机性，这一点后面很重要。用参数 \(\theta\) 表示：给每个按钮一个分数 \(\theta_a\)，再用 <span class="term" data-t="softmax">softmax</span> 变成概率：
+  \[ \pi_\theta(a) = \frac{e^{\theta_a}}{\sum_{b} e^{\theta_b}} \]
+  语言模型输出下一个 token 的分布，用的是完全相同的结构，只是“按钮”换成了词表里的十几万个 token。</li>
+  <li>每按一次得到的分数是<dfn data-t="reward">奖励</dfn> \(R\)。按钮 \(a\) 的得分概率记作 \(p_a\)，但智能体不知道它。</li>
+  <li>目标是让<dfn data-t="objective">期望奖励</dfn>最大：\(J(\theta) = \mathbb{E}_{a\sim\pi_\theta}[R] = \sum_a \pi_\theta(a)\,p_a\)。如果知道 \(p_a\)，答案很简单：永远按得分率最高的那个。难点在于只能靠尝试去了解它们。</li>
+</ul>
+<p>和监督学习对比，最大的不同在这里：没有人告诉你“正确答案是 C”。你只知道自己按了什么、得了几分。</p>
+
+<h3 id="rl0-pg">试错的数学：策略梯度</h3>
+<p>直觉：按了一个按钮、得了分，就把这个按钮的概率调高一点。把它写成梯度上升，需要知道 \(J\) 对 \(\theta\) 的梯度。</p>
+<p>先算一个小零件。softmax 策略的对数概率对参数求导：</p>
+\[ \frac{\partial}{\partial \theta_j}\log\pi_\theta(a) = \frac{\partial}{\partial \theta_j}\Big(\theta_a - \log\sum_b e^{\theta_b}\Big) = \mathbb 1[j=a] - \pi_\theta(j) \]
+<span class="eqnote">被选中的按钮：1 − 它的概率（为正）；没被选中的按钮：−它的概率（为负）</span>
+<p>再算 \(J\) 的梯度。\(J = \sum_a \pi_\theta(a)\,p_a\)，\(p_a\) 和 \(\theta\) 无关，利用 \(\nabla\pi = \pi\,\nabla\log\pi\)：</p>
+\[ \begin{aligned} \nabla_\theta J &= \sum_a p_a\,\nabla_\theta\pi_\theta(a) = \sum_a \pi_\theta(a)\,p_a\,\nabla_\theta\log\pi_\theta(a) \\ &= \mathbb{E}_{a\sim\pi_\theta}\big[\,R\;\nabla_\theta\log\pi_\theta(a)\,\big] \end{aligned} \]
+<p>最后一步把 \(p_a\) 换成了 \(R\)：在按下 \(a\) 的条件下，\(R\) 的期望正是 \(p_a\)。这个式子是期望，所以不需要知道 \(p_a\)：按一次（采一个样本），用 \(R\cdot\nabla\log\pi\) 当作梯度的估计就行。代入上面的小零件，一次更新是：</p>
+\[ \theta_j \leftarrow \theta_j + \alpha\, R\,\big(\mathbb 1[j=a] - \pi_\theta(j)\big) \]
+<p>按下的按钮分数变大，其它按钮按各自的概率变小，得分 \(R\) 越高，调得越多。这就是<dfn data-t="policy-gradient">策略梯度</dfn>，最早的形式叫 REINFORCE（Williams, 1992）。这一章后面的 PPO、GRPO、DAPO……全都是它的改进版。</p>
+
+<h3 id="rl0-baseline">基线与优势：“比平均好多少”比“得了几分”更好用</h3>
+<p>上面的更新有个毛病。假设奖励改成“按到得 10 分、没按到得 5 分”，总是正的。那么每按一次，按下的那个按钮都会被调高，哪怕它是最差的，只是好按钮被调高得多一些。正确的方向只能从“调高多少”的差别里慢慢平均出来，噪声很大。</p>
+<p>办法是减去一个<dfn data-t="baseline">基线</dfn>（baseline）\(b\)，通常取最近的平均得分，用 \(R - b\) 代替 \(R\)。这个差叫<dfn data-t="advantage">优势</dfn>（advantage）：</p>
+\[ A = R - b, \qquad \theta_j \leftarrow \theta_j + \alpha\, A\,\big(\mathbb 1[j=a] - \pi_\theta(j)\big) \]
+<p>比平均好的按压（\(A&gt;0\)）被加强，比平均差的（\(A&lt;0\)）被削弱。基线不改变梯度的期望：因为 \(\sum_a\pi_\theta(a)=1\)，\(\mathbb E[b\,\nabla\log\pi] = b\sum_a\nabla\pi_\theta(a) = b\,\nabla 1 = 0\)。它改变的是<dfn data-t="gradient-variance">梯度估计的方差</dfn>：每次估计的平均方向不变，但波动小得多，学得更快、更稳。下面同一组设置并行跑 40 次，直接比较有没有基线：</p>
+<div data-demo="bandit-pg" class="bleed"></div>
+
+<h3 id="rl0-entropy">探索与熵</h3>
+<p>演示里把学习率调大、把初始偏好调向 A，会看到一部分运行很快就几乎只按 A 或 B，再也不去试 C。原因是<dfn data-t="exploration">探索与利用</dfn>的矛盾：利用是选目前看来最好的，探索是去试别的、看会不会更好。策略一旦变得几乎确定，就不再探索，早期的运气就变成了永久的选择。</p>
+<p>衡量策略“还有多随机”的量是<dfn data-t="entropy">熵</dfn>：</p>
+\[ H(\pi) = -\sum_a \pi(a)\log_2\pi(a) \]
+<span class="eqnote">四个按钮完全均匀时 H = 2 比特；总按同一个时 H = 0</span>
+<p>训练中熵过早降到接近 0，叫<dfn data-t="entropy-collapse">熵塌缩</dfn>（entropy collapse）。在语言模型上，它表现为模型总用同一种思路解题、不再尝试别的方法。后面 DAPO 的一项主要改进就是为了防止它。</p>
+
+<h3 id="rl0-steps">从一步到很多步：轨迹、回报与功劳分配</h3>
+<p>按钮游戏按一下就结束。大多数任务要连续做很多决定：走迷宫、下棋，或者一个 token 一个 token 地写完一条回答。这时多了几个概念：</p>
+<ul>
+  <li><dfn data-t="state">状态</dfn> \(s_t\)：智能体在第 \(t\) 步能看到的全部信息。策略变成条件分布 \(\pi_\theta(a_t\mid s_t)\)：看到什么状态，就给出各个动作的概率。</li>
+  <li><dfn data-t="trajectory">轨迹</dfn>（trajectory，也叫一局 episode）：从开始到结束的整个序列 \(s_0, a_0, r_0, s_1, a_1, r_1, \dots\)。让当前策略实际跑一局、产生轨迹，叫<dfn data-t="rollout">采样</dfn>（rollout）。</li>
+  <li><dfn data-t="return">回报</dfn>（return）：从第 \(t\) 步到结束拿到的奖励之和 \(G_t = \sum_{k\ge t}\gamma^{k-t} r_k\)，\(\gamma\le 1\) 是折扣。语言模型通常只在最后给一次奖励、取 \(\gamma=1\)，回报就是那一个分数。</li>
+</ul>
+<p>多步带来的核心难题是<dfn data-t="credit">功劳分配</dfn>（credit assignment）：一盘棋走了 60 步才分出胜负，赢了是哪几步的功劳？REINFORCE 的做法很粗暴：同一局里每个动作分到同样的回报，好棋坏棋一起被加强，靠大量对局把噪声平均掉。</p>
+<p>更精细的做法是学一个<dfn data-t="value">价值函数</dfn>（value function）：</p>
+\[ V(s) = \mathbb E_{\pi}\big[\,G_t \mid s_t = s\,\big], \qquad Q(s,a) = \mathbb E_{\pi}\big[\,G_t \mid s_t = s,\ a_t = a\,\big] \]
+<span class="eqnote">V：从这个状态出发，平均能拿多少分；Q：先做动作 a、再按策略走，平均能拿多少分</span>
+<p>于是每一步都有自己的优势 \(A(s,a) = Q(s,a) - V(s)\)：这一步比“在这个状态下的平均选择”好多少。\(V(s)\) 正是按钮游戏里基线的推广，只是现在每个状态各有一个基线。用一个神经网络来学 \(V(s)\)，它叫<dfn data-t="critic">价值网络</dfn>（critic）；负责选动作的策略网络叫 actor，合起来叫 actor-critic。</p>
+<details class="deep"><summary>TD 误差与 GAE：价值网络怎么给每一步估计优势</summary><div class="in">
+<p>如果价值网络准确，那么“走一步之后实际的回报”与“走之前预期的回报”之差，就是这一步带来的意外收获，叫 TD 误差：</p>
+\[ \delta_t = r_t + \gamma V(s_{t+1}) - V(s_t) \]
+<p>只用 \(\delta_t\) 当优势，方差很小，但完全依赖 \(V\) 的准确程度（有偏差）；用整局的实际回报减 \(V(s_t)\)，没有偏差，但方差大。<dfn data-t="gae">GAE</dfn>（Generalized Advantage Estimation）在两者之间插值：</p>
+\[ \hat A_t^{\text{GAE}} = \sum_{l\ge 0} (\gamma\lambda)^l\,\delta_{t+l} \]
+<p>\(\lambda = 0\) 时就是一步的 TD 误差；\(\lambda = 1\) 时，各项相加后中间的 \(V\) 全部抵消，等于 \(G_t - V(s_t)\)。PPO 通常取 \(\lambda\approx 0.95\)。</p>
+<p><b>这个推导告诉我们：</b>价值网络的作用就是把一个末尾的奖励“分摊”到每一步上。语言模型的回答有几千个 token，奖励只在最后，要训好这样一个逐 token 的价值网络非常难。这正是后面 GRPO 干脆去掉它的原因。</p>
+</div></details>
+
+<h3 id="rl0-offpolicy">用旧数据学新策略：重要性采样与 KL 散度</h3>
+<p>策略梯度公式里的期望是对<b>当前</b>策略 \(\pi_\theta\) 取的：样本必须由当前策略产生，这叫<dfn data-t="on-policy">同策略</dfn>（on-policy）。可是采样很贵，我们希望一批样本能用来更新好几次。更新一次之后，手里的样本就来自“旧策略” \(\pi_{\text{old}}\) 了，这叫<dfn data-t="off-policy">离策略</dfn>（off-policy）。直接拿来用，梯度就是错的。</p>
+<p>修正方法是<dfn data-t="importance-sampling">重要性采样</dfn>（importance sampling）：给每个样本乘一个权重，等于新旧策略产生它的概率之比：</p>
+\[ \begin{aligned} \mathbb E_{a\sim\pi_\theta}\big[f(a)\big] &= \sum_a \pi_{\text{old}}(a)\,\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}\,f(a) \\ &= \mathbb E_{a\sim\pi_{\text{old}}}\Big[\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}\,f(a)\Big] \end{aligned} \]
+<p>直觉：新策略选 \(a\) 的概率是旧策略的两倍，那么旧样本里的每个 \(a\) 就算两次。这个等式严格成立，但有代价：两个策略差得越远，权重就越不均匀。新策略常选、旧策略很少选的动作，偶尔被抽到一次，就带着极大的权重，估计的波动随之暴涨。衡量“一批带权重的样本还相当于多少个普通样本”，用<dfn data-t="ess">有效样本量</dfn> \(\text{ESS} = (\sum w)^2/\sum w^2\)。</p>
+<p>衡量两个分布差多少，用<dfn data-t="kl">KL 散度</dfn>（Kullback–Leibler divergence）：</p>
+\[ D_{\text{KL}}(p\,\|\,q) = \sum_a p(a)\log\frac{p(a)}{q(a)} \]
+<span class="eqnote">恒 ≥ 0，两个分布相同时为 0；不对称：D(p‖q) 一般不等于 D(q‖p)</span>
+<p>由此得到一个原则：每次更新只在离旧策略不远（KL 小）的范围内进行，因为只有在这个范围内，用旧样本估计的梯度才可信。这个范围叫<dfn data-t="trust-region">信任域</dfn>（trust region）。下一节的 PPO 就是这个原则的一种简单实现。</p>
+<div data-demo="importance-sampling"></div>
+
+<h3 id="rl0-llm">放到语言模型上</h3>
+<p>把按钮游戏换成“写一条回答”，所有概念一一对应：</p>
+<div class="tablewrap"><table>
+  <tr><th>RL 概念</th><th>按钮游戏</th><th>在语言模型里</th></tr>
+  <tr><td><span class="term" data-t="policy">策略</span> \(\pi_\theta\)</td><td>按各个按钮的概率</td><td>语言模型本身：给定前文，输出下一个 token 的分布</td></tr>
+  <tr><td><span class="term" data-t="state">状态</span> \(s_t\)</td><td>（只有一个）</td><td>题目 \(q\) 加上已经生成的前缀 \(y_{&lt;t}\)</td></tr>
+  <tr><td>动作 \(a_t\)</td><td>按哪个按钮（4 个）</td><td>下一个 token \(y_t\)，动作空间就是整个词表（十几万个）</td></tr>
+  <tr><td><span class="term" data-t="trajectory">轨迹</span></td><td>按一次</td><td>一条完整的回答 \(y\)；智能体任务里是一整段“思考—调用工具—看结果”的过程</td></tr>
+  <tr><td><span class="term" data-t="reward">奖励</span> \(R\)</td><td>0 分或 1 分</td><td>通常只在最后给一次：答案对不对、测试过没过、任务完成没有</td></tr>
+  <tr><td><span class="term" data-t="environment">环境</span></td><td>按钮</td><td>判分程序；智能体任务里是终端、浏览器、代码仓库等沙盒</td></tr>
+</table></div>
+<p>和按钮游戏相比，难在三处：动作空间大（十几万个 token），轨迹长（几千步），奖励只在最后（功劳分配极难）。下面每一节都在应对其中一处。</p>
+
+<h2 id="pg">一整条回答的策略梯度</h2>
+<p>按钮游戏里的“按一次”，在语言模型里变成“写一整条回答”。目标是让回答的<span class="term" data-t="objective">期望奖励</span>最大：</p>
 \[ J(\theta) = \mathbb{E}_{q\sim\mathcal D,\; y\sim\pi_\theta(\cdot\mid q)}\big[\,R(q, y)\,\big] \]
-<p>难点在于 \(y\) 是从模型里<b>采样</b>出来的，采样这一步不可导，没法直接对 \(R\) 反向传播。<b>对数导数技巧</b>（log-derivative trick）绕开了这一点，得到策略梯度：</p>
+<p>\(q\) 是从题库 \(\mathcal D\) 里抽的题目，\(y\) 是模型采样出的回答。和按钮游戏一样，采样这一步不可导，靠对数导数技巧得到<span class="term" data-t="policy-gradient">策略梯度</span>。不同的是，一条回答的概率是逐 token 概率的乘积，所以梯度变成对每个 token 求和：</p>
 \[ \nabla_\theta J = \mathbb{E}\Big[\,\big(R(q,y) - b(q)\big)\sum_{t} \nabla_\theta \log \pi_\theta(y_t\mid q, y_{&lt;t})\Big] \]
 <span class="eqnote">采样一条回答，把它每个 token 的对数概率往上推，推多少由“它比基线好多少”决定</span>
-<p>直觉很简单：奖励高于基线 \(b\) 的回答，整条回答里每个 token 的概率都被提高；低于基线的被压低。\(R - b\) 叫<b>优势</b>（advantage），记作 \(A\)。基线不改变梯度的期望，但能大幅降低方差：如果所有奖励都是正的又没有基线，每条回答都会被往上推，只是推的力度不同，信号被淹没在噪声里。</p>
+<p>奖励高于<span class="term" data-t="baseline">基线</span> \(b\) 的回答，整条回答里每个 token 的概率都被提高；低于基线的被压低。\(R - b\) 就是这条回答的<span class="term" data-t="advantage">优势</span> \(A\)。注意这里所有 token 分到的是同一个优势，也就是按钮游戏那种最粗暴的<span class="term" data-t="credit">功劳分配</span>：一条答对的回答里，关键的那一步和多余的废话被同等地加强。</p>
 
 <details class="deep"><summary>策略梯度的完整推导</summary><div class="in">
 <p><b>第 1 步，对数导数技巧。</b>把期望写成求和（对所有可能的回答）：\(J = \sum_y \pi_\theta(y)\,R(y)\)。对 \(\theta\) 求导，奖励和 \(\theta\) 无关：</p>
-\[ \nabla_\theta J = \sum_y R(y)\,\nabla_\theta \pi_\theta(y) = \sum_y R(y)\,\pi_\theta(y)\,\nabla_\theta \log \pi_\theta(y) = \mathbb{E}_{y\sim\pi_\theta}\big[R(y)\,\nabla_\theta\log\pi_\theta(y)\big] \]
+\[ \begin{aligned} \nabla_\theta J &= \sum_y R(y)\,\nabla_\theta \pi_\theta(y) = \sum_y R(y)\,\pi_\theta(y)\,\nabla_\theta \log \pi_\theta(y) \\ &= \mathbb{E}_{y\sim\pi_\theta}\big[R(y)\,\nabla_\theta\log\pi_\theta(y)\big] \end{aligned} \]
 <p>中间一步用了 \(\nabla \pi = \pi\,\nabla\log\pi\)。好处是结果又变回了“对 \(\pi_\theta\) 的期望”，可以用采样来估计：采几条回答，算 \(R\cdot\nabla\log\pi\) 的平均。</p>
 <p><b>第 2 步，拆成 token。</b>自回归模型的整条回答概率是逐 token 条件概率的乘积，取对数变成求和：\(\log\pi_\theta(y\mid q) = \sum_t \log\pi_\theta(y_t\mid q, y_{&lt;t})\)。所以“提高整条回答的概率”就是提高其中每个 token 的概率。这正是普通的语言模型训练代码可以直接复用的原因：RL 的损失就是“按优势加权的交叉熵”。</p>
 <p><b>第 3 步，基线不引入偏差。</b>减去任何只依赖题目 \(q\)、不依赖回答 \(y\) 的量 \(b(q)\)，期望不变：</p>
@@ -56,15 +142,15 @@
 </div></details>
 
 <h2 id="ppo">PPO：重复利用样本，但每次别走太远</h2>
-<p>生成回答很贵。一个推理模型的回答动辄几千上万 token，采样往往要占 RL 总算力的一半左右。所以大家希望一批样本能用来更新好几步。问题是更新一步之后，模型已经不是采样时的那个模型 \(\pi_{\text{old}}\) 了，这批样本变成了“别人的数据”（off-policy）。修正办法是<b>重要性采样</b>：给每个 token 乘一个比率</p>
+<p>生成回答很贵。一个推理模型的回答动辄几千上万 token，采样往往要占 RL 总算力的一半左右。所以大家希望一批样本能用来更新好几步。问题是更新一步之后，模型已经不是采样时的那个模型 \(\pi_{\text{old}}\) 了，这批样本变成了<span class="term" data-t="off-policy">离策略</span>的数据。修正办法是上一节讲过的<span class="term" data-t="importance-sampling">重要性采样</span>：给每个 token 乘一个<dfn data-t="ratio">重要性比率</dfn></p>
 \[ r_t(\theta) = \frac{\pi_\theta(y_t\mid q, y_{&lt;t})}{\pi_{\text{old}}(y_t\mid q, y_{&lt;t})} \]
-<p>比率偏离 1 越远，估计就越不可靠，一次大更新还可能把模型改坏。PPO（2017）的办法是把比率<b>裁剪</b>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
+<p>比率偏离 1 越远，估计就越不可靠（重要性采样演示里 ESS 的骤降），一次大更新还可能把模型改坏。<dfn data-t="ppo">PPO</dfn>（2017）用一个简单的办法实现<span class="term" data-t="trust-region">信任域</span>：把比率<dfn data-t="clip">裁剪</dfn>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
 \[ L^{\text{CLIP}}(\theta) = \mathbb{E}_t\Big[\min\big(r_t A_t,\; \operatorname{clip}(r_t, 1-\epsilon, 1+\epsilon)\,A_t\big)\Big] \]
 <p>效果是：一个 token 已经被往好的方向推得够多了（\(A&gt;0\) 且 \(r_t &gt; 1+\epsilon\)，或 \(A&lt;0\) 且 \(r_t &lt; 1-\epsilon\)），它的梯度就变成 0，不再继续推。这是一个“悲观”的目标：只信任离采样策略不远的那部分改进。</p>
-<p>用在语言模型上（RLHF，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
+<p>用在语言模型上（<dfn data-t="rlhf">RLHF</dfn>，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
 <ul>
-  <li><b>KL 约束</b>：目标里减去 \(\beta\,D_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})\)，不让模型离初始模型 \(\pi_{\text{ref}}\) 太远，防止语言变得不通顺、防止它找到奖励的漏洞。</li>
-  <li><b>价值网络</b>（critic）：估计每个前缀“接下来平均能拿多少奖励”，用来算每个 token 的优势（GAE）。它通常和策略一样大。</li>
+  <li><b><span class="term" data-t="kl">KL</span> 约束</b>：目标里减去 \(\beta\,D_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})\)，不让模型离初始模型 \(\pi_{\text{ref}}\) 太远，防止语言变得不通顺、防止它找到奖励的漏洞。</li>
+  <li><b><span class="term" data-t="critic">价值网络</span></b>：估计每个前缀“接下来平均能拿多少奖励”，再用 <span class="term" data-t="gae">GAE</span> 算出每个 token 的优势。它通常和策略一样大。</li>
 </ul>
 <p>于是 PPO 版的 RLHF 要同时放 4 个大模型：策略、参考模型、奖励模型、价值网络。这是它昂贵、难调的主要原因。</p>
 
@@ -84,10 +170,10 @@
 </div></details>
 
 <h2 id="grpo">GRPO：用同一道题的其它回答当基线</h2>
-<p>价值网络要解决的问题是“这道题的平均分是多少”。DeepSeek 在 DeepSeekMath（2024-02）里换了一个更直接的办法：<b>每道题采样一组 \(G\) 个回答，用组内平均奖励当基线</b>，再除以组内标准差做归一化：</p>
+<p><span class="term" data-t="critic">价值网络</span>要解决的问题，归根结底是给每道题一个<span class="term" data-t="baseline">基线</span>：“这道题的平均分是多少”。DeepSeek 在 DeepSeekMath（2024-02）里换了一个更直接的办法：<b>每道题采样一组 \(G\) 个回答，用组内平均奖励当基线</b>，再除以组内标准差做归一化：</p>
 \[ \hat A_i = \frac{R_i - \operatorname{mean}(R_1,\dots,R_G)}{\operatorname{std}(R_1,\dots,R_G)} \]
 <span class="eqnote">第 i 个回答的每个 token 都用这个优势；答得比同组平均好就加强，差就削弱</span>
-<p>这就是 <b>GRPO</b>（Group Relative Policy Optimization）。它非常适合语言模型：奖励本来就是给整条回答的，不需要逐 token 估价值；同一道题的几个回答天然可比；省掉了一个和策略一样大的价值网络。DeepSeek-R1（2025-01）用它在纯规则奖励（答案对不对、格式对不对）上训练，长思维链、自我检查、回头验证都从训练中自己长了出来。</p>
+<p>这就是 <dfn data-t="grpo">GRPO</dfn>（Group Relative Policy Optimization）。它非常适合语言模型：奖励本来就是给整条回答的，不需要逐 token 估价值；同一道题的几个回答天然可比；省掉了一个和策略一样大的价值网络。DeepSeek-R1（2025-01）用它在纯规则奖励（答案对不对、格式对不对）上训练，长思维链、自我检查、回头验证都从训练中自己长了出来。</p>
 <div data-demo="grpo-toy"></div>
 <p>演示里把难度拉到最大会看到 GRPO 最大的弱点：<b>一组回答全对或全错时，标准差为 0，优势全为 0，这道题提供不了任何梯度</b>。题目太简单或太难都是在浪费采样。这一点后面会反复出现：它决定了 RL 能从哪些题里学到东西。</p>
 
@@ -111,7 +197,7 @@
   <tr><td>GSPO</td><td>2025-07，Qwen</td><td>比率和裁剪都改在整条回答上（按长度取几何平均）</td><td>逐 token 比率噪声大，MoE 尤其不稳定</td></tr>
   <tr><td>DPPO</td><td>2026-02</td><td>重新设计信任域</td><td>CISPO 在 MoE 上可能突然崩溃</td></tr>
 </table></div>
-<p><b>熵塌缩与 clip-higher。</b>裁剪限制的是比率，所以一个 token 一步之内最多从概率 \(p\) 涨到约 \(p(1+\epsilon)\)。高概率 token 很容易涨满（0.9 → 1），低概率 token 几乎涨不动（0.01 → 0.012）。结果是模型越训越“确定”，输出的多样性（熵）迅速下降，探索停止。DAPO 把上界单独放大，给低概率 token 留出成长空间。</p>
+<p><b><span class="term" data-t="entropy-collapse">熵塌缩</span>与 clip-higher。</b>裁剪限制的是比率，所以一个 token 一步之内最多从概率 \(p\) 涨到约 \(p(1+\epsilon)\)。高概率 token 很容易涨满（0.9 → 1），低概率 token 几乎涨不动（0.01 → 0.012）。结果是模型越训越“确定”，输出的多样性（熵）迅速下降，探索停止。DAPO 把上界单独放大，给低概率 token 留出成长空间。</p>
 <p><b>反思 token。</b>MiniMax 在训练 M1 时发现，“等等”“不对”“再检查一下”这类 token 在旧策略里概率很低，一旦它们出现在答对的回答里，更新后比率很高，第一步就被 PPO 裁掉了。可它们正是长思维链里最有价值的部分。CISPO 让所有 token 都保留梯度，只把权重截断在 \(1+\epsilon_{\text{high}}\)。</p>
 <p><b>序列级比率。</b>Qwen 的看法是：奖励是给整条回答的，重要性采样的单位也应该是整条回答。GSPO 用 \(s_i = \big(\pi_\theta(o_i)/\pi_{\text{old}}(o_i)\big)^{1/|o_i|}\)，即逐 token 比率的几何平均，整条一起裁剪。在 MoE 上，更新前后路由可能选到不同专家，个别 token 的比率剧烈跳动；序列级比率把这些波动平均掉了，原本需要的“路由回放”也不再必要。</p>
 <div data-demo="rl-clip" class="bleed"></div>
@@ -139,8 +225,8 @@
 <h2 id="reward">奖励：从对错到细则，再到组内评分</h2>
 <p>RL 学到什么，完全取决于奖励在奖励什么。奖励的来源大致有四类：</p>
 <ol>
-  <li><b>可验证奖励（RLVR）。</b>数学题比对最终答案，代码跑单元测试，智能体任务检查终态（文件改对没有、网页上找到答案没有）。规则写死，很难被钻空子，是推理能力提升的主力。代价是只覆盖有标准答案的领域。</li>
-  <li><b>奖励模型。</b>RLHF 里用人类偏好训练的模型打分（第 <a class="xref" data-ref="sft"></a> 章）。覆盖面广，但会被优化压力“攻破”：模型学会写出奖励模型喜欢、实际并不更好的回答（reward hacking），例如更长、更讨好（第 <a class="xref" data-ref="alignment"></a> 章）。</li>
+  <li><b><dfn data-t="rlvr">可验证奖励</dfn>（RLVR）。</b>数学题比对最终答案，代码跑单元测试，智能体任务检查终态（文件改对没有、网页上找到答案没有）。规则写死，很难被钻空子，是推理能力提升的主力。代价是只覆盖有标准答案的领域。</li>
+  <li><b>奖励模型。</b>RLHF 里用人类偏好训练的模型打分（第 <a class="xref" data-ref="sft"></a> 章）。覆盖面广，但会被优化压力“攻破”：模型学会写出奖励模型喜欢、实际并不更好的回答（<dfn data-t="reward-hacking">钻奖励空子</dfn>，reward hacking），例如更长、更讨好（第 <a class="xref" data-ref="alignment"></a> 章）。</li>
   <li><b>细则奖励（rubrics）。</b>把“好回答”拆成一条条可检查的标准，让 LLM 评审逐条打分。Rubrics as Rewards（ICLR 2026）在医疗问答上比整体打分提升 31%。Kimi K2 让模型自己当评审，按细则做成对比较，还专门加了“不要开头夸用户”“不要多余的辩解”这类约束来防钻空子。</li>
   <li><b>组内评分。</b>两个解法都通过了测试，0/1 奖励分不出好坏。MiMo-V2.6（2026-09）把同一组的解法放在一起比较打分（Groupwise Agentic Grading），评分本身用掉了 RL 算力的 12.7%。奖励也开始被规模化。</li>
 </ol>
@@ -160,10 +246,10 @@
   <li>MiMo-V2.6 开源了 7000 多个 RL 环境（软件开发、漏洞复现、知识型任务、网页开发）。专门出售 RL 环境的公司也出现了。</li>
   <li>研究上，环境可以自动合成：从上万个代码仓库生成几万个 Docker 环境（SWE-bench 上呈对数线性的规模效应），或让模型自己出题、自己解（Absolute Zero，用代码执行器验证）。</li>
 </ul>
-<p>系统层面，主流做法是<b>异步 RL</b>：推理集群持续生成轨迹，训练集群持续消费，两边不互相等待。代价是训练用的样本来自几步之前的模型，离策略程度变大，所以上面的重要性采样修正变得更加重要。MiMo-V2.6-Pro（1.02T 总参数、42B 激活）是一个有完整数字的例子：全异步 GRPO，每步 1568 道题 × 16 条采样；算力分配是采样 43.8%、训练 43.5%、评分 12.7%；一次 RL 约 260 万美元（Flash 版约 90 万美元）；DeepSWE 从 58.4 提到 72.6。</p>
+<p>系统层面，主流做法是<b>异步 RL</b>：推理集群持续生成轨迹，训练集群持续消费，两边不互相等待。代价是训练用的样本来自几步之前的模型，<span class="term" data-t="off-policy">离策略</span>程度变大，所以上面的重要性采样修正变得更加重要。MiMo-V2.6-Pro（1.02T 总参数、42B 激活）是一个有完整数字的例子：全异步 GRPO，每步 1568 道题 × 16 条采样；算力分配是采样 43.8%、训练 43.5%、评分 12.7%；一次 RL 约 260 万美元（Flash 版约 90 万美元）；DeepSWE 从 58.4 提到 72.6。</p>
 
 <h2 id="mismatch">训练与推理不一致</h2>
-<p>为了快，采样用推理引擎（vLLM、SGLang），算梯度用训练引擎（Megatron、FSDP）。同一组权重，两边算出来的概率并不相同：BF16 的舍入误差随着层数和 token 数逐步累积，两边的矩阵乘法内核累加顺序不同，MoE 的路由在两边可能选到不同的专家。重要性比率 \(r_t\) 的分母本来应该是“采样时的概率”，实际却用训练引擎重算的概率代替，比率就带上了一个系统误差。在长回答上，这个误差足以让训练悄悄崩掉。2025 年下半年起，这成了 RL 工程里最受关注的问题之一。</p>
+<p>为了快，采样用推理引擎（vLLM、SGLang），算梯度用训练引擎（Megatron、FSDP）。同一组权重，两边算出来的概率并不相同：BF16 的舍入误差随着层数和 token 数逐步累积，两边的矩阵乘法内核累加顺序不同，MoE 的路由在两边可能选到不同的专家。<span class="term" data-t="ratio">重要性比率</span> \(r_t\) 的分母本来应该是“采样时的概率”，实际却用训练引擎重算的概率代替，比率就带上了一个系统误差。在长回答上，这个误差足以让训练悄悄崩掉。2025 年下半年起，这成了 RL 工程里最受关注的问题之一。</p>
 <div data-demo="rl-mismatch" class="bleed"></div>
 <p>目前的几类对策：</p>
 <ul>
@@ -177,14 +263,14 @@
 <details class="deep"><summary>为什么误差会随长度放大，以及有效样本量</summary><div class="in">
 <p>设第 \(t\) 个 token 在两个引擎里的对数概率差为 \(\delta_t = \log\pi_{\text{训练}}(y_t) - \log\pi_{\text{推理}}(y_t)\)，近似独立、均值 0、方差 \(\sigma^2\)。BF16 的相对舍入单位是 \(2^{-8}\approx 0.004\)，经过几十层累积，\(\sigma\) 可以到百分之几的量级；FP16 是 \(2^{-11}\)，小 8 倍。</p>
 <p>整条回答的对数比率 \(\sum_{t=1}^{L}\delta_t\) 的标准差是 \(\sigma\sqrt L\)。\(\sigma = 0.03\)、\(L = 10000\) 时约为 3，比率在 \(e^{\pm3}\) 也就是 0.05 到 20 倍之间波动。</p>
-<p>衡量一批重要性权重 \(w_1,\dots,w_n\) 还有多少用的指标是有效样本量：</p>
+<p>衡量一批重要性权重 \(w_1,\dots,w_n\) 还有多少用的指标是<span class="term" data-t="ess">有效样本量</span>：</p>
 \[ \text{ESS} = \frac{\big(\sum_i w_i\big)^2}{\sum_i w_i^2} \]
 <p>权重都相等时 ESS = n；少数几个权重特别大时 ESS 接近 1，相当于整批数据只有一两条在起作用。演示里把长度拉长、精度换成 BF16，可以看到 ESS 迅速下降。</p>
 <p><b>这个推导告诉我们：</b>逐 token 比率（PPO / GRPO）对单个 token 的误差敏感，整条相乘的比率对长度敏感；GSPO 的几何平均和 TIS 的截断，分别从这两个方向控制方差。</p>
 </div></details>
 
 <h2 id="debate">争论：RL 是在发现新能力，还是只在挑选？</h2>
-<p>R1 之后，一个很自然的问题是：RL 训练出的长思维链，是模型学会了新的推理方法，还是基座本来就会，RL 只是让它更常这样做？衡量方式是 <b>pass@k</b>：对每道题采样 k 次，至少一次答对就算解出。pass@1 衡量“一次就做对”，k 很大时的 pass@k 衡量“模型的能力边界在哪里”。</p>
+<p>R1 之后，一个很自然的问题是：RL 训练出的长思维链，是模型学会了新的推理方法，还是基座本来就会，RL 只是让它更常这样做？衡量方式是 <dfn data-t="passk">pass@k</dfn>：对每道题采样 k 次，至少一次答对就算解出。pass@1 衡量“一次就做对”，k 很大时的 pass@k 衡量“模型的能力边界在哪里”。</p>
 <div data-demo="rl-passk"></div>
 <aside class="dispute">
   <h4>RL 是锐化还是发现</h4>

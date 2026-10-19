@@ -19,8 +19,14 @@
 
 <div class="bridge">上一章留下的问题……本章从这里接上。</div>
 
+<div class="prereq">
+  <ul>
+    <li>前置概念：第 <a class="xref" data-ref="slug"></a> 章</li>
+  </ul>
+</div>
+
 <h2 id="sec1">第一节标题</h2>
-<p>这一节要解决的问题 → 直觉 → 机制。行内公式 \( \pi_\theta(y\mid x) \)，独立公式：</p>
+<p>这一节要解决的问题 → 直觉 → 机制。新概念在定义处写 <dfn data-t="term-id">术语</dfn>（并登记到 assets/terms.js），之后再提到写 <span class="term" data-t="term-id">术语</span>。行内公式 \( \pi_\theta(y\mid x) \)，独立公式：</p>
 \[ \nabla_\theta J(\theta) = \mathbb{E}\big[ R(y)\, \nabla_\theta \log \pi_\theta(y\mid x) \big] \]
 <span class="eqnote">一句话说明这个公式</span>
 

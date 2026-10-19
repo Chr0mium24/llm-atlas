@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>术语表 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .gl-item { padding: 10px 0; border-bottom: 1px solid var(--grid); }
+  .gl-item .h { display: flex; gap: 10px; align-items: baseline; flex-wrap: wrap; }
+  .gl-item .h b { font-size: 16px; }
+  .gl-item .en { color: var(--muted); font-size: 13px; }
+  .gl-item .go { margin-left: auto; font-size: 13px; }
+  .gl-item p { margin: 2px 0 0; color: var(--ink-2); font-size: 14.5px; }
+</style>
+</head>
+<body data-chapter="glossary">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker">术语表</div>
+  <h1>术语表</h1>
+  <p class="lede">全书定义过的概念，按首次定义的章节排列。正文里带虚线下划线的词，悬停可以看到这里的定义，点击会跳到它被定义的位置。</p>
+</header>
+<input id="gl-q" type="text" placeholder="搜索：中文、英文或定义里的词" style="width:100%;font-size:15px;margin:8px 0 4px">
+<p id="gl-n" class="small muted"></p>
+<div id="glossary"></div>
+</div></main>
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+<script>
+document.addEventListener('atlas-terms', () => {
+  const T = A.terms, box = document.getElementById('glossary'), q = document.getElementById('gl-q'), n = document.getElementById('gl-n');
+  const order = A.chapters.map((c) => c.s);
+  const ids = Object.keys(T).sort((a, b) => order.indexOf(T[a].at.split('#')[0]) - order.indexOf(T[b].at.split('#')[0]));
+  function render() {
+    const s = q.value.trim().toLowerCase();
+    box.innerHTML = '';
+    let cur = null, k = 0;
+    ids.forEach((id) => {
+      const d = T[id];
+      if (s && !(d.t + d.en + d.d).toLowerCase().includes(s)) return;
+      const slug = d.at.split('#')[0], c = A.ch(slug);
+      if (slug !== cur) { cur = slug; box.append(A.el('h2', { style: { marginTop: '34px' } }, c ? [A.chLabel(c), c.t].filter(Boolean).join(' · ') : slug)); }
+      box.append(A.el('div', { class: 'gl-item' },
+        A.el('div', { class: 'h' }, A.el('b', null, d.t), A.el('span', { class: 'en' }, d.en), A.el('a', { class: 'go', href: A.termHref(id) }, '→ 去看定义')),
+        A.el('p', null, d.d)));
+      k++;
+    });
+    n.textContent = `共 ${ids.length} 个概念${s ? '，匹配 ' + k + ' 个' : ''}。随着各章重写会陆续补充。`;
+  }
+  q.addEventListener('input', render);
+  render();
+});
+</script>
+</body>
+</html>
