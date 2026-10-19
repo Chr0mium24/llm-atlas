@@ -1,0 +1,288 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>13 · 视频生成与世界模型 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .film { display: flex; gap: 4px; flex-wrap: wrap; align-items: center; }
+  .film canvas { width: 64px; height: 64px; border-radius: 5px; border: 1px solid var(--border); }
+  .film .play { width: 96px; height: 96px; margin-right: 10px; }
+  .vrow { margin: 10px 0 14px; }
+  .vrow .lab { font-weight: 600; font-size: 14px; margin-bottom: 4px; }
+  #wm-big { width: 240px; height: 240px; border-radius: 10px; border: 1px solid var(--border); }
+  .pad { display: grid; grid-template-columns: repeat(3, 44px); gap: 4px; }
+  .pad button { padding: 8px 0; font-size: 16px; }
+</style>
+</head>
+<body>
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker">第 13 章 · 生成：图像与视频</div>
+  <h1>视频生成与世界模型：从“动起来的图”到可以玩的世界</h1>
+  <p class="lede">视频生成比图像难在三点：<b>时间上要连贯</b>（同一个人不能每帧换脸），<b>运动要合理</b>（物理、因果），<b>数据量巨大</b>（5 秒 720p 就是一亿多个像素值）。2024 年 Sora 用“时空 patch + DiT”给出了可规模化的答案；到 2026 年，主流模型能直接生成带同步音频的 1080p/4K 多镜头视频，实时可交互的“世界模型”也已经出现。</p>
+</header>
+
+<h2 id="arch">主流架构：3D VAE + 时空 patch + DiT + 流匹配</h2>
+<ol>
+  <li><b>3D 因果 VAE</b>：在空间上压缩 8× 或 16×，在时间上压缩 4×。比如 Wan 的 VAE 是 4×8×8，Seedance 1.0 是 4×16×16。“因果”指每一帧的编码只依赖它之前的帧，第一帧可以单独当图像处理，所以同一个模型可以同时用图像和视频训练。</li>
+  <li><b>时空 patch</b>：潜视频再切成 1×2×2 的小块，每块一个 token。Sora 的技术报告把它叫作 spacetime patches：不同时长、分辨率、宽高比的视频都变成一串长度不一的 token。</li>
+  <li><b>DiT 去噪</b>：所有 token 做 <b>全 3D 注意力</b>（每个 token 看所有帧的所有位置），或者分解成“空间注意力 + 时间注意力”以省算力。文本条件通过交叉注意力或联合注意力注入。</li>
+  <li><b>流匹配训练与采样</b>（第 11 章），配合 CFG。</li>
+</ol>
+<p>视频 token 数非常大，注意力代价又是平方级，所以视频生成很贵：</p>
+<div id="demo-vtok"></div>
+
+<h2 id="consistency">为什么要“时空联合”去噪</h2>
+<p>最朴素的想法是用图像模型一帧一帧地生成。问题在于每帧的去噪都是独立随机的：第 1 帧生成了左边的红球，第 2 帧可能生成右边的红球，画面会跳动和闪烁。视频扩散把整段视频当成 <b>一个</b> 样本联合去噪，所有帧在同一个去噪过程里互相“商量”，运动自然连贯。</p>
+<p>下面的玩具用的还是“精确最优去噪器”（第 11、12 章）。训练集是 72 段 8 帧的小视频：4 种形状 × 3 种颜色 × 6 种运动方式。三种生成方式各自独立运行：</p>
+<div id="demo-video" class="bleed"></div>
+<ul>
+  <li><b>逐帧独立</b>：每帧都是合理的图，但连起来乱跳。这是 2022 年以前用图像模型做视频的典型问题。AnimateDiff（2023）等在图像模型里插入时间注意力模块来缓解。</li>
+  <li><b>时空联合</b>：整段一起去噪，运动连贯。Sora、Wan、Veo、Kling、Seedance 都是这类。缺点是长度固定，必须一次生成完。</li>
+  <li><b>自回归逐帧（带上下文）</b>：每一帧以前面已经生成的帧为条件去噪，可以无限延长、实时流式输出，也能在中途插入用户的动作。代价是误差会逐帧累积（drift）。Diffusion Forcing（2024）、CausVid、Self-Forcing（2025）等方法专门缓解这个问题，它们是实时世界模型的基础。</li>
+</ul>
+
+<h2 id="frontier">2024–2026：视频模型的进化</h2>
+<ul>
+  <li><b>原生音频</b>：Veo 3（2025-05）让视频和音频（对白、音效、音乐）一起生成；Sora 2（2025-09）、Seedance 2.0（2026-02，统一的音视频联合生成架构）、Kling 3.0（2026 初，图像 / 视频 / 音频统一，原生 4K，5 种语言口型同步）跟进。</li>
+  <li><b>按噪声水平分工的 MoE</b>：Wan 2.2（2025-07）用两个专家，高噪声阶段的专家负责构图和运动，低噪声阶段的专家负责细节；27B 总参数，每步激活 14B。开源，Apache 2.0。</li>
+  <li><b>参考与多镜头</b>：Seedance 2.5 一次最多接收 50 个参考输入（30 张图、10 段视频、10 段音频），原生 1080p、最长 30 秒；Wan 3.0（2026-08）在多个排行榜上位居第一。</li>
+  <li><b>行业洗牌</b>：OpenAI 在 2026 年 9 月关闭了 Sora 应用和 API；Google 的 Gemini Omni Flash 成为其应用内的默认视频模型，Veo 3.1 面向开发者。</li>
+  <li><b>开源</b>：Wan 2.x、HunyuanVideo、LTX-2.5、MiniMax H3 等；Wan 2.2 的 5B 版本能在 RTX 4090 上生成 720p。</li>
+</ul>
+
+<h2 id="world">世界模型：能实时交互的视频</h2>
+<p>如果视频模型能 <b>实时</b> 地、<b>根据用户动作</b> 生成下一帧，它就成了一个可以“玩”的世界。也就是 <b>交互式世界模型</b>。它和游戏引擎的区别是：没有手写的物理和渲染代码，一切从视频数据里学。用途包括游戏原型、自动驾驶和机器人的仿真训练（Waymo 2026 年用 Genie 3 构建了驾驶世界模型）、以及给智能体提供练习场。</p>
+<div id="demo-wm"></div>
+<p>真实的世界模型要解决的问题，这个玩具里都有缩影：<b>实时性</b>（每帧只能用 1–4 步去噪，靠蒸馏）、<b>动作条件</b>、<b>长时记忆</b>（转身再转回来，房间要和刚才一样；Genie 3 能记住约 1 分钟，Matrix-Game 3.5 用 “Patch Memory”）、<b>误差累积</b>（几分钟后画面崩坏）。</p>
+<ul class="history">
+  <li><span class="d">2018</span>Ha & Schmidhuber《World Models》：在学到的“梦境”里训练智能体</li>
+  <li><span class="d">2022</span>Video Diffusion Models、Make-A-Video、Imagen Video、Phenaki</li>
+  <li><span class="d">2023</span>Gen-2、AnimateDiff、Stable Video Diffusion</li>
+  <li><span class="d">2024-02</span>Sora（时空 patch DiT，“视频生成模型作为世界模拟器”）；Genie（从无标注视频学可控环境）</li>
+  <li><span class="d">2024</span>Kling、Veo / Veo 2、CogVideoX、HunyuanVideo（开源 13B）；GameNGen（神经网络实时“运行” DOOM）；Genie 2；Diffusion Forcing</li>
+  <li><span class="d">2025</span>Wan 2.1（2 月开源）；Veo 3 原生音频（5 月）；Wan 2.2 MoE；Genie 3（8 月，720p / 24fps 实时，可连续交互数分钟）；Sora 2（9 月）；Self-Forcing 实时流式生成</li>
+  <li><span class="d">2026</span>Project Genie 向付费用户开放（1 月）；Seedance 2.0（2 月）；Kling 3.0；Waymo World Model；Matrix-Game 3.0 / 3.5 开源实时世界模型；Wan 3.0（8 月）；Sora 关停（9 月）；NVIDIA Cosmos 3 全模态世界模型</li>
+</ul>
+<p class="src">资料：<a href="https://arxiv.org/abs/2604.14148">Seedance 2.0 技术报告</a>；<a href="https://ocdevel.com/mlg/mla-26">AI Video Generation in 2026</a>；<a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a>；<a href="https://9to5google.com/2026/01/29/google-project-genie/">Project Genie</a>；<a href="https://introl.com/blog/world-models-race-agi-2026">World Models Race 2026</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script src="assets/common.js"></script>
+<script>
+/* ============ video tokens ============ */
+(function () {
+  const { bd } = A.demo('demo-vtok', '视频的 token 账：为什么生成一段视频要几分钟', '以 Wan 2.1 14B 的结构估算（40 层，d=5120）');
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const dur = A.slider(ctl, { label: '时长', min: 1, max: 30, step: 1, value: 5, fmt: (v) => v + ' 秒', on: draw });
+  const fps = A.slider(ctl, { label: '帧率', min: 8, max: 30, step: 1, value: 16, fmt: (v) => v + ' fps', on: draw });
+  let res = [1280, 720], sp = 8, attn = 'full';
+  A.seg(ctl, [{ v: '480', t: '480p' }, { v: '720', t: '720p' }, { v: '1080', t: '1080p' }, { v: '2160', t: '4K' }], '720', (v) => { res = { 480: [854, 480], 720: [1280, 720], 1080: [1920, 1080], 2160: [3840, 2160] }[v]; draw(); }, '分辨率');
+  const ctl2 = A.el('div', { class: 'controls' }); bd.append(ctl2);
+  A.seg(ctl2, [{ v: 8, t: '4×8×8' }, { v: 16, t: '4×16×16' }], sp, (v) => { sp = v; draw(); }, 'VAE 压缩（时×高×宽）');
+  A.seg(ctl2, [{ v: 'full', t: '全 3D 注意力' }, { v: 'fact', t: '空间 + 时间分解' }], attn, (v) => { attn = v; draw(); }, '注意力');
+  const steps = A.slider(ctl2, { label: '去噪步数', min: 1, max: 50, step: 1, value: 50, fmt: (v) => v + ' 步', on: draw });
+  const stats = A.el('div', { class: 'stats' }); bd.append(stats);
+  const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
+  let parts = [0, 0];
+  const view = A.canvas(cv, { height: 54 }, (ctx, W) => {
+    const tot = parts[0] + parts[1], cols = A.series();
+    const w0 = (parts[0] / tot) * W;
+    ctx.fillStyle = cols[0]; ctx.fillRect(0, 6, w0 - 1, 26); ctx.fillStyle = cols[1]; ctx.fillRect(w0 + 1, 6, W - w0 - 1, 26);
+    A.text(ctx, '线性层（∝ token 数）' + A.pct(parts[0] / tot, 0), 6, 44, { size: 12, color: cols[0], weight: 600 });
+    A.text(ctx, '注意力（∝ token 数²）' + A.pct(parts[1] / tot, 0), W - 6, 44, { size: 12, color: cols[1], weight: 600, align: 'right' });
+  });
+  function draw() {
+    const frames = Math.round(dur.value * fps.value) + 1;
+    const lt = 1 + Math.ceil((frames - 1) / 4), lh = Math.round(res[1] / sp), lw = Math.round(res[0] / sp);
+    const tok = lt * Math.ceil(lh / 2) * Math.ceil(lw / 2);
+    const N = 14e9, L = 40, d = 5120;
+    const lin = 2 * N * tok;
+    const perFrame = Math.ceil(lh / 2) * Math.ceil(lw / 2);
+    const att = attn === 'full' ? 4 * L * tok * tok * d : 4 * L * d * (tok * perFrame + tok * lt);
+    parts = [lin, att];
+    const total = (lin + att) * steps.value * 2; // ×2 for CFG
+    const sec = total / (989e12 * 0.4);
+    stats.innerHTML = '';
+    [['像素值', A.human(frames * res[0] * res[1] * 3, 1)], ['潜视频', `${lt}×${lh}×${lw}`], ['token 数', tok.toLocaleString()], ['单次前向', A.sci(lin + att) + ' FLOPs'], ['总计（含 CFG ×2）', A.sci(total)], ['单张 H100 约需', sec > 3600 ? (sec / 3600).toFixed(1) + ' 小时' : sec > 60 ? (sec / 60).toFixed(1) + ' 分钟' : sec.toFixed(0) + ' 秒']]
+      .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
+    view.redraw();
+  }
+  bd.append(A.el('p', { class: 'hint' }, '默认设置（720p、5 秒、16fps、4×8×8）约 7.6 万个 token，与 Wan 2.1 720p 的实际规模一致。分辨率翻倍，token 数变成 4 倍，注意力代价变成 16 倍。所以长视频和高分辨率要靠更强的压缩（4×16×16）、稀疏注意力、少步蒸馏，以及先生成低分辨率再超分。'));
+  draw();
+})();
+
+/* ============ temporal consistency toy ============ */
+(function () {
+  const { bd } = A.demo('demo-video', '三种生成方式：逐帧独立 / 时空联合 / 自回归', '72 段训练视频 · 8 帧 · 24×24');
+  const S = 24, F = 8, FD = S * S * 3, CD = FD * F, SIG = 0.08;
+  const SH = ['圆', '方块', '三角', '星星'], CO = [['红', '#e34948'], ['蓝', '#2a78d6'], ['绿', '#1baf7a']];
+  const MO = [['→ 向右', [1.6, 0]], ['← 向左', [-1.6, 0]], ['↓ 下落', [0, 1.6]], ['↑ 上升', [0, -1.6]], ['↘ 斜飞', [1.2, 1.2]], ['⤻ 弹跳', 'bounce']];
+  const off = document.createElement('canvas'); off.width = off.height = S;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  function shape(sh, cx, cy, r) {
+    octx.beginPath();
+    if (sh === 0) octx.arc(cx, cy, r, 0, 7);
+    if (sh === 1) octx.rect(cx - r * 0.85, cy - r * 0.85, r * 1.7, r * 1.7);
+    if (sh === 2) { octx.moveTo(cx, cy - r); octx.lineTo(cx + r, cy + r * 0.8); octx.lineTo(cx - r, cy + r * 0.8); octx.closePath(); }
+    if (sh === 3) for (let i = 0; i < 10; i++) { const a = -Math.PI / 2 + (i * Math.PI) / 5, rr = i % 2 ? r * 0.45 : r; i ? octx.lineTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr) : octx.moveTo(cx + Math.cos(a) * rr, cy + Math.sin(a) * rr); }
+    octx.fill();
+  }
+  function frame(sh, co, x, y) {
+    const g = octx.createLinearGradient(0, 0, 0, S); g.addColorStop(0, '#cfe3f8'); g.addColorStop(1, '#f7f4ec');
+    octx.fillStyle = g; octx.fillRect(0, 0, S, S);
+    octx.fillStyle = '#b9b3a3'; octx.fillRect(0, S - 3, S, 3);
+    octx.fillStyle = CO[co][1]; shape(sh, x, y, 4.2);
+    const px = octx.getImageData(0, 0, S, S).data, v = new Float32Array(FD);
+    for (let i = 0; i < S * S; i++) for (let c = 0; c < 3; c++) v[i * 3 + c] = px[i * 4 + c] / 127.5 - 1;
+    return v;
+  }
+  const clips = [];
+  for (let sh = 0; sh < 4; sh++) for (let co = 0; co < 3; co++) for (let mo = 0; mo < 6; mo++) {
+    const v = new Float32Array(CD), m = MO[mo][1];
+    for (let f = 0; f < F; f++) {
+      let x, y;
+      if (m === 'bounce') { x = 5 + f * 2; y = 17 - 12 * Math.abs(Math.sin((f / (F - 1)) * Math.PI * 1.5)); }
+      else { x = 12 + m[0] * (f - 3.5) * 1.15; y = 12 + m[1] * (f - 3.5) * 1.15; }
+      v.set(frame(sh, co, x, y), f * FD);
+    }
+    let n2 = 0; for (let i = 0; i < CD; i++) n2 += v[i] * v[i];
+    clips.push({ v, n2, sh, co, mo });
+  }
+  // ---- UI
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  let csh = 0, cco = 0, cmo = -1;
+  A.seg(ctl, [{ v: -1, t: '任意' }, ...SH.map((n, i) => ({ v: i, t: n }))], csh, (v) => { csh = v; run(); }, '形状');
+  A.seg(ctl, [{ v: -1, t: '任意' }, ...CO.map((c, i) => ({ v: i, t: c[0] }))], cco, (v) => { cco = v; run(); }, '颜色');
+  A.seg(ctl, [{ v: -1, t: '任意' }, ...MO.map((m, i) => ({ v: i, t: m[0] }))], cmo, (v) => { cmo = v; run(); }, '运动');
+  const ctl2 = A.el('div', { class: 'controls' }); bd.append(ctl2);
+  const stepsS = A.slider(ctl2, { label: '去噪步数', min: 2, max: 30, step: 1, value: 16, fmt: (v) => v, on: A.debounce(run, 150) });
+  let seed = 1;
+  ctl2.append(A.el('button', { class: 'primary', onclick: () => { seed++; run(); } }, '重新生成'));
+  const rows = ['逐帧独立（图像模型逐帧生成）', '时空联合（视频扩散）', '自回归逐帧（以前面的帧为条件）'].map((t) => {
+    const r = A.el('div', { class: 'vrow' }), lab = A.el('div', { class: 'lab' }, t), film = A.el('div', { class: 'film' });
+    const play = A.el('canvas', { class: 'play pixel' }); play.width = play.height = S;
+    const fr = Array.from({ length: F }, () => { const c = A.el('canvas', { class: 'pixel' }); c.width = c.height = S; return c; });
+    film.append(play, ...fr); r.append(lab, film); bd.append(r);
+    return { play, fr, data: null };
+  });
+  bd.append(A.el('p', { class: 'hint' }, '左侧大图循环播放，右侧是 8 帧胶片。可以把“运动”设为“任意”：时空联合每次挑一种运动并保持；逐帧独立的每帧可能来自不同的运动轨迹，物体会乱跳。'));
+  function put(cv, v, off0) {
+    const ctx = cv.getContext('2d'), id = ctx.createImageData(S, S);
+    for (let i = 0; i < S * S; i++) { for (let c = 0; c < 3; c++) id.data[i * 4 + c] = A.clamp((v[off0 + i * 3 + c] + 1) * 127.5, 0, 255); id.data[i * 4 + 3] = 255; }
+    ctx.putImageData(id, 0, 0);
+  }
+  const lw = new Float64Array(clips.length * F);
+  // generic posterior-mean denoise over a list of components (arrays with offset), with optional log-prior
+  function denoise(x, a, b, comps, prior) {
+    const v = a * a * SIG * SIG + b * b, kk = (a * SIG * SIG) / v, D = x.length;
+    let xn = 0; for (let i = 0; i < D; i++) xn += x[i] * x[i];
+    let mx = -Infinity;
+    comps.forEach((c, k) => { let d = 0, n2 = 0; const arr = c.arr, o = c.off; for (let i = 0; i < D; i++) { const m = arr[o + i]; d += x[i] * m; n2 += m * m; } lw[k] = -(xn - 2 * a * d + a * a * n2) / (2 * v) + (prior ? prior[k] : 0); if (lw[k] > mx) mx = lw[k]; });
+    const out = new Float32Array(D); let s = 0;
+    comps.forEach((c, k) => { const w = Math.exp(lw[k] - mx); if (w < 1e-9) return; s += w; const arr = c.arr, o = c.off; for (let i = 0; i < D; i++) out[i] += w * arr[o + i]; });
+    for (let i = 0; i < D; i++) out[i] = (out[i] / s) * (1 - kk * a) + kk * x[i];
+    return out;
+  }
+  function sampleRF(D, comps, steps, r, prior) {
+    let x = Float32Array.from({ length: D }, () => A.gauss(r));
+    for (let k = 0; k < steps; k++) {
+      const t = 1 - k / steps, s = 1 - (k + 1) / steps, a = 1 - t, b = t;
+      const x0 = denoise(x, a, b, comps, prior);
+      for (let i = 0; i < D; i++) { const eps = (x[i] - a * x0[i]) / b; x[i] = (1 - s) * x0[i] + s * eps; }
+    }
+    return x;
+  }
+  function run() {
+    const sel = clips.filter((c) => (csh < 0 || c.sh === csh) && (cco < 0 || c.co === cco) && (cmo < 0 || c.mo === cmo));
+    const steps = Math.round(stepsS.value), r = A.rng(seed * 97);
+    // 1) per-frame independent: components = all frames of selected clips
+    const frameComps = []; sel.forEach((c) => { for (let f = 0; f < F; f++) frameComps.push({ arr: c.v, off: f * FD }); });
+    const indep = new Float32Array(CD);
+    for (let f = 0; f < F; f++) indep.set(sampleRF(FD, frameComps, steps, r), f * FD);
+    // 2) joint
+    const joint = sampleRF(CD, sel.map((c) => ({ arr: c.v, off: 0 })), steps, r);
+    // 3) autoregressive: frame f conditioned on generated frames < f
+    const ar = new Float32Array(CD);
+    for (let f = 0; f < F; f++) {
+      const prior = sel.map((c) => { let e = 0; for (let g = 0; g < f; g++) for (let i = 0; i < FD; i++) { const d = ar[g * FD + i] - c.v[g * FD + i]; e += d * d; } return -e / (2 * 0.3 * 0.3); });
+      ar.set(sampleRF(FD, sel.map((c) => ({ arr: c.v, off: f * FD })), steps, r, prior), f * FD);
+    }
+    [indep, joint, ar].forEach((v, k) => { rows[k].data = v; rows[k].fr.forEach((cv, f) => put(cv, v, f * FD)); });
+  }
+  let tick = 0;
+  setInterval(() => { tick = (tick + 1) % F; rows.forEach((rw) => rw.data && put(rw.play, rw.data, tick * FD)); }, 220);
+  run();
+})();
+
+/* ============ world model toy ============ */
+(function () {
+  const { bd } = A.demo('demo-wm', '玩具世界模型：用方向键“玩”一个由扩散生成的画面', '每一帧都由去噪生成，条件 = 上一帧 + 你的动作');
+  const S = 24, FD = S * S * 3, SIG = 0.06;
+  const off = document.createElement('canvas'); off.width = off.height = S;
+  const octx = off.getContext('2d', { willReadFrequently: true });
+  const P = [4, 6, 8, 10, 12, 14, 16, 18, 20];
+  const frames = [];
+  P.forEach((y) => P.forEach((x) => {
+    const g = octx.createLinearGradient(0, 0, 0, S); g.addColorStop(0, '#cfe3f8'); g.addColorStop(1, '#eef6e4');
+    octx.fillStyle = g; octx.fillRect(0, 0, S, S);
+    octx.fillStyle = '#6b8f4e'; octx.fillRect(17, 15, 2, 6); octx.fillStyle = '#1baf7a'; octx.beginPath(); octx.arc(18, 13, 3.2, 0, 7); octx.fill();
+    octx.fillStyle = '#c9a36b'; octx.fillRect(2, 15, 6, 5); octx.fillStyle = '#e34948'; octx.beginPath(); octx.moveTo(1, 15); octx.lineTo(5, 11); octx.lineTo(9, 15); octx.fill();
+    octx.fillStyle = '#eb6834'; octx.beginPath(); octx.arc(x, y, 2.6, 0, 7); octx.fill();
+    octx.fillStyle = '#0b0b0b'; octx.fillRect(x, y - 1, 1, 1);
+    const px = octx.getImageData(0, 0, S, S).data, v = new Float32Array(FD);
+    for (let i = 0; i < S * S; i++) for (let c = 0; c < 3; c++) v[i * 3 + c] = px[i * 4 + c] / 127.5 - 1;
+    frames.push({ v, x: P.indexOf(x), y: P.indexOf(y) });
+  }));
+  const idx = (x, y) => A.clamp(y, 0, 8) * 9 + A.clamp(x, 0, 8);
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const stepsS = A.slider(ctl, { label: '每帧去噪步数', min: 1, max: 12, step: 1, value: 6, fmt: (v) => v + (v <= 2 ? '（很快，但会糊）' : ''), on: () => {} });
+  const ctxS = A.slider(ctl, { label: '上下文不确定性 τ', min: 0.02, max: 0.4, step: 0.01, value: 0.06, fmt: (v) => v.toFixed(2) + (v > 0.15 ? '（看不清上一帧）' : ''), on: () => {} });
+  const wrap = A.el('div', { class: 'flex', style: { alignItems: 'flex-start', gap: '20px' } }); bd.append(wrap);
+  const big = A.el('canvas', { id: 'wm-big', class: 'pixel' }); big.width = big.height = S;
+  const pad = A.el('div', { class: 'pad' });
+  const hist = A.el('div', { class: 'film', style: { maxWidth: '420px' } });
+  const info = A.el('div', { class: 'small', style: { marginTop: '8px' } });
+  [['', null], ['↑', [0, -1]], ['', null], ['←', [-1, 0]], ['·', [0, 0]], ['→', [1, 0]], ['', null], ['↓', [0, 1]], ['', null]].forEach(([t, a]) => pad.append(a ? A.el('button', { onclick: () => act(a) }, t) : A.el('span')));
+  wrap.append(big, A.el('div', null, A.el('div', { class: 'small muted', style: { marginBottom: '6px' } }, '动作（也可以点画面后用键盘方向键）'), pad, A.el('button', { style: { marginTop: '8px' }, onclick: reset }, '重置世界'), info, A.el('div', { class: 'small muted', style: { marginTop: '10px' } }, '最近的帧'), hist));
+  bd.append(A.el('p', { class: 'hint' }, '模型并不知道橙色小球的“坐标”，它只看到上一帧的图像。它先判断上一帧最像哪些训练帧，再按动作去噪出下一帧。把 τ 调大（看不清上一帧）再多按几次：步数少（1–2 步）时画面变糊、小球分裂成虚影，而且糊掉的帧又成为下一帧的条件，之后很难再变清晰；步数多时画面清晰，但小球可能“瞬移”到错误的位置。这两种都是自回归世界模型真实存在的误差累积。'));
+  let cur, r = A.rng(3), history = [];
+  function put(cv, v) { const c = cv.getContext('2d'), id = c.createImageData(S, S); for (let i = 0; i < S * S; i++) { for (let k = 0; k < 3; k++) id.data[i * 4 + k] = A.clamp((v[i * 3 + k] + 1) * 127.5, 0, 255); id.data[i * 4 + 3] = 255; } c.putImageData(id, 0, 0); }
+  function reset() { cur = frames[idx(4, 4)].v.slice(); history = [cur]; render(); }
+  function act(a) {
+    // context weights over source frames
+    const tau = ctxS.value;
+    const lp = frames.map((f) => { let e = 0; for (let i = 0; i < FD; i++) { const d = cur[i] - f.v[i]; e += d * d; } return -(e / FD) / (2 * tau * tau); });
+    const targets = frames.map((f) => frames[idx(f.x + a[0], f.y + a[1])].v);
+    const steps = stepsS.value;
+    let x = Float32Array.from({ length: FD }, () => A.gauss(r));
+    for (let k = 0; k < steps; k++) {
+      const t = 1 - k / steps, s = 1 - (k + 1) / steps, aa = 1 - t, b = t;
+      const v = aa * aa * SIG * SIG + b * b, kk = (aa * SIG * SIG) / v;
+      const lw = targets.map((m, j) => { let e = 0; for (let i = 0; i < FD; i++) { const d = x[i] - aa * m[i]; e += d * d; } return lp[j] - e / (2 * v); });
+      const mx = Math.max(...lw), x0 = new Float32Array(FD); let ssum = 0;
+      lw.forEach((l, j) => { const w = Math.exp(l - mx); if (w < 1e-9) return; ssum += w; const m = targets[j]; for (let i = 0; i < FD; i++) x0[i] += w * m[i]; });
+      for (let i = 0; i < FD; i++) { x0[i] = (x0[i] / ssum) * (1 - kk * aa) + kk * x[i]; const eps = (x[i] - aa * x0[i]) / b; x[i] = (1 - s) * x0[i] + s * eps; }
+    }
+    cur = x; history.push(cur); if (history.length > 12) history.shift();
+    render();
+  }
+  function render() {
+    put(big, cur);
+    hist.innerHTML = '';
+    history.forEach((h) => { const c = A.el('canvas', { class: 'pixel', style: { width: '40px', height: '40px' } }); c.width = c.height = S; put(c, h); hist.append(c); });
+    // sharpness: distance to nearest clean frame
+    let best = Infinity; frames.forEach((f) => { let e = 0; for (let i = 0; i < FD; i++) { const d = cur[i] - f.v[i]; e += d * d; } best = Math.min(best, e); });
+    info.innerHTML = `与最近的“真实”画面的偏差：<b>${Math.sqrt(best / FD).toFixed(3)}</b>（越大越糊）`;
+  }
+  big.tabIndex = 0;
+  big.addEventListener('keydown', (e) => { const m = { ArrowUp: [0, -1], ArrowDown: [0, 1], ArrowLeft: [-1, 0], ArrowRight: [1, 0] }[e.key]; if (m) { e.preventDefault(); act(m); } });
+  reset();
+})();
+</script>
+</body>
+</html>

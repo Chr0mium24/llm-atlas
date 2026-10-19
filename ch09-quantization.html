@@ -1,0 +1,463 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>9 · 量化：从 INT8 到 1-bit — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/style.css">
+<style>
+  .bits { display: flex; gap: 2px; flex-wrap: wrap; margin: 8px 0; }
+  .bits span { width: 22px; height: 28px; display: grid; place-items: center; font: 600 13px var(--mono); border-radius: 4px; color: #fff; }
+  .bits.small span { width: 13px; height: 22px; font-size: 10px; }
+  #qtable tr { cursor: pointer; }
+  #qtable tr.on td { background: var(--accent-soft); }
+  #qtable td { padding: 5px 8px; }
+  .meter { height: 12px; background: var(--grid); border-radius: 0 4px 4px 0; min-width: 120px; }
+  .meter > div { height: 100%; border-radius: 0 4px 4px 0; }
+  .fit { font-size: 13px; }
+</style>
+</head>
+<body>
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker">第 9 章 · 效率</div>
+  <h1>量化：把 16 位权重压到 4 位、2 位，甚至 1 位</h1>
+  <p class="lede">量化是让大模型在你的显卡、Mac、手机上跑起来的最重要的技术，也是 2025–26 年前沿模型训练的一部分：Kimi K3 从 SFT 阶段就开始用 MXFP4 训练，DeepSeek V4 给专家权重做 FP4 量化感知训练，PrismML 的 Bonsai 把 27B 模型压到每权重 1.76 位。这一章从数字格式讲起，用一个可以直接调参的量化实验室，把 llama.cpp 的 K-quants、MXFP4/NVFP4、三值/二值和 Hadamard 旋转放在同一组数据上比较。</p>
+</header>
+
+<h2 id="why">为什么量化有用：解码受带宽限制</h2>
+<p>生成每个 token，都要把 <b>全部（激活的）权重</b> 从显存读一遍到计算单元。batch 小的时候，计算单元大部分时间在等数据，速度上限大致是：</p>
+<div class="eq">tokens/s ≈ 显存带宽 ÷ 每 token 要读的权重字节数<span class="note">例：RTX 4090（约 1 TB/s）跑 8B 模型。BF16 每 token 读 16 GB → 约 60 tok/s；4-bit 读 4.5 GB → 约 200 tok/s</span></div>
+<p>所以量化同时带来三个好处：<b>装得下</b>（显存/内存占用变小）、<b>跑得快</b>（读的字节少）、<b>更省电</b>。代价是精度损失。量化研究的核心问题就是：<b>怎样在尽量少的位数下，让误差尽量小。</b></p>
+
+<h2 id="formats">数字格式：位数怎么分配</h2>
+<p>浮点数 = 符号位 + 指数位 + 尾数位。<b>指数位</b> 决定动态范围（能表示多大和多小的数），<b>尾数位</b> 决定精度（相邻两个可表示数之间的间隔）。整数格式则是在 [−max, max] 内等间隔取值。</p>
+<div id="demo-format"></div>
+<ul>
+  <li><b>BF16</b>：和 FP32 一样有 8 位指数，但尾数只有 7 位。范围大、不容易溢出，是 2020 年后训练的默认格式。</li>
+  <li><b>FP8</b>（E4M3 / E5M2）：Hopper（H100）起硬件原生支持。DeepSeek-V3（2024-12）证明了用 FP8 训练超大 MoE 是可行的。</li>
+  <li><b>FP4 E2M1</b>：只有 16 个值：±{0, 0.5, 1, 1.5, 2, 3, 4, 6}。单靠它几乎没法表示权重，必须配合<b>分块缩放</b>（见下文 MXFP4 / NVFP4）。Blackwell（B200）起原生支持。</li>
+  <li><b>NF4</b>（QLoRA, 2023）：16 个值按正态分布的分位数排列，适合钟形分布的权重。</li>
+  <li><b>三值 {−1, 0, +1}</b>：log₂3 ≈ 1.58 位。矩阵乘法退化为加减法，不再需要乘法器。</li>
+</ul>
+
+<h2 id="basics">量化的基本操作：缩放、取整、分组</h2>
+<p>把一组浮点权重 w 映射到 b 位整数：</p>
+<div class="eq">q = clamp( round( w / s ) , q<sub>min</sub>, q<sub>max</sub> ),&nbsp;&nbsp;&nbsp; ŵ = s · q&nbsp;&nbsp;&nbsp;（对称量化，s = max|w| / q<sub>max</sub>）<span class="note">非对称量化再加一个零点 z：ŵ = s·(q − z)，适合不以 0 为中心的分布</span></div>
+<p>关键是 <b>s 由谁共享</b>，也就是量化 <b>粒度</b>：</p>
+<ul>
+  <li><b>逐张量（per-tensor）</b>：整个矩阵一个 s。只要有一个极大的离群值，s 就被撑大，其余权重全挤在 0 附近的一两个格子里。</li>
+  <li><b>逐通道（per-channel）</b>：每行一个 s。</li>
+  <li><b>分组（per-group / block）</b>：每 32、64 或 128 个权重一个 s，是 4-bit 以下的标配。代价是 s 本身也占位：每 32 个权重配一个 FP16 scale，就多出 16/32 = 0.5 位/权重。所以 Q4_0 实际是 4.5 bpw（bits per weight，每权重位数）。</li>
+  <li><b>两级缩放</b>：scale 自己也量化。llama.cpp 的 <b>K-quants</b>（2023）用 256 个权重组成一个超块，超块存一个 FP16 主缩放，内部 8 或 16 个子块各存一个 6 位的子缩放。<b>MXFP4</b>（OCP 标准，2023）每 32 个 FP4 共享一个 8 位的 2 的幂次缩放（E8M0）；<b>NVFP4</b>（NVIDIA）每 16 个 FP4 共享一个 FP8 E4M3 缩放，外加一个张量级 FP32 缩放。</li>
+</ul>
+
+<h2 id="outliers">真正的敌人：离群值</h2>
+<p>2022 年 LLM.int8() 发现，模型超过约 6.7B 参数后，激活里会出现少数 <b>幅度大几十倍的固定通道</b>（emergent outlier features）。权重里也有少量重要的大值。它们让缩放因子变大，普通权重的精度就被牺牲了。主要对策有四类：</p>
+<ul>
+  <li><b>混合精度</b>（LLM.int8）：离群通道单独用 FP16 计算。</li>
+  <li><b>把难度搬到权重上</b>（SmoothQuant, 2022）/ <b>按激活保护重要通道</b>（AWQ, 2023）：给输入通道乘一个缩放 s，<span class="math">Wx = (W·diag(s))(x / s)</span>，结果不变，但激活大的通道对应的权重被放大，量化时相对误差变小。</li>
+  <li><b>误差补偿</b>（GPTQ, 2022）：逐列量化，用校准数据估计的二阶信息（Hessian），把当前列的量化误差摊到还没量化的列上。llama.cpp 的 <b>imatrix</b> 也是用校准数据决定哪些权重更重要。</li>
+  <li><b>旋转</b>（QuIP#、QuaRot、SpinQuant，2024）：乘一个正交矩阵 R，<span class="math">Wx = (WRᵀ)(Rx)</span>。随机 Hadamard 旋转把集中在少数坐标上的能量摊到所有坐标，分布变得接近高斯、没有尖峰，低位量化就容易得多。<b>Ternary Bonsai 2 就是这样做的</b>：权重离线乘好 1024 维分块 Hadamard 旋转再量化成三值，推理时运行时对激活做同样的旋转。所以必须用 PrismML 的 llama.cpp 分支，原版 llama.cpp 没有激活端的旋转，加载后只会输出乱码。</li>
+</ul>
+
+<h2 id="lab">量化实验室</h2>
+<p>下面生成一个 64×256 的权重矩阵（含离群通道），再用一批带离群通道的激活 x 去乘它。所有方法用同一组数据比较 <b>输出误差 ‖Wx − Ŵx‖ / ‖Wx‖</b>。这比权重误差更能反映模型实际受到的影响。打开 Hadamard 旋转或 AWQ 缩放，看三值、二值和 2-bit 的误差怎么变化。</p>
+<div id="demo-lab" class="bleed"></div>
+<div class="callout"><b>几个值得观察的现象：</b>① 离群强度调高后，逐张量 INT4 的误差急剧变大，分组越细的方法越稳。② MXFP4 的缩放只能是 2 的幂，按 OCP 规范取 floor 时，块内最大值可能被截断到 6，离群值越强误差越大；NVFP4 用 FP8 缩放、组更小，误差明显更低。这正是 NVFP4 被提出、各种 FP4 缩放优化论文涌现的原因。打开旋转后两者的差距大幅缩小。③ 有离群值时，三值和二值的误差很大；打开 Hadamard 旋转后能下降一半以上。这就是 Bonsai 2 用旋转的原因。④ 把两个离群强度都调到 0：高斯分布的权重直接三值化，输出误差仍有约 40%。这是三值网格本身的极限。BitNet、Bonsai 能保住效果，靠的是训练让模型适应三值网格（见下文 QAT），旋转只是去掉离群值这个额外的障碍。⑤ AWQ 缩放对激活离群的情况有效，因为它按激活大小保护了对应的权重列。⑥ 这里都是“直接取整”的 PTQ；真实的 GPTQ、imatrix、QAT 还会进一步降低误差，尤其在 3 位以下。</div>
+
+<h2 id="families">实际在用的格式</h2>
+<div class="tablewrap"><table>
+  <tr><th>格式</th><th>生态</th><th class="num">bpw</th><th>结构</th><th>用在哪</th></tr>
+  <tr><td>Q8_0</td><td>GGUF / llama.cpp</td><td class="num">8.5</td><td>32 个一组，FP16 scale</td><td>几乎无损</td></tr>
+  <tr><td>Q6_K</td><td>GGUF</td><td class="num">6.56</td><td>超块 256 = 16×16，8 位子缩放</td><td>高质量本地部署</td></tr>
+  <tr><td>Q4_K_M</td><td>GGUF</td><td class="num">≈4.8</td><td>以 Q4_K 为主，敏感层用 Q6_K</td><td>本地部署的默认选择</td></tr>
+  <tr><td>Q3_K / Q2_K</td><td>GGUF</td><td class="num">3.44 / 2.63</td><td>超块 256 = 16×16</td><td>显存紧张时；损失明显</td></tr>
+  <tr><td>IQ2_XXS 等 I-quants</td><td>GGUF</td><td class="num">≈2.06</td><td>8 维格点码本（E8 lattice，源自 QuIP#）+ imatrix</td><td>极限压缩</td></tr>
+  <tr><td>GPTQ / AWQ INT4</td><td>vLLM、TensorRT-LLM 等 GPU 推理</td><td class="num">≈4.1–4.25</td><td>分组 128，W4A16</td><td>GPU 服务</td></tr>
+  <tr><td>NF4</td><td>bitsandbytes</td><td class="num">≈4.13</td><td>正态分位数 16 值 + 双重量化</td><td>QLoRA 微调</td></tr>
+  <tr><td>MXFP4</td><td>OCP 标准，Blackwell / MI355 原生</td><td class="num">4.25</td><td>32 个 E2M1 + E8M0 缩放</td><td>gpt-oss、Kimi K3 专家权重</td></tr>
+  <tr><td>NVFP4</td><td>NVIDIA Blackwell</td><td class="num">4.5</td><td>16 个 E2M1 + E4M3 缩放 + FP32 张量缩放</td><td>FP4 推理 / 训练</td></tr>
+  <tr><td>TQ1_0 / Q2_0（三值）</td><td>llama.cpp</td><td class="num">1.69 / 2.06</td><td>{−1,0,1} 打包</td><td>BitNet b1.58 类模型</td></tr>
+  <tr><td>PTQ1_0 / PQ2_0</td><td>PrismML 分支</td><td class="num">1.76 / 2.16</td><td>三值，分组 128 + Hadamard 旋转元数据</td><td>Ternary Bonsai 2</td></tr>
+  <tr><td>Q1_0</td><td>PrismML</td><td class="num">1.125</td><td>符号位 + 每 128 个一个 FP16 缩放</td><td>1-bit Bonsai</td></tr>
+</table></div>
+<p><b>激活和 KV cache 也能量化。</b>只量化权重、计算时还原成 16 位，叫 W4A16，主要是省带宽。权重和激活都低位（W8A8、W4A4），才能用上低精度张量核心的算力，FP8 和 FP4 的硬件支持就是为此准备的。KV cache 量化（FP8、Q4）对长上下文尤其重要（第 8 章）。</p>
+
+<h2 id="qat">PTQ vs QAT：低于 4 位就得在训练里解决</h2>
+<p><b>PTQ（训练后量化）</b>：模型训练好之后直接量化，最多再用少量校准数据。4 位以上通常够用。<b>QAT（量化感知训练）</b>：训练时前向就用量化后的权重（“伪量化”），反向传播用 <b>直通估计器 STE</b> 把梯度原样传回高精度的“潜权重”。模型在训练中就学会在量化网格上工作，会主动避开那些一量化就出错的权重组合。</p>
+<div id="demo-qat"></div>
+<p>这就是 2025–26 年的趋势：<b>量化不再是部署时才做的事，而是训练流程的一部分。</b></p>
+<ul>
+  <li>Gemma 3 QAT（2025-04）：官方发布 int4 QAT 版本，显存约为 BF16 的 1/4，质量损失很小。</li>
+  <li>gpt-oss（2025-08）：MoE 权重直接以 MXFP4 发布，120B 模型可以放进单张 80GB 显卡。</li>
+  <li>Kimi K2 Thinking（2025-11）：INT4 QAT，权重只有约一半大小，长思维链推理速度约翻倍。</li>
+  <li>DeepSeek V4（2026）：专家权重和稀疏注意力索引器做 FP4 QAT，其余 FP8，针对 Blackwell。</li>
+  <li><b>Kimi K3（2026-07）</b>：从 SFT 阶段开始做 QAT，MoE 专家权重 MXFP4、激活 MXFP8。2.8T 参数按 4 位存储约 1.4 TB，加上分块缩放约 1.5 TB。Blackwell 的张量核心能原生执行分块缩放的 MXFP4；Hopper 需要用 Marlin/Machete 类内核先反量化。</li>
+  <li><b>原生低精度预训练</b>：NVIDIA 展示了用 NVFP4 精度预训练 12B 模型到 10T token，与 FP8 基线几乎无差距。</li>
+  <li><b>极低位</b>：BitNet b1.58（2024）从头训练三值模型；BitNet b1.58 2B4T（2025-04）是第一个原生训练的开源 1-bit 模型；PrismML 1-bit Bonsai（2026-03，8B 只占 1.15 GB）和 Ternary Bonsai 2 27B（基于 Qwen3.8-27B，1.76 bpw，5.9 GB，PrismML 报告保留约 98% 的评测成绩）；腾讯混元 HY-1.8B-2Bit 走 2 位 QAT 端侧路线。</li>
+</ul>
+
+<h2 id="size">算一算：多大的模型能放进你的设备</h2>
+<div id="demo-size"></div>
+
+<h2 id="frontier">2026 年的研究前沿</h2>
+<ul>
+  <li><b>FP4 的缩放怎么选</b>：大量 2026 年的论文在优化 NVFP4/MXFP4 的块缩放，例如 Four over Six（自适应块缩放）、SOAR、ScaleSweep、H-Scale（用 Hessian 引导缩放）、FOCUS。NVIDIA 报告 DeepSeek-R1 量化到 NVFP4 后，推理和知识类评测与 FP8 相差约 1% 以内。</li>
+  <li><b>FP4 训练</b>：前向、反向都用 FP4，需要随机舍入、Hadamard 旋转梯度等技巧来控制误差。</li>
+  <li><b>2 位以下的 PTQ</b>：PT2-LLM（ICLR 2026）等研究训练后三值化；旋转加码本（QTIP、AQLM 一类）继续压低误差。</li>
+  <li><b>多模态量化</b>：视觉编码器和投影层对量化更敏感，例如 Llama-Mobile 做 2.7 位 VLM。</li>
+  <li><b>内核与硬件</b>：三值、二值模型要真正变快，需要专门的内核（bitnet.cpp、PrismML 的 Metal/CUDA 内核把 Hadamard 变换融合进权重加载路径）。</li>
+</ul>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2016</span>BinaryConnect / XNOR-Net / TWN：CNN 的二值、三值网络</li>
+  <li><span class="d">2018</span>Jacob 等：整数量化推理（TFLite）；STE 成为 QAT 标准做法</li>
+  <li><span class="d">2022</span>LLM.int8()（离群特征）、SmoothQuant、GPTQ</li>
+  <li><span class="d">2023</span>AWQ、QLoRA / NF4；llama.cpp K-quants（6 月）与 GGUF（8 月）；QuIP；OCP MX 规范；BitNet</li>
+  <li><span class="d">2024</span>BitNet b1.58（2 月）、QuIP#、QuaRot、SpinQuant、I-quants；DeepSeek-V3 FP8 训练；Blackwell FP4</li>
+  <li><span class="d">2025</span>Gemma 3 QAT；BitNet b1.58 2B4T；gpt-oss MXFP4；Kimi K2 Thinking INT4 QAT</li>
+  <li><span class="d">2026</span>1-bit Bonsai（3 月）→ Ternary Bonsai 2；DeepSeek V4 FP4 QAT；Kimi K3 MXFP4 QAT；NVFP4 预训练与 PTQ 研究集中出现</li>
+</ul>
+<p class="src">资料：<a href="https://docs.prismml.com/download/formats">PrismML 格式文档</a>；<a href="https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf">Ternary-Bonsai-2-27B</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3：2.8T 参数，四位一组</a>；<a href="https://research.nvidia.com/labs/eai/blogs/pushing-intelligence-to-4-bit/">NVIDIA：Pushing Intelligence to 4-bit</a>；<a href="https://tensorfoundry.io/blog/llm-quantisation-field-guide">LLM Quantisation Field Guide 2026</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script src="assets/common.js"></script>
+<script>
+/* ================= float helpers ================= */
+const FMT = {
+  fp32: { n: 'FP32', e: 8, m: 23, ieee: true },
+  bf16: { n: 'BF16', e: 8, m: 7, ieee: true },
+  fp16: { n: 'FP16', e: 5, m: 10, ieee: true },
+  e4m3: { n: 'FP8 E4M3', e: 4, m: 3, max: 448 },
+  e5m2: { n: 'FP8 E5M2', e: 5, m: 2, ieee: true },
+  e2m1: { n: 'FP4 E2M1', e: 2, m: 1, max: 6 },
+};
+function encFloat(x, f) {
+  const bias = (1 << (f.e - 1)) - 1;
+  const emin = 1 - bias;
+  const emax = f.ieee ? (1 << f.e) - 2 - bias : (1 << f.e) - 1 - bias;
+  const maxMant = f.max ? Math.round((f.max / Math.pow(2, emax) - 1) * (1 << f.m)) : (1 << f.m) - 1;
+  const maxVal = Math.pow(2, emax) * (1 + maxMant / (1 << f.m));
+  const sign = x < 0 || Object.is(x, -0) ? 1 : 0;
+  let a = Math.abs(x);
+  if (a === 0) return { v: 0, sign, ef: 0, mf: 0 };
+  if (a >= maxVal) return { v: (sign ? -1 : 1) * maxVal, sign, ef: emax + bias, mf: maxMant, sat: a > maxVal };
+  let ex = Math.floor(Math.log2(a));
+  if (ex < emin) {
+    let mf = Math.round(a / Math.pow(2, emin - f.m));
+    if (mf >= 1 << f.m) return { v: (sign ? -1 : 1) * Math.pow(2, emin), sign, ef: 1, mf: 0 };
+    return { v: (sign ? -1 : 1) * mf * Math.pow(2, emin - f.m), sign, ef: 0, mf };
+  }
+  let mf = Math.round((a / Math.pow(2, ex) - 1) * (1 << f.m));
+  if (mf >= 1 << f.m) { mf = 0; ex++; }
+  if (ex > emax || (ex === emax && mf > maxMant)) return { v: (sign ? -1 : 1) * maxVal, sign, ef: emax + bias, mf: maxMant, sat: true };
+  return { v: (sign ? -1 : 1) * Math.pow(2, ex) * (1 + mf / (1 << f.m)), sign, ef: ex + bias, mf };
+}
+const E2M1 = [0, 0.5, 1, 1.5, 2, 3, 4, 6];
+function nearestE2M1(x) { const a = Math.abs(x); let best = 0, bd = Infinity; for (const g of E2M1) { const d = Math.abs(a - g); if (d < bd) { bd = d; best = g; } } return Math.sign(x) * best; }
+const NF4 = [-1, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453, -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0, 0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224, 0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1];
+
+/* ================= format explorer ================= */
+(function () {
+  const { bd } = A.demo('demo-format', '数字格式浏览器：一个数在不同格式下长什么样', '');
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  let fmt = 'e2m1';
+  A.seg(ctl, [{ v: 'fp32', t: 'FP32' }, { v: 'bf16', t: 'BF16' }, { v: 'fp16', t: 'FP16' }, { v: 'e4m3', t: 'FP8 E4M3' }, { v: 'e5m2', t: 'FP8 E5M2' }, { v: 'e2m1', t: 'FP4 E2M1' }, { v: 'int8', t: 'INT8' }, { v: 'int4', t: 'INT4' }, { v: 'nf4', t: 'NF4' }, { v: 'tern', t: '三值' }], fmt, (v) => { fmt = v; render(); }, '格式');
+  const ctl2 = A.el('div', { class: 'controls' }); bd.append(ctl2);
+  const xS = A.slider(ctl2, { label: '输入值 x', min: -8, max: 8, step: 0.001, value: 2.7, fmt: (v) => v.toFixed(3), on: () => render(), width: 320 });
+  const sS = A.slider(ctl2, { label: '整数/NF4/三值的缩放 s', min: 0.01, max: 2, step: 0.01, value: 1, fmt: (v) => v.toFixed(2), on: () => render() });
+  const out = A.el('div'); bd.append(out);
+  const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
+  const view = A.canvas(cv, { height: 92 }, paint);
+  let grid = [], xv = 0, qv = 0, range = 8;
+  function render() {
+    const x = xS.value, s = sS.value; xv = x;
+    out.innerHTML = '';
+    const cols = A.series();
+    if (FMT[fmt]) {
+      const f = FMT[fmt], r = encFloat(x, f);
+      qv = r.v;
+      const bits = A.el('div', { class: 'bits' + (f.m > 10 ? ' small' : '') });
+      bits.append(A.el('span', { style: { background: cols[7] }, title: '符号' }, r.sign));
+      for (let i = f.e - 1; i >= 0; i--) bits.append(A.el('span', { style: { background: cols[0] }, title: '指数' }, (r.ef >> i) & 1));
+      for (let i = f.m - 1; i >= 0; i--) bits.append(A.el('span', { style: { background: cols[2] }, title: '尾数' }, (r.mf >> i) & 1));
+      const bias = (1 << (f.e - 1)) - 1;
+      const maxV = encFloat(1e40, f).v, minN = Math.pow(2, 1 - bias);
+      out.append(A.el('div', { class: 'legend' }, A.el('span', { html: `<i style="background:${cols[7]}"></i>符号 1 位` }), A.el('span', { html: `<i style="background:${cols[0]}"></i>指数 ${f.e} 位（偏置 ${bias}）` }), A.el('span', { html: `<i style="background:${cols[2]}"></i>尾数 ${f.m} 位` })), bits);
+      out.append(A.el('div', { class: 'stats' },
+        stat('存储的值', fmtNum(r.v) + (r.sat ? '（饱和）' : '')), stat('误差', fmtNum(r.v - x)), stat('相对误差', x ? A.pct(Math.abs(r.v - x) / Math.abs(x), 3) : '—'),
+        stat('最大值', fmtNum(maxV)), stat('最小正规数', fmtNum(minN)), stat('1 附近的间隔', fmtNum(Math.pow(2, -f.m)))));
+      range = f.e <= 4 ? Math.min(maxV, 8) : 8;
+      grid = [];
+      if (f.e + f.m <= 7) for (let b = 0; b < 1 << (f.e + f.m); b++) { const ef = b >> f.m, mf = b & ((1 << f.m) - 1); const v = ef === 0 ? mf * Math.pow(2, 1 - bias - f.m) : Math.pow(2, ef - bias) * (1 + mf / (1 << f.m)); if (f.max && v > f.max) continue; if (f.ieee && ef === (1 << f.e) - 1) continue; grid.push(v, -v); }
+    } else {
+      let levels;
+      if (fmt === 'int8') levels = Array.from({ length: 255 }, (_, i) => (i - 127) * s);
+      if (fmt === 'int4') levels = Array.from({ length: 15 }, (_, i) => (i - 7) * s);
+      if (fmt === 'nf4') levels = NF4.map((v) => v * 7 * s);
+      if (fmt === 'tern') levels = [-s, 0, s];
+      grid = levels;
+      let best = levels[0]; levels.forEach((l) => { if (Math.abs(l - x) < Math.abs(best - x)) best = l; });
+      qv = best;
+      const nb = fmt === 'int8' ? 8 : fmt === 'tern' ? 1.58 : 4;
+      out.append(A.el('p', { class: 'small' }, fmt === 'nf4' ? 'NF4 的 16 个值按标准正态分布的分位数排列（这里乘了 7s 方便和 INT4 对比），0 附近密、两端疏。' : fmt === 'tern' ? '三值只有 −s、0、+s 三个值，s 通常取这一组权重的平均绝对值（BitNet b1.58 的 absmean）。' : `${nb} 位对称整数：在 ±${fmt === 'int8' ? 127 : 7}·s 之间等间隔取值。间隔处处相同，所以小数值的相对误差大。`));
+      out.append(A.el('div', { class: 'stats' }, stat('量化后', fmtNum(qv)), stat('误差', fmtNum(qv - x)), stat('可表示的值', levels.length + ' 个'), stat('位数', nb + ' bit')));
+      range = 8;
+    }
+    view.redraw();
+  }
+  const stat = (k, v) => A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v));
+  const fmtNum = (v) => (Math.abs(v) >= 1e5 || (Math.abs(v) < 1e-3 && v !== 0) ? v.toExponential(4) : (+v.toFixed(6)).toString());
+  function paint(ctx, W, H) {
+    const X = (v) => 20 + ((v + range) / (2 * range)) * (W - 40);
+    const y0 = 46;
+    ctx.strokeStyle = A.css('--axis'); ctx.beginPath(); ctx.moveTo(20, y0); ctx.lineTo(W - 20, y0); ctx.stroke();
+    A.niceTicks(-range, range, 8).forEach((t) => A.text(ctx, t + '', X(t), y0 + 26, { size: 11, align: 'center', color: A.css('--muted') }));
+    if (grid.length && grid.length < 600) {
+      ctx.strokeStyle = A.css('--s1'); ctx.lineWidth = 1.2;
+      grid.forEach((g) => { if (Math.abs(g) > range) return; ctx.beginPath(); ctx.moveTo(X(g), y0 - 10); ctx.lineTo(X(g), y0 + 10); ctx.stroke(); });
+      A.text(ctx, `蓝色刻度 = 可表示的值（${grid.filter((g) => Math.abs(g) <= range).length} 个在可视范围内）`, 20, 12, { size: 11.5, color: A.css('--muted') });
+    } else A.text(ctx, '可表示的值太密（数以万计），画不下', 20, 12, { size: 11.5, color: A.css('--muted') });
+    ctx.fillStyle = A.css('--s2'); ctx.beginPath(); ctx.arc(X(A.clamp(xv, -range, range)), y0, 6, 0, 7); ctx.fill();
+    ctx.fillStyle = A.css('--s3'); ctx.beginPath(); ctx.arc(X(A.clamp(qv, -range, range)), y0, 4, 0, 7); ctx.fill();
+    A.text(ctx, '● 输入', W - 120, 12, { size: 11.5, color: A.css('--s2') });
+    A.text(ctx, '● 量化后', W - 70, 12, { size: 11.5, color: A.css('--s3') });
+  }
+  render();
+})();
+
+/* ================= quantization lab ================= */
+(function () {
+  const { bd } = A.demo('demo-lab', '量化实验室：同一个矩阵，12 种量化方法', '64×256 权重 · 32 个激活样本');
+  const R = 64, C = 256, NS = 32;
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const oS = A.slider(ctl, { label: '权重离群强度', min: 0, max: 1, step: 0.01, value: 0.5, fmt: (v) => v.toFixed(2), on: A.debounce(() => { gen(); run(); }, 40) });
+  const aS = A.slider(ctl, { label: '激活离群强度', min: 0, max: 1, step: 0.01, value: 0.5, fmt: (v) => v.toFixed(2), on: A.debounce(() => { gen(); run(); }, 40) });
+  const opt = A.el('div', { class: 'flex', style: { marginBottom: '8px' } }); bd.append(opt);
+  let useH = false, useAWQ = false, seed = 1;
+  A.check(opt, 'Hadamard 旋转（QuIP# / Bonsai 2 式）', false, (v) => { useH = v; run(); });
+  A.check(opt, 'AWQ 式按激活缩放', false, (v) => { useAWQ = v; run(); });
+  opt.append(A.el('button', { onclick: () => { seed++; gen(); run(); } }, '换一个随机矩阵'));
+  const tbl = A.el('div', { class: 'tablewrap' }); bd.append(tbl);
+  const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
+  const legend = A.el('div', { class: 'legend' }); bd.append(legend);
+  legend.innerHTML = '<span><i style="background:var(--muted);border-radius:50%"></i>原始权重</span><span><i style="background:var(--s1);border-radius:50%"></i>量化后（反量化回浮点）</span><span><i class="line" style="background:var(--s8)"></i>误差</span><span>虚线 = 分组边界</span>';
+
+  let W, X, Y, sel = 'q4k';
+  function gen() {
+    const r = A.rng(seed * 101);
+    const os = oS.value, as = aS.value;
+    const wCol = new Float64Array(C).fill(1), aCol = new Float64Array(C).fill(1);
+    [5, 40, 77, 130, 200, 233].forEach((j) => (wCol[j] = 1 + 12 * os));
+    [5, 21, 77, 99, 160, 201, 240, 250].forEach((j) => (aCol[j] = 1 + 30 * as));
+    W = Array.from({ length: R }, () => Float64Array.from({ length: C }, (_, j) => A.gauss(r) * 0.02 * wCol[j] * (r() < 0.004 * (1 + 4 * os) ? 1 + 10 * os : 1)));
+    X = Array.from({ length: NS }, () => Float64Array.from({ length: C }, (_, j) => A.gauss(r) * aCol[j]));
+    Y = X.map((x) => W.map((w) => A.dot(w, x)));
+  }
+  // --- transforms
+  const signs = (() => { const r = A.rng(777); return Float64Array.from({ length: C }, () => (r() < 0.5 ? -1 : 1)); })();
+  function fwht(a) { const n = a.length; for (let h = 1; h < n; h *= 2) for (let i = 0; i < n; i += h * 2) for (let j = i; j < i + h; j++) { const x = a[j], y = a[j + h]; a[j] = x + y; a[j + h] = x - y; } const s = 1 / Math.sqrt(n); for (let i = 0; i < n; i++) a[i] *= s; return a; }
+  const rot = (v) => fwht(Float64Array.from(v, (x, i) => x * signs[i]));
+  // --- quantizers: take row (Float64Array), return dequantized row
+  function groups(row, g, fn) { const o = new Float64Array(row.length); for (let s = 0; s < row.length; s += g) { const blk = row.subarray(s, s + g); const q = fn(blk); for (let i = 0; i < q.length; i++) o[s + i] = q[i]; } return o; }
+  const amax = (b) => { let m = 0; for (const x of b) m = Math.max(m, Math.abs(x)); return m; };
+  const symInt = (b, qmax, sc) => Float64Array.from(b, (x) => sc ? A.clamp(Math.round(x / sc), -qmax, qmax) * sc : 0);
+  const fp16 = (v) => encFloat(v, FMT.fp16).v;
+  function q4_0(b) { let m = 0; for (const x of b) if (Math.abs(x) > Math.abs(m)) m = x; const d = fp16(m / -8); return Float64Array.from(b, (x) => (d ? A.clamp(Math.round(x / d), -8, 7) * d : 0)); }
+  function kquantAsym(row, sub, bitsQ, bitsS) { // Q4_K / Q2_K style: x ≈ d*sc*q - dmin*m
+    const qmax = (1 << bitsQ) - 1, smax = (1 << bitsS) - 1, n = row.length / sub;
+    const scales = [], mins = [];
+    for (let k = 0; k < n; k++) { const b = row.subarray(k * sub, (k + 1) * sub); let lo = Infinity, hi = -Infinity; for (const x of b) { lo = Math.min(lo, x); hi = Math.max(hi, x); } lo = Math.min(lo, 0); scales.push((hi - lo) / qmax); mins.push(-lo); }
+    const d = fp16(Math.max(...scales) / smax), dmin = fp16(Math.max(...mins) / smax);
+    const o = new Float64Array(row.length);
+    for (let k = 0; k < n; k++) {
+      const sc = d ? Math.round(scales[k] / d) : 0, m = dmin ? Math.round(mins[k] / dmin) : 0;
+      const step = d * Math.max(sc, 1), off = dmin * m;
+      for (let i = k * sub; i < (k + 1) * sub; i++) o[i] = A.clamp(Math.round((row[i] + off) / step), 0, qmax) * step - off;
+    }
+    return o;
+  }
+  function kquantSym(row, sub, qlo, qhi, bitsS) { // Q3_K / Q6_K style signed scales
+    const n = row.length / sub, smax = (1 << (bitsS - 1)) - 1;
+    const ds = [];
+    for (let k = 0; k < n; k++) { let m = 0; for (let i = k * sub; i < (k + 1) * sub; i++) if (Math.abs(row[i]) > Math.abs(m)) m = row[i]; ds.push(m / qlo); }
+    const D = fp16(amax(ds) / smax);
+    const o = new Float64Array(row.length);
+    for (let k = 0; k < n; k++) { const dk = D ? Math.round(ds[k] / D) * D : 0; for (let i = k * sub; i < (k + 1) * sub; i++) o[i] = dk ? A.clamp(Math.round(row[i] / dk), qlo, qhi) * dk : 0; }
+    return o;
+  }
+  function mxfp4(b) { const m = amax(b); if (!m) return new Float64Array(b.length); const X = Math.pow(2, Math.floor(Math.log2(m)) - 2); return Float64Array.from(b, (x) => nearestE2M1(x / X) * X); }
+  let gScale = 1;
+  function nvfp4(b) { const m = amax(b); if (!m) return new Float64Array(b.length); const s = encFloat(m / 6 / gScale, FMT.e4m3).v * gScale; return Float64Array.from(b, (x) => (s ? nearestE2M1(x / s) * s : 0)); }
+  function ternTWN(b) {
+    const ma = A.mean(Array.from(b, Math.abs)); let best = null;
+    for (let t = 0.3; t <= 1.3; t += 0.1) {
+      const th = t * ma; let sa = 0, n = 0; for (const x of b) if (Math.abs(x) > th) { sa += Math.abs(x); n++; }
+      const al = n ? fp16(sa / n) : 0; let err = 0; const q = Float64Array.from(b, (x) => (Math.abs(x) > th ? Math.sign(x) * al : 0));
+      for (let i = 0; i < b.length; i++) err += (q[i] - b[i]) ** 2;
+      if (!best || err < best.err) best = { err, q };
+    }
+    return best.q;
+  }
+  function binary(b) { const al = fp16(A.mean(Array.from(b, Math.abs))); return Float64Array.from(b, (x) => (x >= 0 ? al : -al)); }
+  const METHODS = [
+    { k: 'int8t', n: 'INT8 逐张量', bpw: 8, g: C, tensor: (M) => { const s = Math.max(...M.map(amax)) / 127; return M.map((w) => symInt(w, 127, s)); } },
+    { k: 'int4t', n: 'INT4 逐张量', bpw: 4, g: C, tensor: (M) => { const s = Math.max(...M.map(amax)) / 7; return M.map((w) => symInt(w, 7, s)); } },
+    { k: 'int4c', n: 'INT4 逐通道', bpw: 4.06, g: C, row: (w) => symInt(w, 7, amax(w) / 7) },
+    { k: 'q4_0', n: 'Q4_0（组 32）', bpw: 4.5, g: 32, row: (w) => groups(w, 32, q4_0) },
+    { k: 'q4k', n: 'Q4_K（超块 256 = 8×32）', bpw: 4.5, g: 32, row: (w) => kquantAsym(w, 32, 4, 6) },
+    { k: 'q3k', n: 'Q3_K（超块 256 = 16×16）', bpw: 3.44, g: 16, row: (w) => kquantSym(w, 16, -4, 3, 6) },
+    { k: 'q2k', n: 'Q2_K（超块 256 = 16×16）', bpw: 2.63, g: 16, row: (w) => kquantAsym(w, 16, 2, 4) },
+    { k: 'mxfp4', n: 'MXFP4（组 32，E8M0 缩放）', bpw: 4.25, g: 32, row: (w) => groups(w, 32, mxfp4) },
+    { k: 'nvfp4', n: 'NVFP4（组 16，E4M3 缩放）', bpw: 4.5, g: 16, row: (w) => groups(w, 16, nvfp4) },
+    { k: 'tern', n: '三值 逐张量 absmean（BitNet b1.58）', bpw: 1.58, g: C, tensor: (M) => { let s = 0; M.forEach((w) => w.forEach((x) => (s += Math.abs(x)))); const g = s / (R * C); return M.map((w) => Float64Array.from(w, (x) => A.clamp(Math.round(x / g), -1, 1) * g)); } },
+    { k: 'tern128', n: '三值 组 128（Ternary Bonsai 式）', bpw: 1.71, g: 128, row: (w) => groups(w, 128, ternTWN) },
+    { k: 'bin128', n: '二值 组 128（1-bit Bonsai Q1_0 式）', bpw: 1.125, g: 128, row: (w) => groups(w, 128, binary) },
+  ];
+  let results = [], cache = {};
+  function run() {
+    // pre-transforms
+    let s = null;
+    if (useAWQ) { s = new Float64Array(C); for (let j = 0; j < C; j++) { let m = 0; X.forEach((x) => (m += Math.abs(x[j]))); s[j] = Math.sqrt(m / NS); } const gm = Math.exp(A.mean(Array.from(s, Math.log))); for (let j = 0; j < C; j++) s[j] /= gm; }
+    let Wt = W.map((w) => Float64Array.from(w, (x, j) => (s ? x * s[j] : x)));
+    let Xt = X.map((x) => Float64Array.from(x, (v, j) => (s ? v / s[j] : v)));
+    if (useH) { Wt = Wt.map(rot); Xt = Xt.map(rot); }
+    gScale = Math.max(...Wt.map(amax)) / (6 * 448);
+    const yn = Math.sqrt(A.sum(Y.map((y) => A.sum(y.map((v) => v * v)))));
+    const wn = Math.sqrt(A.sum(W.map((w) => A.dot(w, w))));
+    results = METHODS.map((m) => {
+      const Q = m.tensor ? m.tensor(Wt) : Wt.map(m.row);
+      let e = 0; Xt.forEach((x, i) => Q.forEach((q, r) => { e += (A.dot(q, x) - Y[i][r]) ** 2; }));
+      let we = 0; Q.forEach((q, r) => q.forEach((v, j) => (we += (v - Wt[r][j]) ** 2)));
+      cache[m.k] = { Q, Wt };
+      return { m, out: Math.sqrt(e) / yn, w: Math.sqrt(we) / wn };
+    });
+    drawTable(); view.redraw();
+  }
+  function drawTable() {
+    const mx = Math.max(...results.map((r) => r.out), 0.05);
+    tbl.innerHTML = '';
+    const t = A.el('table', { id: 'qtable' });
+    t.append(A.el('tr', null, A.el('th', null, '方法'), A.el('th', { class: 'num' }, 'bpw'), A.el('th', { class: 'num' }, '权重相对误差'), A.el('th', null, '输出相对误差 ‖Wx−Ŵx‖/‖Wx‖'), A.el('th', { class: 'num' }, '70B 模型大小')));
+    results.forEach((r) => {
+      const c = r.out < 0.05 ? 'var(--s3)' : r.out < 0.15 ? 'var(--s1)' : r.out < 0.4 ? 'var(--s4)' : 'var(--s8)';
+      const tr = A.el('tr', { class: r.m.k === sel ? 'on' : '', onclick: () => { sel = r.m.k; drawTable(); view.redraw(); } },
+        A.el('td', null, r.m.n), A.el('td', { class: 'num' }, r.m.bpw.toFixed(2)), A.el('td', { class: 'num' }, A.pct(r.w, 1)),
+        A.el('td', null, A.el('div', { class: 'flex', style: { gap: '8px', flexWrap: 'nowrap' } }, A.el('div', { class: 'meter grow' }, A.el('div', { style: { width: Math.min(100, (r.out / mx) * 100) + '%', background: c } })), A.el('span', { class: 'mono small', style: { minWidth: '52px', textAlign: 'right' } }, A.pct(r.out, 1)))),
+        A.el('td', { class: 'num' }, A.bytes((70e9 * r.m.bpw) / 8)));
+      t.append(tr);
+    });
+    tbl.append(t);
+  }
+  const view = A.canvas(cv, { aspect: 0.3 }, (ctx, Wd, H) => {
+    const c = cache[sel]; if (!c) return;
+    // pick row with largest single weight
+    let rr = 0, best = 0; c.Wt.forEach((w, i) => { const m = amax(w); if (m > best) { best = m; rr = i; } });
+    const n = 96, row = c.Wt[rr], q = c.Q[rr];
+    let m = 0; for (let j = 0; j < n; j++) m = Math.max(m, Math.abs(row[j]), Math.abs(q[j]));
+    const box = { x: 10, y: 22, w: Wd - 20, h: H - 34 };
+    const X0 = (j) => box.x + (j + 0.5) * (box.w / n), Yv = (v) => box.y + box.h / 2 - (v / m) * (box.h / 2);
+    ctx.strokeStyle = A.css('--axis'); ctx.beginPath(); ctx.moveTo(box.x, Yv(0)); ctx.lineTo(box.x + box.w, Yv(0)); ctx.stroke();
+    const meth = METHODS.find((x) => x.k === sel);
+    if (meth.g < n) { ctx.setLineDash([3, 4]); ctx.strokeStyle = A.css('--muted'); for (let g = meth.g; g < n; g += meth.g) { const x = box.x + g * (box.w / n); ctx.beginPath(); ctx.moveTo(x, box.y); ctx.lineTo(x, box.y + box.h); ctx.stroke(); } ctx.setLineDash([]); }
+    for (let j = 0; j < n; j++) {
+      ctx.strokeStyle = A.alpha(A.css('--s8'), 0.8); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(X0(j), Yv(row[j])); ctx.lineTo(X0(j), Yv(q[j])); ctx.stroke();
+      ctx.fillStyle = A.css('--muted'); ctx.beginPath(); ctx.arc(X0(j), Yv(row[j]), 2.6, 0, 7); ctx.fill();
+      ctx.fillStyle = A.css('--s1'); ctx.beginPath(); ctx.arc(X0(j), Yv(q[j]), 2.6, 0, 7); ctx.fill();
+    }
+    A.text(ctx, `${meth.n}：第 ${rr + 1} 行的前 ${n} 个权重${useH ? '（旋转后）' : ''}${useAWQ ? '（AWQ 缩放后）' : ''}`, box.x, 10, { size: 12, color: A.css('--ink-2') });
+  });
+  gen(); run();
+})();
+
+/* ================= QAT toy ================= */
+(function () {
+  const { bd } = A.demo('demo-qat', 'PTQ vs QAT：同一个小网络，同样的位数', '32 个隐藏单元，拟合一条曲线');
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  let bits = 2;
+  A.seg(ctl, [{ v: 1, t: '1 位（二值）' }, { v: 2, t: '1.58 位（三值）' }, { v: 3, t: '3 位' }, { v: 4, t: '4 位' }, { v: 8, t: '8 位' }], bits, (v) => { bits = v; train(); }, '权重位数');
+  const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
+  const legend = A.el('div', { class: 'legend' }); bd.append(legend);
+  const stats = A.el('div', { class: 'stats' }); bd.append(stats);
+  legend.innerHTML = '<span><i class="line" style="background:var(--axis)"></i>目标函数</span><span><i class="line" style="background:var(--s3)"></i>全精度模型</span><span><i class="line" style="background:var(--s8)"></i>PTQ：训练完再量化</span><span><i class="line" style="background:var(--s1)"></i>QAT：带着量化训练（STE）</span>';
+  const H = 32, r = A.rng(4);
+  const a = Array.from({ length: H }, () => A.gauss(r) * 1.6), b = Array.from({ length: H }, () => (r() - 0.5) * 6);
+  const xs = Array.from({ length: 120 }, (_, i) => -3 + (6 * i) / 119);
+  const f = (x) => Math.sin(1.7 * x) + 0.35 * x + 0.3 * Math.cos(4 * x);
+  const ys = xs.map(f);
+  const Phi = xs.map((x) => a.map((ai, h) => Math.tanh(ai * x + b[h])));
+  function quant(w) {
+    if (bits === 1) { const al = A.mean(w.map(Math.abs)); return w.map((x) => (x >= 0 ? al : -al)); }
+    if (bits === 2) { const g = A.mean(w.map(Math.abs)); return w.map((x) => A.clamp(Math.round(x / g), -1, 1) * g); }
+    const qm = (1 << (bits - 1)) - 1, s = Math.max(...w.map(Math.abs)) / qm; return w.map((x) => A.clamp(Math.round(x / s), -qm, qm) * s);
+  }
+  const pred = (w, phi) => A.dot(w, phi);
+  const mse = (w) => A.mean(Phi.map((p, i) => (pred(w, p) - ys[i]) ** 2));
+  function adam(w, gradFn, steps, lr) {
+    const m = new Array(H).fill(0), v = new Array(H).fill(0);
+    for (let t = 1; t <= steps; t++) {
+      const g = gradFn(w);
+      for (let i = 0; i < H; i++) { m[i] = 0.9 * m[i] + 0.1 * g[i]; v[i] = 0.999 * v[i] + 0.001 * g[i] * g[i]; w[i] -= (lr * (m[i] / (1 - Math.pow(0.9, t)))) / (Math.sqrt(v[i] / (1 - Math.pow(0.999, t))) + 1e-8); }
+    }
+    return w;
+  }
+  const gradAt = (wEval) => { const g = new Array(H).fill(0); Phi.forEach((p, i) => { const e = pred(wEval, p) - ys[i]; for (let h = 0; h < H; h++) g[h] += (2 * e * p[h]) / Phi.length; }); return g; };
+  let wFP, wPTQ, wQAT;
+  function train() {
+    wFP = adam(new Array(H).fill(0).map(() => A.gauss(A.rng(1)) * 0.1), (w) => gradAt(w), 3000, 0.02);
+    wPTQ = quant(wFP);
+    // QAT: forward with quantized weights, STE passes the gradient straight to the latent FP weights
+    const latent = wFP.slice(), m = new Array(H).fill(0), v = new Array(H).fill(0), steps = 6000;
+    let best = wPTQ, bestL = mse(wPTQ);
+    for (let t = 1; t <= steps; t++) {
+      const lrt = 1e-4 + 0.02 * 0.5 * (1 + Math.cos((Math.PI * t) / steps));
+      const g = gradAt(quant(latent));
+      for (let i = 0; i < H; i++) { m[i] = 0.9 * m[i] + 0.1 * g[i]; v[i] = 0.999 * v[i] + 0.001 * g[i] * g[i]; latent[i] -= (lrt * (m[i] / (1 - Math.pow(0.9, t)))) / (Math.sqrt(v[i] / (1 - Math.pow(0.999, t))) + 1e-8); }
+      if (t % 5 === 0) { const q = quant(latent), l = mse(q); if (l < bestL) { best = q; bestL = l; } }
+    }
+    wQAT = best;
+    view.redraw();
+    stats.innerHTML = '';
+    [['全精度 MSE', mse(wFP)], ['PTQ MSE', mse(wPTQ)], ['QAT MSE', mse(wQAT)]].forEach(([k, v], i) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { color: ['var(--good-ink)', 'var(--s8)', 'var(--s1)'][i] } }, v.toFixed(4)))));
+  }
+  const view = A.canvas(cv, { aspect: 0.38 }, (ctx, W, Hh) => {
+    const box = { x: 36, y: 10, w: W - 50, h: Hh - 36 };
+    const ax = A.axes(ctx, box, { xmin: -3, xmax: 3, ymin: -2.5, ymax: 2.5, xfmt: (v) => v, yfmt: (v) => v });
+    const cols = A.series();
+    const line = (fy, c, w) => { ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); xs.forEach((x, i) => { const y = ax.Y(A.clamp(fy(i), -2.5, 2.5)); i ? ctx.lineTo(ax.X(x), y) : ctx.moveTo(ax.X(x), y); }); ctx.stroke(); };
+    line((i) => ys[i], A.css('--axis'), 5);
+    line((i) => pred(wFP, Phi[i]), cols[2], 2);
+    line((i) => pred(wPTQ, Phi[i]), cols[7], 2);
+    line((i) => pred(wQAT, Phi[i]), cols[0], 2.5);
+  });
+  train();
+})();
+
+/* ================= size calculator ================= */
+(function () {
+  const { bd } = A.demo('demo-size', '模型大小 × 量化格式 × 设备', '权重大小 + 约 15% 运行时与短上下文 KV');
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const MODELS = [['Qwen3 8B', 8.2], ['Gemma 4 12B', 12], ['Qwen3.8 27B', 27], ['Llama 3 70B', 70.6], ['gpt-oss-120b', 117], ['DeepSeek V4-Flash', 284], ['Muse Spark Open', 816], ['DeepSeek V4-Pro', 1600], ['Kimi K3', 2800]];
+  let P = 27;
+  A.seg(ctl, MODELS.map(([n, p]) => ({ v: p, t: n })), P, (v) => { P = v; draw(); }, '模型（总参数）');
+  const FM = [['BF16', 16], ['FP8 / Q8_0', 8.5], ['Q6_K', 6.56], ['Q4_K_M', 4.85], ['MXFP4', 4.25], ['Q3_K_M', 3.9], ['IQ2_XXS', 2.06], ['三值 PTQ1_0', 1.76], ['二值 Q1_0', 1.125]];
+  const DEV = [['iPhone（8 GB，可用约 4）', 4], ['M3 MacBook 16 GB（可用约 11）', 11], ['RTX 4070 Ti 12 GB', 12], ['RTX 4090 24 GB', 24], ['H100 80 GB', 80], ['Mac Studio M3 Ultra 512 GB', 480], ['8×H100（640 GB）', 640], ['8×B200（1.5 TB）', 1536]];
+  const out = A.el('div', { class: 'tablewrap' }); bd.append(out);
+  function draw() {
+    let h = '<table><tr><th>格式</th><th class="num">bpw</th><th class="num">占用</th>' + DEV.map(([n]) => `<th class="small" style="white-space:normal;min-width:70px">${n}</th>`).join('') + '</tr>';
+    FM.forEach(([n, b]) => {
+      const gb = (P * 1e9 * b) / 8 / 1e9 * 1.15;
+      h += `<tr><td>${n}</td><td class="num">${b}</td><td class="num">${gb >= 1000 ? (gb / 1000).toFixed(2) + ' TB' : gb.toFixed(1) + ' GB'}</td>` + DEV.map(([, cap]) => (gb <= cap ? `<td class="fit" style="color:var(--good-ink)">✓ 可以</td>` : gb <= cap * 1.6 ? `<td class="fit" style="color:var(--s4)">△ 需卸载</td>` : `<td class="fit muted">✗ 放不下</td>`)).join('') + '</tr>';
+    });
+    out.innerHTML = h + '</table><p class="hint">“需卸载”= 超出不到 60%，可以把部分层或 MoE 专家放到 CPU 内存，速度会明显下降。这里只算权重；长上下文的 KV cache 要另算（第 8 章）。</p>';
+  }
+  draw();
+})();
+</script>
+</body>
+</html>

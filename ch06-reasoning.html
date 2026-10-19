@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>6 · 推理模型与强化学习 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker">第 6 章 · 训练与能力</div>
+  <h1>推理模型：让模型“想久一点”，并用强化学习教它怎么想</h1>
+  <p class="lede">2024 年 9 月的 OpenAI o1 和 2025 年 1 月的 DeepSeek-R1 带来一个新的规模化维度：<b>推理时算力（test-time compute）</b>。模型先生成很长的思维链，再给答案；思考得越久，准确率越高。教会它这样思考的方法是 <b>可验证奖励的强化学习（RLVR）</b>。</p>
+</header>
+
+<h2 id="cot">思维链：把计算展开到 token 上</h2>
+<p>Transformer 每生成一个 token，做的计算量是固定的（约 2N FLOPs）。难题需要的计算量超过一次前向能完成的，就得 <b>把中间步骤写出来</b>，让后面的 token 能读到前面的中间结果。这就是 <b>思维链（Chain-of-Thought, CoT）</b>。2022 年发现，只要在 prompt 里加一句“让我们一步步思考”，大模型的数学题准确率就会大幅上升。</p>
+<p>用更多推理算力换准确率，有两个方向：</p>
+<ul>
+  <li><b>并行</b>：同一个问题采样 N 次，然后 <b>多数投票</b>（self-consistency, 2022），或者用验证器 / 奖励模型挑最好的（best-of-N）。</li>
+  <li><b>串行</b>：一条思维链写得更长，中间自我检查、回溯、换思路。o1/R1 这类推理模型属于这一类。</li>
+</ul>
+<div id="demo-tts"></div>
+
+<h2 id="rl">强化学习：从 RLHF 到 RLVR</h2>
+<p><b>RLHF</b>（2022 InstructGPT）：人类比较两个回答 → 训练奖励模型 → 用 PPO 优化策略。问题是奖励模型本身会被“钻空子”：策略学会写出奖励模型喜欢、但实际上并不更好的回答（reward hacking），比如更长、更讨好、格式更花哨。</p>
+<p><b>RLVR（可验证奖励的强化学习）</b>：只在答案能被程序自动判对错的任务上训练，比如数学题对答案、代码跑单元测试、智能体任务检查终态。奖励就是 0 或 1，很难被钻空子。DeepSeek-R1 证明了只靠这种稀疏奖励、不给示范的思考过程，模型就能 <b>自己</b> 学会长思维链、自我反思和验证（论文中的 “aha moment”），思考长度随训练稳定增长。</p>
+<h3>GRPO：用组内比较代替价值网络</h3>
+<p>PPO 需要一个和策略差不多大的价值网络来估计基线，很贵。DeepSeek 的 <b>GRPO</b>（Group Relative Policy Optimization）对同一道题采样一组 G 个回答，用组内平均奖励当基线：</p>
+<div class="eq">Â<sub>i</sub> = ( r<sub>i</sub> − mean(r<sub>1..G</sub>) ) / std(r<sub>1..G</sub>)<span class="note">答得比组内平均好的回答，其每个 token 的概率都被提高；差的被压低。另加 KL 项防止离参考模型太远</span></div>
+<p>下面是一个玩具版：模型可以选 6 种“解题策略”，每种的答对率不同，越认真的策略思维链越长。看 GRPO 怎么只凭“对/错”的信号把策略推向更好、更长的思考：</p>
+<div id="demo-grpo"></div>
+<div class="callout"><b>题目太难或太简单都学不到东西。</b>如果一组 G 个回答全对或全错，组内方差为 0，优势全为 0，梯度为 0。所以实践中要筛选题目难度，例如 DAPO 的 dynamic sampling 会丢弃全对或全错的组。在上面的演示里把难度拉到最大试试。</div>
+
+<h3>2025–2026：RL 规模化与智能体</h3>
+<ul>
+  <li><b>RL 算力暴涨</b>：前沿模型投入后训练 RL 的算力已接近预训练的同一数量级，RL 也呈现规模定律。</li>
+  <li><b>智能体 RL</b>：奖励来自真实环境，比如在沙盒终端里把任务做完、在浏览器里找到答案、通过 MCP 工具完成操作。评测也随之转向 Terminal-Bench、SWE-bench、BrowseComp 这类任务。Kimi K3 的模型卡报告了 Terminal-Bench 2.1 88.3%、BrowseComp 91.2%。</li>
+  <li><b>思考与工具交织</b>：在思维链中途调用搜索、代码执行，再接着想（o3 起）。</li>
+  <li><b>并行思考</b>：同时展开多条思路再汇总（Gemini Deep Think 等），把“并行”和“串行”两种推理算力结合起来。</li>
+  <li><b>不可验证领域</b>：写作、开放问答没有标准答案，用细粒度评分细则（rubric）+ LLM 评审给奖励。</li>
+  <li><b>在线策略蒸馏</b>：学生模型自己采样，教师模型逐 token 给出概率作为密集信号。据报道 DeepSeek V4 的后训练用它替代了一部分 RL。</li>
+</ul>
+
+<h2 id="compare">几种对齐 / 强化方法对比</h2>
+<div class="tablewrap"><table>
+  <tr><th>方法</th><th>奖励从哪来</th><th>需要的模型</th><th>特点</th></tr>
+  <tr><td>RLHF + PPO</td><td>人类偏好训练的奖励模型</td><td>策略 + 参考 + 奖励 + 价值，共 4 个</td><td>通用但贵；容易被 reward hacking</td></tr>
+  <tr><td>DPO</td><td>偏好对（隐式奖励）</td><td>策略 + 参考</td><td>简单、离线；上限不如在线 RL</td></tr>
+  <tr><td>GRPO + RLVR</td><td>程序验证（对 / 错）</td><td>策略 + 参考</td><td>省掉价值网络；推理能力提升的主力</td></tr>
+  <tr><td>智能体 RL</td><td>环境的终态检查</td><td>策略 + 沙盒环境</td><td>轨迹长、需要大规模异步 rollout 系统</td></tr>
+  <tr><td>在线策略蒸馏</td><td>教师模型逐 token 的 log 概率</td><td>学生 + 教师</td><td>密集信号，样本效率高，但上限受限于教师</td></tr>
+</table></div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2017</span>PPO；Christiano 等用人类偏好训练 RL 智能体</li>
+  <li><span class="d">2022-01</span>Chain-of-Thought prompting；同年 self-consistency 多数投票</li>
+  <li><span class="d">2022-03</span>InstructGPT：SFT + RLHF 的完整流程</li>
+  <li><span class="d">2022-12</span>Constitutional AI：用 AI 反馈替代部分人类反馈（RLAIF）</li>
+  <li><span class="d">2023</span>DPO；“Let's Verify Step by Step”：过程奖励模型（PRM）</li>
+  <li><span class="d">2024-02</span>DeepSeekMath 提出 GRPO</li>
+  <li><span class="d">2024-09</span>OpenAI o1：推理时算力作为新的规模化维度</li>
+  <li><span class="d">2025-01</span>DeepSeek-R1：纯 RLVR 涌现长思维链，开源权重；蒸馏小模型</li>
+  <li><span class="d">2025</span>o3 / Claude / Gemini 等把工具调用融入思考；DAPO、GSPO 等 GRPO 改进；智能体 RL 兴起</li>
+  <li><span class="d">2026</span>RL 算力与预训练同一量级；智能体评测（Terminal-Bench 2.x、BrowseComp、MCPMark）成为主战场；在线策略蒸馏流行</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script src="assets/common.js"></script>
+<script>
+/* ============ test-time scaling ============ */
+(function () {
+  const { bd } = A.demo('demo-tts', '并行采样：多数投票 vs 有完美验证器', '蒙特卡洛模拟，每个点 2000 次');
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const pS = A.slider(ctl, { label: '单次答对率 p', min: 0.02, max: 0.95, step: 0.01, value: 0.35, fmt: (v) => A.pct(v, 0), on: draw });
+  const wS = A.slider(ctl, { label: '最常见错误答案占错误的比例', min: 0.1, max: 1, step: 0.01, value: 0.3, fmt: (v) => A.pct(v, 0), on: draw, width: 230 });
+  const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
+  const legend = A.el('div', { class: 'legend' }); bd.append(legend);
+  const note = A.el('p', { class: 'hint' }); bd.append(note);
+  legend.innerHTML = '<span><i class="line" style="background:var(--s1)"></i>pass@N（有完美验证器，N 个里有一个对就算对）</span><span><i class="line" style="background:var(--s2)"></i>多数投票</span><span><i class="line" style="background:var(--axis)"></i>单次采样</span>';
+  const Ns = [1, 2, 3, 4, 6, 8, 12, 16, 24, 32, 48, 64, 96, 128];
+  let mv = [];
+  function sim() {
+    const p = pS.value, w1 = wS.value, r = A.rng(11);
+    // wrong answers: top wrong has share w1 of wrong mass, rest spread over 8 answers
+    const wrong = [w1]; for (let i = 0; i < 8; i++) wrong.push((1 - w1) / 8);
+    mv = Ns.map((N) => {
+      let ok = 0;
+      for (let t = 0; t < 2000; t++) {
+        const cnt = new Array(10).fill(0);
+        for (let s = 0; s < N; s++) {
+          let u = r();
+          if (u < p) cnt[0]++;
+          else { u = (u - p) / (1 - p); let i = 0; for (; i < 8; i++) { u -= wrong[i]; if (u <= 0) break; } cnt[1 + i]++; }
+        }
+        const mx = Math.max(...cnt);
+        const winners = cnt.map((c, i) => (c === mx ? i : -1)).filter((i) => i >= 0);
+        if (winners.includes(0)) ok += 1 / winners.length;
+      }
+      return ok / 2000;
+    });
+  }
+  const view = A.canvas(cv, { aspect: 0.45 }, (ctx, W, H) => {
+    const box = { x: 46, y: 16, w: W - 66, h: H - 50 };
+    const ax = A.axes(ctx, box, { xmin: 1, xmax: 128, xlog: true, xticks: [1, 2, 4, 8, 16, 32, 64, 128], xfmt: (v) => 'N=' + v, ymin: 0, ymax: 1, yfmt: (v) => A.pct(v, 0), xgrid: true });
+    const cols = A.series(), p = pS.value;
+    const line = (ys, c, wd) => { ctx.strokeStyle = c; ctx.lineWidth = wd; ctx.beginPath(); Ns.forEach((N, i) => { const x = ax.X(N), y = ax.Y(ys[i]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke(); Ns.forEach((N, i) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(ax.X(N), ax.Y(ys[i]), 3, 0, 7); ctx.fill(); }); };
+    line(Ns.map(() => p), A.css('--axis'), 2);
+    line(Ns.map((N) => 1 - Math.pow(1 - p, N)), cols[0], 2);
+    line(mv, cols[1], 2);
+  });
+  function draw() {
+    sim(); view.redraw();
+    const p = pS.value, top = (1 - p) * wS.value;
+    note.textContent = p > top
+      ? `正确答案（${A.pct(p, 0)}）比最常见的错误答案（${A.pct(top, 0)}）更常出现，所以投票越多越准，最终趋近 100%。但 pass@N 涨得更快：只要能可靠地验证（单元测试、数学核对），多采样的价值就更大。`
+      : `最常见的错误答案（${A.pct(top, 0)}）比正确答案（${A.pct(p, 0)}）更常出现，投票越多反而越错，最终趋近 0。这时只有验证器（或者让模型自己想得更深、提高 p）有用。`;
+  }
+  draw();
+})();
+
+/* ============ GRPO toy ============ */
+(function () {
+  const { bd } = A.demo('demo-grpo', 'GRPO 玩具：只给“对 / 错”，策略自己变好', '一组 G 个采样 → 组内标准化优势 → 策略梯度');
+  const STRATS = [
+    { n: '直接报答案', acc: 0.12, len: 20 },
+    { n: '抄题干数字', acc: 0.05, len: 15 },
+    { n: '简单列式', acc: 0.32, len: 120 },
+    { n: '分步推导', acc: 0.58, len: 600 },
+    { n: '分步 + 自我检查', acc: 0.82, len: 1800 },
+    { n: '多思路对比再验证', acc: 0.9, len: 4200 },
+  ];
+  const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
+  const G = A.slider(ctl, { label: '组大小 G', min: 2, max: 32, step: 1, value: 8, fmt: (v) => v });
+  const lr = A.slider(ctl, { label: '学习率', min: 0.05, max: 2, step: 0.05, value: 0.5, fmt: (v) => v.toFixed(2) });
+  const beta = A.slider(ctl, { label: 'KL 系数 β', min: 0, max: 0.5, step: 0.01, value: 0.02, fmt: (v) => v.toFixed(2) });
+  const diff = A.slider(ctl, { label: '题目难度', min: 0, max: 1, step: 0.01, value: 0.3, fmt: (v) => (v < 0.2 ? '简单' : v < 0.6 ? '中等' : v < 0.9 ? '难' : '极难') + ' ' + v.toFixed(2) });
+  const btns = A.el('div', { class: 'flex', style: { marginBottom: '10px' } }); bd.append(btns);
+  let timer = null;
+  btns.append(A.el('button', { onclick: () => step(1) }, '训练 1 步'), A.el('button', { class: 'primary', onclick: () => run() }, '连续训练 / 暂停'), A.el('button', { onclick: reset }, '重置'));
+  const grid = A.el('div', { class: 'cols' });
+  const cv1 = A.el('canvas', { class: 'cv' }), cv2 = A.el('canvas', { class: 'cv' });
+  grid.append(cv1, cv2); bd.append(grid);
+  const legend = A.el('div', { class: 'legend' }); bd.append(legend);
+  const tbl = A.el('div', { class: 'small', style: { marginTop: '8px' } }); bd.append(tbl);
+  legend.innerHTML = '<span><i class="line" style="background:var(--s1)"></i>期望正确率</span><span><i class="line" style="background:var(--s2)"></i>平均思维链长度（token，右图按 0–4500 缩放）</span>';
+  let theta, ref, hist, it, lastGroup, rnd;
+  const accOf = (i) => STRATS[i].acc * (1 - diff.value * 0.92);
+  function reset() { theta = [1.2, 1.0, 0.6, 0.0, -0.8, -1.5]; ref = theta.slice(); hist = []; it = 0; lastGroup = null; rnd = A.rng(5); record(); render(); }
+  function pi() { return A.softmax(theta); }
+  function record() { const p = pi(); hist.push({ acc: A.sum(p.map((x, i) => x * accOf(i))), len: A.sum(p.map((x, i) => x * STRATS[i].len)) }); }
+  function step(n) {
+    for (let k = 0; k < n; k++) {
+      const p = pi(), g = Math.round(G.value);
+      const grp = [];
+      for (let j = 0; j < g; j++) {
+        let u = rnd(), a = 0; for (; a < 5; a++) { u -= p[a]; if (u <= 0) break; }
+        grp.push({ a, r: rnd() < accOf(a) ? 1 : 0 });
+      }
+      const m = A.mean(grp.map((x) => x.r)), sd = Math.sqrt(A.mean(grp.map((x) => (x.r - m) ** 2)));
+      grp.forEach((x) => (x.adv = sd > 1e-9 ? (x.r - m) / sd : 0));
+      const grad = new Array(6).fill(0);
+      grp.forEach((x) => { for (let i = 0; i < 6; i++) grad[i] += (x.adv * ((i === x.a ? 1 : 0) - p[i])) / g; });
+      // KL(pi||ref) gradient wrt logits: p_i*(log p_i/ref_i - KL)
+      const pr = A.softmax(ref);
+      const kl = A.sum(p.map((x, i) => x * Math.log(x / pr[i])));
+      for (let i = 0; i < 6; i++) theta[i] += lr.value * (grad[i] - beta.value * p[i] * (Math.log(p[i] / pr[i]) - kl));
+      lastGroup = grp; it++; record();
+    }
+    render();
+  }
+  function run() {
+    if (timer) { clearInterval(timer); timer = null; return; }
+    timer = setInterval(() => { step(1); if (it > 400) { clearInterval(timer); timer = null; } }, 60);
+  }
+  const v1 = A.canvas(cv1, { aspect: 0.75 }, (ctx, W, H) => {
+    const p = pi(), cols = A.series();
+    const lw = 116, rowH = (H - 30) / 6;
+    A.text(ctx, '策略 π(策略)　[答对率 · 思维链长度]', 0, 10, { size: 12, color: A.css('--muted') });
+    STRATS.forEach((s, i) => {
+      const y = 24 + i * rowH;
+      A.text(ctx, s.n, lw - 8, y + rowH / 2 - 6, { size: 12.5, align: 'right' });
+      A.text(ctx, A.pct(accOf(i), 0) + ' · ' + s.len + ' tok', lw - 8, y + rowH / 2 + 9, { size: 10.5, align: 'right', color: A.css('--muted') });
+      A.hbar(ctx, lw, y + rowH / 2 - 9, (W - lw - 54) * p[i], 18, cols[0]);
+      A.text(ctx, A.pct(p[i], 1), lw + (W - lw - 54) * p[i] + 6, y + rowH / 2, { size: 12, mono: true, color: A.css('--ink-2') });
+    });
+  });
+  const v2 = A.canvas(cv2, { aspect: 0.75 }, (ctx, W, H) => {
+    const box = { x: 40, y: 16, w: W - 56, h: H - 48 };
+    const n = Math.max(50, hist.length);
+    const ax = A.axes(ctx, box, { xmin: 0, xmax: n, ymin: 0, ymax: 1, yfmt: (v) => A.pct(v, 0), xfmt: (v) => v, xlabel: '训练步数' });
+    const cols = A.series();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = cols[0]; ctx.beginPath(); hist.forEach((h, i) => { const x = ax.X(i), y = ax.Y(h.acc); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    ctx.strokeStyle = cols[1]; ctx.beginPath(); hist.forEach((h, i) => { const x = ax.X(i), y = ax.Y(h.len / 4500); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
+    const last = hist[hist.length - 1];
+    A.text(ctx, '正确率 ' + A.pct(last.acc, 1), box.x + 6, box.y + 6, { size: 12, color: cols[0], weight: 600 });
+    A.text(ctx, '平均长度 ' + Math.round(last.len) + ' tok', box.x + 6, box.y + 24, { size: 12, color: cols[1], weight: 600 });
+  });
+  function render() {
+    v1.redraw(); v2.redraw();
+    if (!lastGroup) { tbl.innerHTML = '<span class="muted">点击“训练 1 步”查看一组采样的奖励和优势。</span>'; return; }
+    const allSame = lastGroup.every((x) => x.r === lastGroup[0].r);
+    tbl.innerHTML = `<b>第 ${it} 步的采样组：</b> ` + lastGroup.map((x) => `<span class="tok" style="background:${x.r ? 'color-mix(in srgb, var(--good) 22%, transparent)' : 'color-mix(in srgb, var(--bad) 18%, transparent)'}">${STRATS[x.a].n} ${x.r ? '✓' : '✗'} <b>${x.adv >= 0 ? '+' : ''}${x.adv.toFixed(2)}</b></span>`).join(' ') +
+      (allSame ? '<div style="color:var(--s2);margin-top:4px">⚠ 这一组奖励全部相同，优势全为 0，这一步没有学到任何东西。</div>' : '');
+  }
+  reset();
+})();
+</script>
+</body>
+</html>
