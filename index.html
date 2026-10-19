@@ -54,7 +54,7 @@ document.addEventListener('DOMContentLoaded', () => {
     generation: '交叉熵与困惑度、预测即压缩、n-gram 的天花板；逐步看采样循环，温度 / top-p / 约束解码，以及扩散语言模型',
     data: '流水线、MinHash 去重与“去重太狠反而变差”、质量分类器、重复数据值多少、中期训练、改写为什么有效、模型崩溃、数据墙与版权',
     scaling: '幂律与外推、Chinchilla 推导与 2024 复现、过度训练、涌现之争、预训练撞墙之争；Adam/AdamW、WSD、μP，Muon 的正交化与谱范数推导',
-    sft: 'SFT 与浅层对齐假说、DPO 推导与家族、LoRA、模型合并',
+    sft: 'SFT 与浅层对齐假说、Bradley-Terry 奖励模型与古德哈特、DPO 推导与家族、LoRA（RL 秩 1 就够）、模型合并',
     rl: '策略梯度推导、PPO → GRPO → DAPO / GSPO / CISPO、奖励与环境、训练-推理不一致、“发现还是挑选”之争',
     distillation: '在线策略蒸馏、强到弱蒸馏、MOPD 多教师、自蒸馏与持续学习',
     reasoning: '思维链、推理时算力、并行与串行思考',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 59]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 61]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

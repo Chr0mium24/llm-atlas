@@ -248,7 +248,7 @@
   <div class="fx-step" data-tex="L = \htmlClass{c-new}{\mathbb{E}_t\Big[}\min\big(\htmlClass{c-ratio}{r_t}\htmlClass{c-adv}{A_t},\ \operatorname{clip}(\htmlClass{c-ratio}{r_t}, 1-\epsilon, 1+\epsilon)\,\htmlClass{c-adv}{A_t}\big)\htmlClass{c-new}{\Big]}"><b>第 4 步：对所有 token 取平均。</b>这就是 PPO 的目标函数，训练时让它尽量大。</div>
 </div>
 <p>效果是：一个 token 已经被往好的方向推得够多了（\(A&gt;0\) 且 \(r_t &gt; 1+\epsilon\)，或 \(A&lt;0\) 且 \(r_t &lt; 1-\epsilon\)），它的梯度就变成 0，不再继续推。这是一个“悲观”的目标：只信任离采样策略不远的那部分改进。</p>
-<p>用在语言模型上（<dfn data-t="rlhf">RLHF</dfn>，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
+<p>用在语言模型上（<span class="term" data-t="rlhf">RLHF</span>，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
 <ul>
   <li><b><span class="term" data-t="kl">KL</span> 约束</b>：目标里减去 \(\beta\,D_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})\)，不让模型离初始模型 \(\pi_{\text{ref}}\) 太远，防止语言变得不通顺、防止它找到奖励的漏洞。</li>
   <li><b><span class="term" data-t="critic">价值网络</span></b>：估计每个前缀“接下来平均能拿多少奖励”，再用 <span class="term" data-t="gae">GAE</span> 算出每个 token 的优势。它通常和策略一样大。</li>

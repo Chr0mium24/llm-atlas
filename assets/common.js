@@ -15,7 +15,7 @@
     { s: 'data', t: '预训练数据', st: 'new' },
     { s: 'scaling', t: '规模定律与优化器', st: 'new' },
     { part: '三 · 后训练' },
-    { s: 'sft', t: 'SFT 与偏好优化', st: 'todo' },
+    { s: 'sft', t: 'SFT 与偏好优化', st: 'new' },
     { s: 'rl', t: '强化学习', st: 'new' },
     { s: 'distillation', t: '蒸馏与能力整合', st: 'todo' },
     { s: 'reasoning', t: '推理模型与推理时算力', st: 'old' },

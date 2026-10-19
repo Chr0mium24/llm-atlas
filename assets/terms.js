@@ -60,7 +60,7 @@ window.ATLAS_TERMS = {
   ratio: { t: '重要性比率', en: 'importance ratio', d: String.raw`\(r_t = \pi_\theta(y_t) / \pi_{\text{old}}(y_t)\)：当前策略和采样时的策略给同一个 token 的概率之比。`, at: 'rl#ppo' },
   clip: { t: '裁剪（PPO）', en: 'clipping', d: String.raw`把重要性比率限制在 \([1-\epsilon,\, 1+\epsilon]\) 内：一个 token 已经被往对的方向推够了，就不再给它梯度。`, at: 'rl#ppo' },
   ppo: { t: 'PPO', en: 'proximal policy optimization', d: '2017 年的策略梯度算法：重要性采样 + 裁剪 + 价值网络。此后七年 RL 微调的默认算法。', at: 'rl#ppo' },
-  rlhf: { t: 'RLHF', en: 'reinforcement learning from human feedback', d: '用人类偏好训练奖励模型，再用 RL 优化语言模型。InstructGPT 和 ChatGPT 的做法。', at: 'rl#ppo' },
+  rlhf: { t: 'RLHF', en: 'reinforcement learning from human feedback', d: '用人类偏好训练奖励模型，再用 RL 优化语言模型。InstructGPT 和 ChatGPT 的做法。', at: 'sft#rm' },
   grpo: { t: 'GRPO', en: 'group relative policy optimization', d: String.raw`每道题采样一组 \(G\) 个回答，用组内平均奖励当基线，去掉价值网络。DeepSeekMath（2024）提出，R1 用它训练。`, at: 'rl#grpo' },
   rlvr: { t: 'RLVR', en: 'RL with verifiable rewards', d: '只在能自动判断对错的任务上做 RL：数学比对答案、代码跑测试、智能体检查终态。', at: 'rl#reward' },
   'reward-hacking': { t: '钻奖励空子', en: 'reward hacking', d: '模型找到了提高奖励、却不真正完成任务的办法，比如写得更长讨好评分模型、修改单元测试。', at: 'rl#reward' },
@@ -138,4 +138,15 @@ window.ATLAS_TERMS = {
   svd: { t: '奇异值分解', en: 'singular value decomposition (SVD)', d: String.raw`任意矩阵 \(M = U\Sigma V^\top\)：先旋转（\(V^\top\)），再沿各轴按奇异值 \(\sigma_i\ge 0\) 缩放（\(\Sigma\)），再旋转（\(U\)）。最大奇异值即谱范数。`, at: 'scaling#muon' },
   muon: { t: 'Muon', en: 'Muon optimizer', d: String.raw`对隐藏层权重的动量矩阵做正交化后更新：\(W\leftarrow W - \eta\,UV^\top\)，所有奇异方向等幅更新；用牛顿-舒尔茨迭代近似。2025–26 年被 Kimi K2、GLM-4.5、DeepSeek V4 采用。`, at: 'scaling#muon' },
   'loss-spike': { t: '损失尖峰', en: 'loss spike', d: '训练中损失突然暴涨的现象，常与注意力分数或激活值失控有关；严重时需回滚到之前的检查点重来。', at: 'scaling#muon' },
+
+  // ---- sft (sft.html)
+  'base-model': { t: '基座模型', en: 'base model', d: '只经过预训练的模型：会续写任何文本，但不会按指令回答。', at: 'sft#base' },
+  'post-training': { t: '后训练', en: 'post-training', d: '预训练之后把基座模型变成可用助手的所有步骤：SFT、偏好优化、强化学习、蒸馏等。', at: 'sft#base' },
+  sft: { t: '监督微调（SFT）', en: 'supervised fine-tuning', d: '在“指令-回答”对上最小化交叉熵，只对回答部分计算损失，教模型以助手的身份和格式回答。', at: 'sft#sft' },
+  'superficial-alignment': { t: '浅层对齐假说', en: 'superficial alignment hypothesis', d: '模型的知识和能力几乎全部来自预训练，SFT 只是教它用什么格式和风格说出来（LIMA, 2023）。对弱基座不完全成立。', at: 'sft#sft' },
+  'reward-model': { t: '奖励模型', en: 'reward model', d: '从“两个回答哪个更好”的比较数据中学出的打分模型，按 Bradley-Terry 模型训练。是人类偏好的不完美代理。', at: 'sft#rm' },
+  'bradley-terry': { t: 'Bradley-Terry 模型', en: 'Bradley–Terry model', d: String.raw`\(P(y_w\succ y_l) = \sigma(r_w - r_l)\)：比较的胜率只取决于两者的分差。与 Elo 等级分相同。`, at: 'sft#rm' },
+  dpo: { t: 'DPO', en: 'direct preference optimization', d: String.raw`利用 KL 约束下 RLHF 最优解的闭式形式，直接在偏好对上训练：\(-\log\sigma\big(\beta\log\frac{\pi_\theta(y_w)}{\pi_{\text{ref}}(y_w)} - \beta\log\frac{\pi_\theta(y_l)}{\pi_{\text{ref}}(y_l)}\big)\)。不需要奖励模型和 RL。`, at: 'sft#dpo' },
+  lora: { t: 'LoRA', en: 'low-rank adaptation', d: String.raw`冻结原权重，只训练低秩增量 \(\Delta W = BA\)（秩 \(r\) 通常 8–64）。可训练参数降到 1% 以下；QLoRA 再把原权重量化到 4 比特。`, at: 'sft#lora' },
+  'task-vector': { t: '任务向量', en: 'task vector', d: String.raw`微调后权重减去微调前权重 \(\tau = \theta_{\text{ft}} - \theta_{\text{base}}\)。多个任务向量相加可合并能力，取负可去除行为。`, at: 'sft#merge' },
 };
