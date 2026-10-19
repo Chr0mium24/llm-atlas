@@ -316,16 +316,101 @@
     if (!old) document.body.append(b);
   }
 
+  /* ---------- formula cards: <div class="fx" data-syms='{…}' data-steps='[…]'> \[…\] <div class="fx-read">…</div> <div class="fx-eg">…</div> </div>
+     Shows only the formula; clicking it unfolds: how to read it, every symbol, a worked example, a step-by-step build-up. ---------- */
+  function stepper(steps) {
+    const wrap = A.el('div', { class: 'fx-build' });
+    const bar = A.el('div', { class: 'steps' }), fx = A.el('div', { class: 'fxs' }), say = A.el('div', { class: 'say' });
+    wrap.append(bar, fx, say);
+    const btns = steps.map((s, i) => { const b = A.el('button', { type: 'button', onclick: () => show(i) }, '第 ' + (i + 1) + ' 步'); bar.append(b); return b; });
+    function show(i) {
+      btns.forEach((b, j) => b.classList.toggle('on', j === i));
+      if (window.katex) katex.render(steps[i].tex, fx, { displayMode: true, throwOnError: false, trust: true, strict: 'ignore' });
+      else fx.textContent = steps[i].tex;
+      say.innerHTML = steps[i].say;
+      renderMath(say);
+    }
+    wrap.showFirst = () => show(0);
+    return wrap;
+  }
+  A.stepper = stepper;
+  function initFormulaCards() {
+    A.$$('.fx').forEach((box) => {
+      if (box.dataset.fxInit) return;
+      box.dataset.fxInit = '1';
+      const more = A.el('div', { class: 'fx-more' });
+      const parts = [];
+      const sec = (label, node) => A.el('div', { class: 'fx-sec' }, A.el('div', { class: 'fx-lab' }, label), node);
+      const read = A.$('.fx-read', box), eg = A.$('.fx-eg', box), dl = A.$('dl.fx-syms', box);
+      let syms = null, steps = null;
+      // symbols: <dl class="fx-syms"><dt data-sym="R">\(R\)</dt><dd>奖励……</dd>…</dl>, linked to \htmlClass{sym-R}{R} in the formula
+      if (dl) {
+        syms = {};
+        A.$$('dt', dl).forEach((dt) => { const dd = dt.nextElementSibling; if (dt.dataset.sym && dd) syms[dt.dataset.sym] = dt.innerHTML + '：' + dd.innerHTML; });
+        box.dataset.syms = JSON.stringify(syms);
+      } else {
+        try { syms = box.dataset.syms ? JSON.parse(box.dataset.syms) : null; } catch (e) { console.warn('bad data-syms', e); }
+      }
+      // steps: <div class="fx-step" data-tex="…">一句话说明</div>
+      const stepEls = A.$$('.fx-step', box);
+      if (stepEls.length) { steps = stepEls.map((el) => ({ tex: el.dataset.tex, say: el.innerHTML })); stepEls.forEach((el) => el.remove()); }
+      if (read) { more.append(sec('读法', read)); parts.push('读法'); }
+      if (dl) { more.append(sec('每个符号', dl)); parts.push('符号'); }
+      else if (syms) { const ul = A.el('ul', { class: 'fx-symlist' }); Object.values(syms).forEach((v) => ul.append(A.el('li', { html: v }))); more.append(sec('每个符号', ul)); parts.push('符号'); }
+      if (eg) { more.append(sec('代入数字', eg)); parts.push('例子'); }
+      let st = null;
+      if (steps) { st = stepper(steps); more.append(sec('一步步搭起来', st)); parts.push('逐步拼装'); }
+      if (!parts.length) return;
+      const hint = A.el('button', { type: 'button', class: 'fx-hint' });
+      const label = () => (box.classList.contains('open') ? '收起 ▴' : '点开看' + parts.join(' · ') + ' ▾');
+      hint.textContent = label();
+      box.append(hint, more);
+      let first = true;
+      const toggle = () => {
+        box.classList.toggle('open');
+        if (first && st) { st.showFirst(); first = false; }
+        hint.textContent = label();
+      };
+      hint.addEventListener('click', (e) => { e.stopPropagation(); toggle(); });
+      box.addEventListener('click', (e) => { if (e.target.closest('.fx-more, a, button, .term')) return; if (getSelection && String(getSelection()).length) return; toggle(); });
+    });
+  }
+
   /* ---------- math (KaTeX auto-render; delimiters \( \) and \[ \]) ---------- */
   function renderMath(el) {
     if (typeof renderMathInElement !== 'function') return;
     renderMathInElement(el || document.querySelector('main') || document.body, {
       delimiters: [{ left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }],
       throwOnError: false,
+      // \htmlClass lets formulas carry symbol classes (colour coding, hover explanations); content is our own
+      trust: (ctx) => ctx.command === '\\htmlClass' || ctx.command === '\\htmlData',
+      strict: 'ignore',
       ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'canvas'],
     });
+    initSymbols(el || document);
   }
   A.renderMath = renderMath;
+  // <div data-syms='{"R":"奖励","b":"基线"}'> + \htmlClass{sym-R}{R} in its formulas: hovering a symbol explains it and
+  // highlights every occurrence of the same symbol in that block
+  function initSymbols(root) {
+    A.$$('[data-syms]', root.nodeType ? root : document).forEach((box) => {
+      if (box.dataset.symInit) return;
+      box.dataset.symInit = '1';
+      let map = {};
+      try { map = JSON.parse(box.dataset.syms); } catch (e) { return; }
+      A.$$('[class*="sym-"]', box).forEach((el) => {
+        const cls = [...el.classList].find((c) => c.startsWith('sym-'));
+        const key = cls && cls.slice(4);
+        if (!key || !map[key]) return;
+        el.style.cursor = 'help';
+        el.addEventListener('mouseenter', (e) => {
+          A.$$('.' + cls, box).forEach((x) => x.classList.add('sym-on'));
+          A.tip.show(map[key], e.clientX, e.clientY);
+        });
+        el.addEventListener('mouseleave', () => { A.$$('.' + cls, box).forEach((x) => x.classList.remove('sym-on')); A.tip.hide(); });
+      });
+    });
+  }
 
   /* ---------- demo loader: <div data-demo="name"></div> loads demos/name.js ---------- */
   const DEMOS = {};
@@ -362,6 +447,7 @@
     fillXrefs();
     initHistory();
     initTerms();
+    initFormulaCards();
     renderMath();
     loadDemos();
     initBack();

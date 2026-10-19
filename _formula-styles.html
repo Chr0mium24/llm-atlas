@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>公式写法（样张） — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="formula-styles">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker">样张 · 不在目录里</div>
+  <h1>公式卡：平时只看公式，点开才看翻译</h1>
+  <p class="lede">正文里每个关键公式都做成一张“公式卡”：默认只显示正式写法，用颜色区分各部分，鼠标指到任何一个符号上会显示它的含义。点一下公式，下面展开读法、每个符号的解释、代入数字的例子；最难的公式还有逐步拼装。再点一下收起。</p>
+</header>
+
+<h2 id="pg">样张一：策略梯度</h2>
+<p>强化学习一章的核心公式。试试：先把鼠标放到 \(R\)、\(b\) 或 \(\nabla_\theta\) 上，再点一下公式。</p>
+
+<div class="fx">
+\[ \htmlClass{sym-grad}{\nabla_\theta}\, \htmlClass{sym-J}{J} = \htmlClass{sym-E}{\mathbb{E}}\Big[\htmlClass{c-adv}{\big(\htmlClass{sym-R}{R} - \htmlClass{sym-b}{b}\big)}\,\htmlClass{c-dir}{\htmlClass{sym-sum}{\sum_{t}}\,\htmlClass{sym-grad}{\nabla_\theta}\,\htmlClass{sym-logpi}{\log \pi_\theta(\htmlClass{sym-y}{y_t}\mid q, \htmlClass{sym-y}{y_{&lt;t}})}}\Big] \]
+  <div class="fx-read">参数该往哪改，是很多条回答的平均：每条回答按<span style="color:var(--s2)">“比平均好多少”</span>加权，往<span style="color:var(--s1)">“让它更可能被写出来”</span>的方向推。</div>
+  <dl class="fx-syms">
+    <dt data-sym="grad">\(\nabla_\theta\)</dt><dd>对模型参数 \(\theta\) 求梯度：参数往哪个方向改，后面的量增加得最快</dd>
+    <dt data-sym="J">\(J\)</dt><dd>期望奖励：模型平均能拿多少分，要让它最大</dd>
+    <dt data-sym="E">\(\mathbb E\)</dt><dd>期望，即对很多条回答取平均；实际中用一批采样的平均来估计</dd>
+    <dt data-sym="R">\(R\)</dt><dd>奖励：这条回答的得分，例如答对 1 分、答错 0 分</dd>
+    <dt data-sym="b">\(b\)</dt><dd>基线：这道题的平均得分。\(R-b\) 就是优势，比平均好多少</dd>
+    <dt data-sym="sum">\(\sum_t\)</dt><dd>对回答里的每个 token 求和（整条回答的对数概率 = 各 token 对数概率之和）</dd>
+    <dt data-sym="logpi">\(\log\pi_\theta(y_t\mid q, y_{&lt;t})\)</dt><dd>看到题目 \(q\) 和前面的 token 之后，模型写出第 \(t\) 个 token 的对数概率</dd>
+    <dt data-sym="y">\(y_t,\ y_{&lt;t}\)</dt><dd>回答里的第 \(t\) 个 token；它前面的所有 token</dd>
+  </dl>
+  <div class="fx-eg">同一道题采样 4 条回答，得分 1、0、0、1，平均 \(b = 0.5\)：
+  \[ \nabla J \approx \tfrac14\Big[\,(\htmlClass{c-adv}{+0.5})\,\htmlClass{c-dir}{g_1} + (\htmlClass{c-adv}{-0.5})\,\htmlClass{c-dir}{g_2} + (\htmlClass{c-adv}{-0.5})\,\htmlClass{c-dir}{g_3} + (\htmlClass{c-adv}{+0.5})\,\htmlClass{c-dir}{g_4}\,\Big] \]
+  \(g_i\) 是“让第 \(i\) 条回答更可能”的方向。答对的两条各往上推半份，答错的两条各往下压半份。如果 4 条全对，每条的优势都是 0，这道题什么也学不到。</div>
+</div>
+
+<h2 id="ppo">样张二：PPO 的裁剪目标（带逐步拼装）</h2>
+<p>这是整章最复杂的公式。点开之后，“一步步搭起来”会从最简单的一块开始，每一步加一个零件。</p>
+
+<div class="fx">
+\[ L = \htmlClass{sym-E}{\mathbb{E}_t}\Big[\htmlClass{sym-min}{\min}\big(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}},\ \htmlClass{sym-clip}{\operatorname{clip}}(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}, 1-\htmlClass{sym-eps}{\epsilon}, 1+\htmlClass{sym-eps}{\epsilon})\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}}\big)\Big] \]
+  <div class="fx-read">对每个 token：用<span style="color:var(--s7)">新旧概率之比</span>修正<span style="color:var(--s2)">优势</span>，但比值一旦超出 \(1\pm\epsilon\) 就不再给它更多梯度；最后对所有 token 取平均。</div>
+  <dl class="fx-syms">
+    <dt data-sym="E">\(\mathbb E_t\)</dt><dd>对一批回答里的所有 token 取平均</dd>
+    <dt data-sym="r">\(r_t\)</dt><dd>重要性比率：新模型给这个 token 的概率 ÷ 采样时旧模型给的概率</dd>
+    <dt data-sym="A">\(A_t\)</dt><dd>优势：这个 token 所在的回答比平均好多少</dd>
+    <dt data-sym="clip">\(\operatorname{clip}(x, a, b)\)</dt><dd>把 \(x\) 夹在 \([a, b]\) 之间：小于 \(a\) 取 \(a\)，大于 \(b\) 取 \(b\)</dd>
+    <dt data-sym="eps">\(\epsilon\)</dt><dd>允许偏离的幅度，通常取 0.2，即比率限制在 0.8 到 1.2</dd>
+    <dt data-sym="min">\(\min\)</dt><dd>两者取较小值：只信任离旧模型不远的那部分改进</dd>
+  </dl>
+  <div class="fx-eg">一个 token 的优势 \(A = +1\)，比率 \(r = 1.5\)（新模型已经把它的概率提高了 50%），\(\epsilon = 0.2\)：
+  \[ \min\big(1.5\times 1,\ \operatorname{clip}(1.5, 0.8, 1.2)\times 1\big) = \min(1.5,\ 1.2) = 1.2 \]
+  结果是常数 1.2，与参数无关，所以这个 token 的梯度为 0：它已经被推够了。如果 \(r = 1.1\)，结果是 \(1.1 \times 1\)，梯度照常。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\htmlClass{c-ratio}{r_t}\cdot\htmlClass{c-adv}{A_t}}"><b>第 1 步：优势 × 比率。</b>\(A_t\) 说明这个 token 该被加强还是削弱；\(r_t\) 修正“样本来自旧模型”（重要性采样）。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\operatorname{clip}(}\htmlClass{c-ratio}{r_t}\htmlClass{c-new}{,\ 1-\epsilon,\ 1+\epsilon)}\cdot\htmlClass{c-adv}{A_t}"><b>第 2 步：把比率夹住。</b>新模型离旧模型太远时，用旧样本算出的梯度不可信，所以把 \(r_t\) 限制在 \([1-\epsilon, 1+\epsilon]\) 里。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\min\Big(}\htmlClass{c-ratio}{r_t}\htmlClass{c-adv}{A_t}\htmlClass{c-new}{,\ }\operatorname{clip}(\htmlClass{c-ratio}{r_t}, 1-\epsilon, 1+\epsilon)\,\htmlClass{c-adv}{A_t}\htmlClass{c-new}{\Big)}"><b>第 3 步：两者取较小值。</b>往对的方向推够了就停，往错的方向走了仍然允许纠正。</div>
+  <div class="fx-step" data-tex="L = \htmlClass{c-new}{\mathbb{E}_t\Big[}\min\big(\htmlClass{c-ratio}{r_t}\htmlClass{c-adv}{A_t},\ \operatorname{clip}(\htmlClass{c-ratio}{r_t}, 1-\epsilon, 1+\epsilon)\,\htmlClass{c-adv}{A_t}\big)\htmlClass{c-new}{\Big]}"><b>第 4 步：对所有 token 取平均。</b>这就是 PPO 的目标函数，训练时让它尽量大。</div>
+</div>
+
+<h2 id="rules">怎么用在全书</h2>
+<ul>
+  <li><b>关键公式</b>（每章 5–10 个）做成公式卡：默认只有公式和颜色，点开看读法、符号、例子。</li>
+  <li><b>最难的 2–3 个公式</b>在卡里加“一步步搭起来”。</li>
+  <li><b>次要的、一眼能看懂的公式</b>（比如 \(A = R - b\)）照常写在正文里，不做成卡。</li>
+  <li><b>推导折叠块</b>里保持完整、严谨的记号，不做成卡，避免层层折叠。</li>
+  <li>所有卡片里的符号都可以悬停查看；颜色在全书保持一致（例如优势总是橙色、比率总是紫色）。</li>
+</ul>
+
+<details class="deep"><summary>附：分开展示的六种写法（之前的对比稿）</summary><div class="in">
+<p><b>A 白话公式</b></p>
+<div class="wordeq">参数该往哪改 ＝ 对很多条回答取平均［ <span class="wa">（这条回答的得分 − 这道题的平均得分）</span> × <span class="wd">（让这条回答更容易被写出来的方向）</span> ］</div>
+<p><b>B 标注公式</b></p>
+\[ \nabla_\theta J = \mathbb{E}\Big[\;\underbrace{\htmlClass{c-adv}{\big(R - b\big)}}_{\text{比平均好多少}}\;\cdot\;\underbrace{\htmlClass{c-dir}{\textstyle\sum_t \nabla_\theta \log \pi_\theta(y_t\mid\cdots)}}_{\text{让这条回答更可能的方向}}\;\Big] \]
+<p><b>C 符号减负</b></p>
+\[ \nabla J = \text{平均}\Big[\;\htmlClass{c-adv}{A}\cdot \htmlClass{c-dir}{\nabla\log\pi(\text{回答})}\;\Big],\qquad \htmlClass{c-adv}{A} = R - b \]
+<p>D 悬停解释、E 代入数字、F 逐步拼装已经并进上面的公式卡。</p>
+</div></details>
+
+</div></main>
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>
