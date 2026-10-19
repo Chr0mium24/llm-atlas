@@ -45,7 +45,16 @@
 <ul>
   <li>做决定的一方叫<dfn data-t="agent">智能体</dfn>（agent），这里就是你；给出反馈的一方叫<dfn data-t="environment">环境</dfn>（environment），这里就是按钮。</li>
   <li><dfn data-t="policy">策略</dfn>（policy）是“按哪个按钮”的<b>概率分布</b> \(\pi(a)\)：比如 40% 按 A、30% 按 B、20% 按 C、10% 按 D。它带随机性，这一点后面很重要。用参数 \(\theta\) 表示：给每个按钮一个分数 \(\theta_a\)，再用 <span class="term" data-t="softmax">softmax</span> 变成概率：
-  \[ \pi_\theta(a) = \frac{e^{\theta_a}}{\sum_{b} e^{\theta_b}} \]
+<div class="fx">
+\[ \htmlClass{sym-pi}{\pi_\theta(a)} = \frac{e^{\htmlClass{sym-th}{\theta_a}}}{\htmlClass{sym-Z}{\sum_{b} e^{\theta_b}}} \]
+  <div class="fx-read">每个按钮先有一个分数，取指数变成正数，再除以所有按钮的总和，得到加起来等于 1 的概率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="pi">\(\pi_\theta(a)\)</dt><dd>按下按钮 \(a\) 的概率</dd>
+    <dt data-sym="th">\(\theta_a\)</dt><dd>按钮 \(a\) 的分数，可以是任意实数，就是要学的参数</dd>
+    <dt data-sym="Z">\(\sum_b e^{\theta_b}\)</dt><dd>所有按钮的指数分数之和，保证概率加起来等于 1</dd>
+  </dl>
+  <div class="fx-eg">分数 \(\theta = (0, 1, 2, 0)\)：\(e^\theta \approx (1,\ 2.72,\ 7.39,\ 1)\)，总和 12.11，概率 \(\approx (8\%,\ 22\%,\ 61\%,\ 8\%)\)。分数每差 1，概率就差 \(e\approx 2.7\) 倍。</div>
+</div>
   语言模型输出下一个 token 的分布，用的是完全相同的结构，只是“按钮”换成了词表里的十几万个 token。</li>
   <li>每按一次得到的分数是<dfn data-t="reward">奖励</dfn> \(R\)。按钮 \(a\) 的得分概率记作 \(p_a\)，但智能体不知道它。</li>
   <li>目标是让<dfn data-t="objective">期望奖励</dfn>最大：\(J(\theta) = \mathbb{E}_{a\sim\pi_\theta}[R] = \sum_a \pi_\theta(a)\,p_a\)。如果知道 \(p_a\)，答案很简单：永远按得分率最高的那个。难点在于只能靠尝试去了解它们。</li>
@@ -55,26 +64,58 @@
 <h3 id="rl0-pg">试错的数学：策略梯度</h3>
 <p>直觉：按了一个按钮、得了分，就把这个按钮的概率调高一点。把它写成梯度上升，需要知道 \(J\) 对 \(\theta\) 的梯度。</p>
 <p>先算一个小零件。softmax 策略的对数概率对参数求导：</p>
-\[ \frac{\partial}{\partial \theta_j}\log\pi_\theta(a) = \frac{\partial}{\partial \theta_j}\Big(\theta_a - \log\sum_b e^{\theta_b}\Big) = \mathbb 1[j=a] - \pi_\theta(j) \]
+<div class="fx">
+\[ \frac{\partial}{\partial \theta_j}\log\pi_\theta(a) = \frac{\partial}{\partial \theta_j}\Big(\theta_a - \log\sum_b e^{\theta_b}\Big) = \htmlClass{sym-ind}{\mathbb 1[j=a]} - \htmlClass{sym-pij}{\pi_\theta(j)} \]
 <span class="eqnote">被选中的按钮：1 − 它的概率（为正）；没被选中的按钮：−它的概率（为负）</span>
+  <div class="fx-read">按下的是按钮 a。对 a 自己的分数求导得 1 − 它的概率；对其它按钮的分数求导得 −它们各自的概率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="ind">\(\mathbb 1[j=a]\)</dt><dd>指示函数：\(j\) 就是被按下的按钮时为 1，否则为 0</dd>
+    <dt data-sym="pij">\(\pi_\theta(j)\)</dt><dd>按钮 \(j\) 现在的概率</dd>
+  </dl>
+  <div class="fx-eg">概率 \((8\%, 22\%, 61\%, 8\%)\)，按下了 C：导数向量 \(= (0,0,1,0) - (0.08, 0.22, 0.61, 0.08) = (-0.08,\ -0.22,\ +0.39,\ -0.08)\)。沿这个方向走，C 的分数上升，其它三个下降。</div>
+</div>
 <p>再算 \(J\) 的梯度。\(J = \sum_a \pi_\theta(a)\,p_a\)，\(p_a\) 和 \(\theta\) 无关，利用 \(\nabla\pi = \pi\,\nabla\log\pi\)：</p>
-\[ \begin{aligned} \nabla_\theta J &= \sum_a p_a\,\nabla_\theta\pi_\theta(a) = \sum_a \pi_\theta(a)\,p_a\,\nabla_\theta\log\pi_\theta(a) \\ &= \mathbb{E}_{a\sim\pi_\theta}\big[\,R\;\nabla_\theta\log\pi_\theta(a)\,\big] \end{aligned} \]
+<div class="fx">
+\[ \begin{aligned} \htmlClass{sym-grad}{\nabla_\theta} J &= \sum_a \htmlClass{sym-p}{p_a}\,\htmlClass{sym-grad}{\nabla_\theta}\pi_\theta(a) = \sum_a \pi_\theta(a)\,\htmlClass{sym-p}{p_a}\,\htmlClass{sym-grad}{\nabla_\theta}\log\pi_\theta(a) \\ &= \htmlClass{sym-E}{\mathbb{E}_{a\sim\pi_\theta}}\big[\,\htmlClass{sym-R}{R}\;\htmlClass{sym-grad}{\nabla_\theta}\log\pi_\theta(a)\,\big] \end{aligned} \]
+  <div class="fx-read">期望得分的梯度 = 按当前策略随便按一下，用这次的得分乘上“让这个按钮更可能”的方向，再对很多次取平均。整个式子里不需要知道各按钮的真实得分率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="grad">\(\nabla_\theta\)</dt><dd>对所有按钮分数 \(\theta\) 求梯度：分数往哪个方向改，后面的量增加得最快</dd>
+    <dt data-sym="p">\(p_a\)</dt><dd>按钮 \(a\) 的真实得分率，智能体不知道</dd>
+    <dt data-sym="E">\(\mathbb E_{a\sim\pi_\theta}\)</dt><dd>按当前策略采样按钮，再取平均；实际中用若干次按压的平均来估计</dd>
+    <dt data-sym="R">\(R\)</dt><dd>这次按下得到的奖励</dd>
+  </dl>
+</div>
 <p>最后一步把 \(p_a\) 换成了 \(R\)：在按下 \(a\) 的条件下，\(R\) 的期望正是 \(p_a\)。这个式子是期望，所以不需要知道 \(p_a\)：按一次（采一个样本），用 \(R\cdot\nabla\log\pi\) 当作梯度的估计就行。代入上面的小零件，一次更新是：</p>
-\[ \theta_j \leftarrow \theta_j + \alpha\, R\,\big(\mathbb 1[j=a] - \pi_\theta(j)\big) \]
+<div class="fx">
+\[ \theta_j \leftarrow \theta_j + \htmlClass{sym-alpha}{\alpha}\, \htmlClass{c-adv}{R}\,\htmlClass{c-dir}{\big(\mathbb 1[j=a] - \pi_\theta(j)\big)} \]
+  <div class="fx-read">每按一次就更新一次：按下的按钮分数加 \(\alpha R(1-\pi)\)，其它按钮各减 \(\alpha R\pi\)。得 0 分时什么也不变。</div>
+  <dl class="fx-syms">
+    <dt data-sym="alpha">\(\alpha\)</dt><dd>学习率：每一步走多大</dd>
+  </dl>
+  <div class="fx-eg">\(\alpha = 0.5\)，概率 \((8\%, 22\%, 61\%, 8\%)\)，按下 C 得 \(R = 1\)：\(\theta_C\) 加 \(0.5\times(1-0.61) = 0.195\)，\(\theta_A, \theta_B, \theta_D\) 分别减 0.04、0.11、0.04。重新算 softmax，C 的概率从 61% 升到约 67%。</div>
+</div>
 <p>按下的按钮分数变大，其它按钮按各自的概率变小，得分 \(R\) 越高，调得越多。这就是<dfn data-t="policy-gradient">策略梯度</dfn>，最早的形式叫 REINFORCE（Williams, 1992）。这一章后面的 PPO、GRPO、DAPO……全都是它的改进版。</p>
 
 <h3 id="rl0-baseline">基线与优势：“比平均好多少”比“得了几分”更好用</h3>
 <p>上面的更新有个毛病。假设奖励改成“按到得 10 分、没按到得 5 分”，总是正的。那么每按一次，按下的那个按钮都会被调高，哪怕它是最差的，只是好按钮被调高得多一些。正确的方向只能从“调高多少”的差别里慢慢平均出来，噪声很大。</p>
 <p>办法是减去一个<dfn data-t="baseline">基线</dfn>（baseline）\(b\)，通常取最近的平均得分，用 \(R - b\) 代替 \(R\)。这个差叫<dfn data-t="advantage">优势</dfn>（advantage）：</p>
-\[ A = R - b, \qquad \theta_j \leftarrow \theta_j + \alpha\, A\,\big(\mathbb 1[j=a] - \pi_\theta(j)\big) \]
+<div class="fx">
+\[ \htmlClass{c-adv}{A = R - b}, \qquad \theta_j \leftarrow \theta_j + \alpha\, \htmlClass{c-adv}{A}\,\big(\mathbb 1[j=a] - \pi_\theta(j)\big) \]
+  <div class="fx-read">和上面一样，只是把得分 R 换成优势 A：比平均好才加强，比平均差就削弱。</div>
+  <div class="fx-eg">最近的平均得分 \(b = 0.5\)。按 C 得 1 分：\(A = +0.5\)，C 被加强；按 C 得 0 分：\(A = -0.5\)，C 被削弱。没有基线时，得 0 分不会产生任何更新，坏结果里的信息就浪费了。</div>
+</div>
 <p>比平均好的按压（\(A&gt;0\)）被加强，比平均差的（\(A&lt;0\)）被削弱。基线不改变梯度的期望：因为 \(\sum_a\pi_\theta(a)=1\)，\(\mathbb E[b\,\nabla\log\pi] = b\sum_a\nabla\pi_\theta(a) = b\,\nabla 1 = 0\)。它改变的是<dfn data-t="gradient-variance">梯度估计的方差</dfn>：每次估计的平均方向不变，但波动小得多，学得更快、更稳。下面同一组设置并行跑 40 次，直接比较有没有基线：</p>
 <div data-demo="bandit-pg" class="bleed"></div>
 
 <h3 id="rl0-entropy">探索与熵</h3>
 <p>演示里把学习率调大、把初始偏好调向 A，会看到一部分运行很快就几乎只按 A 或 B，再也不去试 C。原因是<dfn data-t="exploration">探索与利用</dfn>的矛盾：利用是选目前看来最好的，探索是去试别的、看会不会更好。策略一旦变得几乎确定，就不再探索，早期的运气就变成了永久的选择。</p>
 <p>衡量策略“还有多随机”的量是<dfn data-t="entropy">熵</dfn>：</p>
+<div class="fx">
 \[ H(\pi) = -\sum_a \pi(a)\log_2\pi(a) \]
 <span class="eqnote">四个按钮完全均匀时 H = 2 比特；总按同一个时 H = 0</span>
+  <div class="fx-read">把每个按钮的“意外程度” \(-\log_2\pi(a)\) 按概率加权平均。越难猜下一次会按哪个，熵越大。</div>
+  <div class="fx-eg">均匀 \((25\%\times 4)\)：\(H = 2\)；\((70\%, 10\%, 10\%, 10\%)\)：\(H \approx 1.36\)；\((97\%, 1\%, 1\%, 1\%)\)：\(H \approx 0.24\)，几乎不再探索。</div>
+</div>
 <p>训练中熵过早降到接近 0，叫<dfn data-t="entropy-collapse">熵塌缩</dfn>（entropy collapse）。在语言模型上，它表现为模型总用同一种思路解题、不再尝试别的方法。后面 DAPO 的一项主要改进就是为了防止它。</p>
 
 <h3 id="rl0-steps">从一步到很多步：轨迹、回报与功劳分配</h3>
@@ -86,8 +127,17 @@
 </ul>
 <p>多步带来的核心难题是<dfn data-t="credit">功劳分配</dfn>（credit assignment）：一盘棋走了 60 步才分出胜负，赢了是哪几步的功劳？REINFORCE 的做法很粗暴：同一局里每个动作分到同样的回报，好棋坏棋一起被加强，靠大量对局把噪声平均掉。</p>
 <p>更精细的做法是学一个<dfn data-t="value">价值函数</dfn>（value function）：</p>
-\[ V(s) = \mathbb E_{\pi}\big[\,G_t \mid s_t = s\,\big], \qquad Q(s,a) = \mathbb E_{\pi}\big[\,G_t \mid s_t = s,\ a_t = a\,\big] \]
+<div class="fx">
+\[ \htmlClass{sym-V}{V(s)} = \mathbb E_{\pi}\big[\,\htmlClass{sym-G}{G_t} \mid s_t = s\,\big], \qquad \htmlClass{sym-Q}{Q(s,a)} = \mathbb E_{\pi}\big[\,\htmlClass{sym-G}{G_t} \mid s_t = s,\ a_t = a\,\big] \]
 <span class="eqnote">V：从这个状态出发，平均能拿多少分；Q：先做动作 a、再按策略走，平均能拿多少分</span>
+  <div class="fx-read">V 是“站在这里，按现在的习惯走下去，平均能拿多少分”；Q 是“先做 a 这一步，再按习惯走”。Q − V 就是这一步选得好不好。</div>
+  <dl class="fx-syms">
+    <dt data-sym="V">\(V(s)\)</dt><dd>状态价值：从状态 \(s\) 出发的平均回报</dd>
+    <dt data-sym="Q">\(Q(s,a)\)</dt><dd>动作价值：在 \(s\) 先做 \(a\)，之后的平均回报</dd>
+    <dt data-sym="G">\(G_t\)</dt><dd>回报：从第 \(t\) 步到结束的奖励之和</dd>
+  </dl>
+  <div class="fx-eg">下棋时某个局面 \(V = 0.55\)（按现在的水平胜率 55%）。走某一步后 \(Q = 0.62\)：这一步的优势是 \(+0.07\)；走另一步 \(Q = 0.40\)：优势 \(-0.15\)。</div>
+</div>
 <p>于是每一步都有自己的优势 \(A(s,a) = Q(s,a) - V(s)\)：这一步比“在这个状态下的平均选择”好多少。\(V(s)\) 正是按钮游戏里基线的推广，只是现在每个状态各有一个基线。用一个神经网络来学 \(V(s)\)，它叫<dfn data-t="critic">价值网络</dfn>（critic）；负责选动作的策略网络叫 actor，合起来叫 actor-critic。</p>
 <details class="deep"><summary>TD 误差与 GAE：价值网络怎么给每一步估计优势</summary><div class="in">
 <p>如果价值网络准确，那么“走一步之后实际的回报”与“走之前预期的回报”之差，就是这一步带来的意外收获，叫 TD 误差：</p>
@@ -101,11 +151,19 @@
 <h3 id="rl0-offpolicy">用旧数据学新策略：重要性采样与 KL 散度</h3>
 <p>策略梯度公式里的期望是对<b>当前</b>策略 \(\pi_\theta\) 取的：样本必须由当前策略产生，这叫<dfn data-t="on-policy">同策略</dfn>（on-policy）。可是采样很贵，我们希望一批样本能用来更新好几次。更新一次之后，手里的样本就来自“旧策略” \(\pi_{\text{old}}\) 了，这叫<dfn data-t="off-policy">离策略</dfn>（off-policy）。直接拿来用，梯度就是错的。</p>
 <p>修正方法是<dfn data-t="importance-sampling">重要性采样</dfn>（importance sampling）：给每个样本乘一个权重，等于新旧策略产生它的概率之比：</p>
-\[ \begin{aligned} \mathbb E_{a\sim\pi_\theta}\big[f(a)\big] &= \sum_a \pi_{\text{old}}(a)\,\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}\,f(a) \\ &= \mathbb E_{a\sim\pi_{\text{old}}}\Big[\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}\,f(a)\Big] \end{aligned} \]
+<div class="fx">
+\[ \begin{aligned} \mathbb E_{a\sim\pi_\theta}\big[f(a)\big] &= \sum_a \pi_{\text{old}}(a)\,\htmlClass{c-ratio}{\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}}\,f(a) \\ &= \mathbb E_{a\sim\pi_{\text{old}}}\Big[\htmlClass{c-ratio}{\frac{\pi_\theta(a)}{\pi_{\text{old}}(a)}}\,f(a)\Big] \end{aligned} \]
+  <div class="fx-read">想算新策略下的平均，手里却只有旧策略的样本：给每个样本乘上“新概率 ÷ 旧概率”，再照常取平均。第一行乘了又除，所以等式严格成立。</div>
+  <div class="fx-eg">旧策略选 \(a\) 的概率 0.1，新策略 0.3：权重 3，旧样本里每个 \(a\) 当三个用。旧策略 0.5、新策略 0.25：权重 0.5，当半个用。</div>
+</div>
 <p>直觉：新策略选 \(a\) 的概率是旧策略的两倍，那么旧样本里的每个 \(a\) 就算两次。这个等式严格成立，但有代价：两个策略差得越远，权重就越不均匀。新策略常选、旧策略很少选的动作，偶尔被抽到一次，就带着极大的权重，估计的波动随之暴涨。衡量“一批带权重的样本还相当于多少个普通样本”，用<dfn data-t="ess">有效样本量</dfn> \(\text{ESS} = (\sum w)^2/\sum w^2\)。</p>
 <p>衡量两个分布差多少，用<dfn data-t="kl">KL 散度</dfn>（Kullback–Leibler divergence）：</p>
+<div class="fx">
 \[ D_{\text{KL}}(p\,\|\,q) = \sum_a p(a)\log\frac{p(a)}{q(a)} \]
 <span class="eqnote">恒 ≥ 0，两个分布相同时为 0；不对称：D(p‖q) 一般不等于 D(q‖p)</span>
+  <div class="fx-read">按 \(p\) 的概率加权，看每个结果在 \(p\) 和 \(q\) 下的概率比差多少（取对数）。两个分布越不像，值越大。</div>
+  <div class="fx-eg">\(p = (0.5, 0.5)\)，\(q = (0.9, 0.1)\)：\(D(p\|q) = 0.5\ln\frac{0.5}{0.9} + 0.5\ln\frac{0.5}{0.1} \approx 0.51\)；反过来 \(D(q\|p) \approx 0.37\)。两个方向不相等。</div>
+</div>
 <p>由此得到一个原则：每次更新只在离旧策略不远（KL 小）的范围内进行，因为只有在这个范围内，用旧样本估计的梯度才可信。这个范围叫<dfn data-t="trust-region">信任域</dfn>（trust region）。下一节的 PPO 就是这个原则的一种简单实现。</p>
 <div data-demo="importance-sampling"></div>
 
@@ -124,10 +182,29 @@
 
 <h2 id="pg">一整条回答的策略梯度</h2>
 <p>按钮游戏里的“按一次”，在语言模型里变成“写一整条回答”。目标是让回答的<span class="term" data-t="objective">期望奖励</span>最大：</p>
-\[ J(\theta) = \mathbb{E}_{q\sim\mathcal D,\; y\sim\pi_\theta(\cdot\mid q)}\big[\,R(q, y)\,\big] \]
+<div class="fx">
+\[ J(\theta) = \mathbb{E}_{\htmlClass{sym-q}{q\sim\mathcal D},\; \htmlClass{sym-y}{y\sim\pi_\theta(\cdot\mid q)}}\big[\,\htmlClass{sym-R}{R(q, y)}\,\big] \]
+  <div class="fx-read">从题库里随机抽一道题，让模型写一条回答，看得几分；把这个过程重复很多次取平均。</div>
+  <dl class="fx-syms">
+    <dt data-sym="q">\(q\sim\mathcal D\)</dt><dd>从题库 \(\mathcal D\) 里随机抽一道题</dd>
+    <dt data-sym="y">\(y\sim\pi_\theta(\cdot\mid q)\)</dt><dd>模型看到题目后采样出的一整条回答</dd>
+    <dt data-sym="R">\(R(q,y)\)</dt><dd>这条回答的得分，例如答对 1 分、答错 0 分</dd>
+  </dl>
+</div>
 <p>\(q\) 是从题库 \(\mathcal D\) 里抽的题目，\(y\) 是模型采样出的回答。和按钮游戏一样，采样这一步不可导，靠对数导数技巧得到<span class="term" data-t="policy-gradient">策略梯度</span>。不同的是，一条回答的概率是逐 token 概率的乘积，所以梯度变成对每个 token 求和：</p>
-\[ \nabla_\theta J = \mathbb{E}\Big[\,\big(R(q,y) - b(q)\big)\sum_{t} \nabla_\theta \log \pi_\theta(y_t\mid q, y_{&lt;t})\Big] \]
+<div class="fx">
+\[ \htmlClass{sym-grad}{\nabla_\theta} J = \mathbb{E}\Big[\,\htmlClass{c-adv}{\big(\htmlClass{sym-R}{R(q,y)} - \htmlClass{sym-b}{b(q)}\big)}\htmlClass{c-dir}{\htmlClass{sym-sum}{\sum_{t}} \htmlClass{sym-grad}{\nabla_\theta} \htmlClass{sym-logpi}{\log \pi_\theta(y_t\mid q, y_{&lt;t})}}\Big] \]
 <span class="eqnote">采样一条回答，把它每个 token 的对数概率往上推，推多少由“它比基线好多少”决定</span>
+  <div class="fx-read">参数该往哪改，是很多条回答的平均：每条回答按<span style="color:var(--s2)">“比平均好多少”</span>加权，往<span style="color:var(--s1)">“让它更可能被写出来”</span>的方向推。</div>
+  <dl class="fx-syms">
+    <dt data-sym="grad">\(\nabla_\theta\)</dt><dd>对模型参数求梯度</dd>
+    <dt data-sym="R">\(R(q,y)\)</dt><dd>这条回答的得分</dd>
+    <dt data-sym="b">\(b(q)\)</dt><dd>基线：这道题的平均得分</dd>
+    <dt data-sym="sum">\(\sum_t\)</dt><dd>对回答里的每个 token 求和（整条回答的对数概率 = 各 token 对数概率之和）</dd>
+    <dt data-sym="logpi">\(\log\pi_\theta(y_t\mid q, y_{&lt;t})\)</dt><dd>看到题目和前面的 token 之后，写出第 \(t\) 个 token 的对数概率</dd>
+  </dl>
+  <div class="fx-eg">同一道题采 4 条回答，得分 1、0、0、1，平均 \(b = 0.5\)：\[ \nabla J \approx \tfrac14\big[(+0.5)\,g_1 + (-0.5)\,g_2 + (-0.5)\,g_3 + (+0.5)\,g_4\big] \] \(g_i\) 是“让第 \(i\) 条回答更可能”的方向。答对的各往上推半份，答错的各往下压半份；4 条全对时什么也学不到。</div>
+</div>
 <p>奖励高于<span class="term" data-t="baseline">基线</span> \(b\) 的回答，整条回答里每个 token 的概率都被提高；低于基线的被压低。\(R - b\) 就是这条回答的<span class="term" data-t="advantage">优势</span> \(A\)。注意这里所有 token 分到的是同一个优势，也就是按钮游戏那种最粗暴的<span class="term" data-t="credit">功劳分配</span>：一条答对的回答里，关键的那一步和多余的废话被同等地加强。</p>
 
 <details class="deep"><summary>策略梯度的完整推导</summary><div class="in">
@@ -143,9 +220,33 @@
 
 <h2 id="ppo">PPO：重复利用样本，但每次别走太远</h2>
 <p>生成回答很贵。一个推理模型的回答动辄几千上万 token，采样往往要占 RL 总算力的一半左右。所以大家希望一批样本能用来更新好几步。问题是更新一步之后，模型已经不是采样时的那个模型 \(\pi_{\text{old}}\) 了，这批样本变成了<span class="term" data-t="off-policy">离策略</span>的数据。修正办法是上一节讲过的<span class="term" data-t="importance-sampling">重要性采样</span>：给每个 token 乘一个<dfn data-t="ratio">重要性比率</dfn></p>
-\[ r_t(\theta) = \frac{\pi_\theta(y_t\mid q, y_{&lt;t})}{\pi_{\text{old}}(y_t\mid q, y_{&lt;t})} \]
+<div class="fx">
+\[ \htmlClass{c-ratio}{r_t(\theta)} = \frac{\htmlClass{sym-new}{\pi_\theta(y_t\mid q, y_{&lt;t})}}{\htmlClass{sym-old}{\pi_{\text{old}}(y_t\mid q, y_{&lt;t})}} \]
+  <div class="fx-read">同一个 token，现在的模型给它的概率，除以采样时那个旧模型给它的概率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="new">\(\pi_\theta(\cdot)\)</dt><dd>正在更新的模型给这个 token 的概率</dd>
+    <dt data-sym="old">\(\pi_{\text{old}}(\cdot)\)</dt><dd>采样这批回答时的模型给这个 token 的概率（固定不变）</dd>
+  </dl>
+  <div class="fx-eg">采样时旧模型写出“等等”的概率是 0.02，更新两步后新模型给 0.03：\(r_t = 1.5\)。</div>
+</div>
 <p>比率偏离 1 越远，估计就越不可靠（重要性采样演示里 ESS 的骤降），一次大更新还可能把模型改坏。<dfn data-t="ppo">PPO</dfn>（2017）用一个简单的办法实现<span class="term" data-t="trust-region">信任域</span>：把比率<dfn data-t="clip">裁剪</dfn>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
-\[ L^{\text{CLIP}}(\theta) = \mathbb{E}_t\Big[\min\big(r_t A_t,\; \operatorname{clip}(r_t, 1-\epsilon, 1+\epsilon)\,A_t\big)\Big] \]
+<div class="fx">
+\[ L^{\text{CLIP}}(\theta) = \htmlClass{sym-E}{\mathbb{E}_t}\Big[\htmlClass{sym-min}{\min}\big(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}},\; \htmlClass{sym-clip}{\operatorname{clip}}(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}, 1-\htmlClass{sym-eps}{\epsilon}, 1+\htmlClass{sym-eps}{\epsilon})\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}}\big)\Big] \]
+  <div class="fx-read">对每个 token：用<span style="color:var(--s7)">新旧概率之比</span>修正<span style="color:var(--s2)">优势</span>，但比值一旦超出 \(1\pm\epsilon\) 就不再给它更多梯度；最后对所有 token 取平均。</div>
+  <dl class="fx-syms">
+    <dt data-sym="E">\(\mathbb E_t\)</dt><dd>对一批回答里的所有 token 取平均</dd>
+    <dt data-sym="r">\(r_t\)</dt><dd>重要性比率：新模型给这个 token 的概率 ÷ 旧模型给的概率</dd>
+    <dt data-sym="A">\(A_t\)</dt><dd>优势：这个 token 所在的回答（或这一步）比平均好多少</dd>
+    <dt data-sym="clip">\(\operatorname{clip}(x,a,b)\)</dt><dd>把 \(x\) 夹在 \([a,b]\) 之间</dd>
+    <dt data-sym="eps">\(\epsilon\)</dt><dd>允许偏离的幅度，通常 0.2</dd>
+    <dt data-sym="min">\(\min\)</dt><dd>两者取较小值：只信任离旧模型不远的那部分改进</dd>
+  </dl>
+  <div class="fx-eg">\(A = +1\)，\(r = 1.5\)，\(\epsilon = 0.2\)：\(\min(1.5,\ 1.2) = 1.2\)，是个常数，梯度为 0，这个 token 已经推够了。若 \(r = 1.1\)：取 \(1.1\times 1\)，梯度照常。若 \(A = -1\)、\(r = 1.5\)（往错的方向走了）：\(\min(-1.5,\ -1.2) = -1.5\)，梯度照常，允许纠正。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\htmlClass{c-ratio}{r_t}\cdot\htmlClass{c-adv}{A_t}}"><b>第 1 步：优势 × 比率。</b>\(A_t\) 决定这个 token 该加强还是削弱；\(r_t\) 修正“样本来自旧模型”（重要性采样）。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\operatorname{clip}(}\htmlClass{c-ratio}{r_t}\htmlClass{c-new}{,\ 1-\epsilon,\ 1+\epsilon)}\cdot\htmlClass{c-adv}{A_t}"><b>第 2 步：把比率夹住。</b>新模型离旧模型太远时，用旧样本估计的梯度不可信，所以把 \(r_t\) 限制在 \([1-\epsilon, 1+\epsilon]\) 里。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\min\Big(}\htmlClass{c-ratio}{r_t}\htmlClass{c-adv}{A_t}\htmlClass{c-new}{,\ }\operatorname{clip}(\htmlClass{c-ratio}{r_t}, 1-\epsilon, 1+\epsilon)\,\htmlClass{c-adv}{A_t}\htmlClass{c-new}{\Big)}"><b>第 3 步：两者取较小值。</b>往对的方向推够了就停，往错的方向走了仍然允许纠正。</div>
+  <div class="fx-step" data-tex="L = \htmlClass{c-new}{\mathbb{E}_t\Big[}\min\big(\htmlClass{c-ratio}{r_t}\htmlClass{c-adv}{A_t},\ \operatorname{clip}(\htmlClass{c-ratio}{r_t}, 1-\epsilon, 1+\epsilon)\,\htmlClass{c-adv}{A_t}\big)\htmlClass{c-new}{\Big]}"><b>第 4 步：对所有 token 取平均。</b>这就是 PPO 的目标函数，训练时让它尽量大。</div>
+</div>
 <p>效果是：一个 token 已经被往好的方向推得够多了（\(A&gt;0\) 且 \(r_t &gt; 1+\epsilon\)，或 \(A&lt;0\) 且 \(r_t &lt; 1-\epsilon\)），它的梯度就变成 0，不再继续推。这是一个“悲观”的目标：只信任离采样策略不远的那部分改进。</p>
 <p>用在语言模型上（<dfn data-t="rlhf">RLHF</dfn>，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
 <ul>
@@ -171,9 +272,21 @@
 
 <h2 id="grpo">GRPO：用同一道题的其它回答当基线</h2>
 <p><span class="term" data-t="critic">价值网络</span>要解决的问题，归根结底是给每道题一个<span class="term" data-t="baseline">基线</span>：“这道题的平均分是多少”。DeepSeek 在 DeepSeekMath（2024-02）里换了一个更直接的办法：<b>每道题采样一组 \(G\) 个回答，用组内平均奖励当基线</b>，再除以组内标准差做归一化：</p>
-\[ \hat A_i = \frac{R_i - \operatorname{mean}(R_1,\dots,R_G)}{\operatorname{std}(R_1,\dots,R_G)} \]
+<div class="fx">
+\[ \htmlClass{c-adv}{\hat A_i} = \frac{\htmlClass{sym-R}{R_i} - \htmlClass{sym-mean}{\operatorname{mean}(R_1,\dots,R_G)}}{\htmlClass{sym-std}{\operatorname{std}(R_1,\dots,R_G)}} \]
 <span class="eqnote">第 i 个回答的每个 token 都用这个优势；答得比同组平均好就加强，差就削弱</span>
+  <div class="fx-read">同一道题的 G 条回答里，这一条的得分比组内平均高多少，再除以组内得分的波动幅度做归一化。</div>
+  <dl class="fx-syms">
+    <dt data-sym="R">\(R_i\)</dt><dd>第 \(i\) 条回答的得分</dd>
+    <dt data-sym="mean">\(\operatorname{mean}(\cdot)\)</dt><dd>组内平均得分：充当基线</dd>
+    <dt data-sym="std">\(\operatorname{std}(\cdot)\)</dt><dd>组内得分的标准差：把优势缩放到差不多的量级</dd>
+  </dl>
+  <div class="fx-eg">4 条回答得分 \((1, 0, 1, 0)\)：平均 0.5，标准差 0.5，\(\hat A = (+1, -1, +1, -1)\)。得分 \((1, 1, 1, 0)\)：平均 0.75，标准差 0.43，\(\hat A \approx (+0.58, +0.58, +0.58, -1.73)\)：大家都答对时，唯一答错的那条受到更重的惩罚。</div>
+</div>
 <p>这就是 <dfn data-t="grpo">GRPO</dfn>（Group Relative Policy Optimization）。它非常适合语言模型：奖励本来就是给整条回答的，不需要逐 token 估价值；同一道题的几个回答天然可比；省掉了一个和策略一样大的价值网络。DeepSeek-R1（2025-01）用它在纯规则奖励（答案对不对、格式对不对）上训练，长思维链、自我检查、回头验证都从训练中自己长了出来。</p>
+<p>下面把一次 GRPO 更新拆成 7 帧，每一帧对应一个公式。可以切换“全对”“全错”看看优势会变成什么。</p>
+<div data-demo="grpo-step"></div>
+<p>一步看清之后，再看很多步：下面的玩具里，模型有 6 种解题策略，GRPO 只凭“对 / 错”的信号，逐步把概率推向更好、更长的思考。</p>
 <div data-demo="grpo-toy"></div>
 <p>演示里把难度拉到最大会看到 GRPO 最大的弱点：<b>一组回答全对或全错时，标准差为 0，优势全为 0，这道题提供不了任何梯度</b>。题目太简单或太难都是在浪费采样。这一点后面会反复出现：它决定了 RL 能从哪些题里学到东西。</p>
 
