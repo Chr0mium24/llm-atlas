@@ -4,9 +4,31 @@
    If the defining chapter has not been rewritten yet (no <dfn> there), clicks go to the glossary entry instead. */
 window.ATLAS_TERMS = {
   // ---- basics used across chapters
-  softmax: { t: 'softmax', en: 'softmax', d: String.raw`把一组任意实数分数 \(z_1,\dots,z_n\) 变成和为 1 的概率：\(p_i = e^{z_i} / \sum_j e^{z_j}\)。分数越高，概率越大；所有分数同加一个常数，结果不变。`, at: 'attention#qkv' },
   'cross-entropy': { t: '交叉熵', en: 'cross-entropy', d: String.raw`\(-\log p(\text{正确答案})\)：模型给正确答案的概率越高，交叉熵越小。语言模型预训练和 SFT 的损失函数。`, at: 'generation#ar' },
   'exposure-bias': { t: '暴露偏差', en: 'exposure bias', d: '训练时模型总看到正确的前文，推理时却要接着自己写的、可能出错的前文往下写；它从没练过“写错之后怎么办”。', at: 'rl#why' },
+
+  // ---- tokens.html
+  oov: { t: '未登录词', en: 'out-of-vocabulary (OOV)', d: '词表里没有的词。按词分词时只能把它替换成一个“未知”符号，信息就丢了。子词和字节级分词消除了这个问题。', at: 'tokens#why' },
+  subword: { t: '子词分词', en: 'subword tokenization', d: '常见片段整体作为一个 token，罕见词拆成几块，最坏退回单个字节。在序列长度和词表大小之间折中。', at: 'tokens#why' },
+  token: { t: 'token', en: 'token', d: '分词切出的基本单位，可能是一个词、半个词、几个字或一个字节。每个 token 有一个整数编号。', at: 'tokens#why' },
+  vocab: { t: '词表', en: 'vocabulary', d: String.raw`所有可能的 token 的集合，大小记作 \(V\)，2026 年的大模型通常在 10 万到 26 万之间。`, at: 'tokens#why' },
+  fertility: { t: '切分率（fertility）', en: 'fertility', d: '平均每个词（或字）被切成几个 token。越低越省；同一个分词器对不同语言差别很大。', at: 'tokens#why' },
+  bpe: { t: 'BPE', en: 'byte pair encoding', d: '从单个字符或字节开始，反复把语料中出现次数最多的相邻一对合并成新 token，直到词表达到目标大小。本质是贪心压缩。', at: 'tokens#bpe' },
+  utf8: { t: 'UTF-8', en: 'UTF-8', d: '最常用的文本编码：ASCII 字符占 1 个字节，大部分欧洲文字 2 个，汉字 3 个，emoji 4 个。', at: 'tokens#bytes' },
+  'byte-bpe': { t: '字节级 BPE', en: 'byte-level BPE', d: '以 256 种字节为起始符号做 BPE（GPT-2 起）。任何文本都能编码，没有未登录词；代价是非拉丁文字可能占多个 token。', at: 'tokens#bytes' },
+  'unigram-lm': { t: 'Unigram 分词', en: 'unigram language model tokenization', d: String.raw`给每个 token 一个概率 \(p(x)\)，在一句话所有可能的切法里选 \(\sum_i \log p(x_i)\) 最大的那种（Viterbi 算法）。`, at: 'tokens#unigram' },
+  'subword-reg': { t: '子词正则化', en: 'subword regularization', d: '训练时不总用最优切法，而按概率随机采样一种切法，让模型见过同一个词的多种切法，更稳健。', at: 'tokens#unigram' },
+  'special-token': { t: '特殊 token', en: 'special token', d: '不对应普通文字的控制符号：文本开始 / 结束、对话角色、思维链边界、工具调用、图像占位等。', at: 'tokens#vocab' },
+  'chat-template': { t: '聊天模板', en: 'chat template', d: '把一段对话按固定格式插入特殊 token（系统、用户、助手、工具……）后拼成一条序列。用错模板，模型表现会明显下降。', at: 'tokens#vocab' },
+  'embedding-matrix': { t: '嵌入矩阵', en: 'embedding matrix', d: String.raw`形状 \(V\times d\) 的参数矩阵 \(E\)，第 \(i\) 行是编号为 \(i\) 的 token 的向量。和其它参数一起训练。`, at: 'tokens#embed' },
+  embedding: { t: '嵌入（向量）', en: 'embedding', d: String.raw`一个 token 对应的 \(d\) 维向量，即嵌入矩阵的一行。训练后意思相近的 token，嵌入的方向也相近。`, at: 'tokens#embed' },
+  'one-hot': { t: '独热向量', en: 'one-hot vector', d: String.raw`长度为 \(V\)、只有第 \(i\) 位是 1、其余都是 0 的向量。用它乘嵌入矩阵，等于取出第 \(i\) 行。`, at: 'tokens#embed' },
+  cosine: { t: '余弦相似度', en: 'cosine similarity', d: String.raw`\(\cos(\mathbf u,\mathbf v) = \frac{\mathbf u\cdot\mathbf v}{\|\mathbf u\|\|\mathbf v\|}\)，只看两个向量的方向是否一致，取值在 −1 到 1 之间。`, at: 'tokens#embed' },
+  distributional: { t: '分布假说', en: 'distributional hypothesis', d: '一个词的意思由它出现的上下文决定。出现在相似上下文里的词，意思相近。词向量和语言模型都建立在这个假设上。', at: 'tokens#meaning' },
+  pmi: { t: '点互信息（PMI）', en: 'pointwise mutual information', d: String.raw`\(\mathrm{PMI}(w,c) = \log\frac{p(w,c)}{p(w)\,p(c)}\)：两个词一起出现的频率，比各自独立时偶然相遇的频率高多少倍（取对数）。`, at: 'tokens#meaning' },
+  logit: { t: 'logit', en: 'logit', d: String.raw`模型对每个候选 token 给出的未归一化分数 \(z_i\)。经过 softmax 才变成概率；所有 logit 同加一个常数，概率不变。`, at: 'tokens#output' },
+  softmax: { t: 'softmax', en: 'softmax', d: String.raw`把一组任意实数分数 \(z_1,\dots,z_n\) 变成和为 1 的概率：\(p_i = e^{z_i} / \sum_j e^{z_j}\)。分数越高，概率越大；所有分数同加一个常数，结果不变。`, at: 'tokens#output' },
+  'tied-embeddings': { t: '共享嵌入', en: 'tied embeddings', d: String.raw`让输出矩阵直接复用输入的嵌入矩阵（\(W = E\)），省下 \(Vd\) 个参数。小模型常用，大模型通常不共享。`, at: 'tokens#output' },
 
   // ---- reinforcement learning (rl.html)
   agent: { t: '智能体（RL）', en: 'agent', d: '做决定的一方。在语言模型的 RL 里，智能体就是模型本身。', at: 'rl#rl0-game' },

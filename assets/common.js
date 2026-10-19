@@ -7,7 +7,7 @@
     { s: 'index', t: '总览', home: true },
     { s: 'prologue', t: '九年简史', n: '序', st: 'todo' },
     { part: '一 · Transformer 怎么工作' },
-    { s: 'tokens', t: '分词与嵌入', st: 'old' },
+    { s: 'tokens', t: '分词与嵌入', st: 'new' },
     { s: 'attention', t: '注意力机制', st: 'old' },
     { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'old' },
     { s: 'generation', t: '自回归生成与采样', st: 'old' },

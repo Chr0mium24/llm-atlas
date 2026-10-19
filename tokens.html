@@ -13,52 +13,293 @@
 <header>
   <div class="kicker"></div>
   <h1>分词与嵌入：文字怎么变成向量</h1>
-  <p class="lede">神经网络只会算数字。所以第一步是把一段文字切成离散的 <b>token</b>，每个 token 查一张表，换成一个几千维的向量。后面所有的注意力、MLP、量化、推理加速，处理的都是这些向量。</p>
+  <p class="lede">神经网络只会做矩阵乘法。一段文字进入模型之前，要经过两步：先切成一串离散的 token、换成整数编号（分词），再把每个编号换成一个几千维的向量（嵌入）。这两步看起来是预处理，其实决定了很多事：一句中文要花多少 token、模型为什么数不清单词里有几个字母、为什么它的算术时好时坏。这一章讲清这两步怎么做、为什么这样做，以及 2026 年还在争论什么。</p>
 </header>
 
-<h2 id="why">为什么要分词</h2>
-<p>把文本变成整数序列，最直接的有两种切法，但都不好用：</p>
-<ul>
-  <li><b>按字符/字节切</b>：词表很小（英文几十个字母，或者 256 个字节），什么文本都能表示。缺点是序列太长。注意力的代价随长度平方增长，一句话切成几百个 token 太浪费。</li>
-  <li><b>按词切</b>：序列短，但词表会爆炸，而且总会遇到没见过的词（OOV），比如新造的网络用语、拼错的单词、代码里的变量名。</li>
-</ul>
-<p>现在的方案折中：<b>子词（subword）分词</b>。高频的片段（比如 “the”、“ing”、“模型”、“的”）整体作为一个 token，低频的词拆成几块，最差退回到单个字节。因为字节是兜底，所以永远不会出现 OOV。主流算法是 <b>BPE（Byte Pair Encoding）</b>：从单个字符/字节开始，反复把语料里<b>出现次数最多的相邻对</b>合并成一个新 token，直到词表达到目标大小。</p>
+<div class="bridge">这是正文的第一章。序章讲了九年的故事线；从这里开始，我们沿着一段文字在模型里走过的路，一步步往里看。第一站：文字怎么变成模型能计算的东西。</div>
 
+<div class="prereq">
+  <ul>
+    <li>向量、点积、矩阵乘法：中学或大一线性代数的程度。不熟悉可以先看<a class="xref" data-ref="nn-basics" data-full="1"></a>。</li>
+    <li>概率与对数：知道 \(\log(ab) = \log a + \log b\) 就够了。</li>
+  </ul>
+</div>
+
+<h2 id="why">为什么要分词</h2>
+<p>模型的输入必须是一串整数。最直接的做法有两种，各有致命的问题：</p>
+<ul>
+  <li><b>按字符或字节切。</b>英文只有几十个字母，所有文本都是 256 种字节的组合，词表很小，什么都能表示。但序列太长：一句话几十上百个单位，而第 <a class="xref" data-ref="attention"></a> 章会讲到，注意力的计算量随长度的平方增长。</li>
+  <li><b>按词切。</b>序列短，但词表会爆炸（英文有几十万个词形，中文还要先解决“怎么分词”），而且总会遇到没见过的词：新造的网络用语、拼错的单词、代码里的变量名。这些词只能被替换成一个“未知”符号，信息就丢了。这叫<dfn data-t="oov">未登录词</dfn>（out-of-vocabulary，OOV）问题。</li>
+</ul>
+<p>现在所有大模型都用折中的方案：<dfn data-t="subword">子词分词</dfn>（subword tokenization）。高频的片段（“the”、“ing”、“模型”、“的”）整体作为一个单位，低频的词拆成几块，最坏的情况退回到单个字节。切出来的单位叫 <dfn data-t="token">token</dfn>，所有可能的 token 组成<dfn data-t="vocab">词表</dfn>（vocabulary），每个 token 有一个编号。</p>
+<p>选词表大小 \(V\) 是一个权衡。词表越大，同一段文字切出的 token 越少，但模型里和词表有关的参数（输入端的嵌入矩阵和输出端的投影矩阵）越多：</p>
+<div class="fx">
+\[ \underbrace{\htmlClass{sym-n}{n}}_{\text{序列长度}}\ \text{随}\ \htmlClass{sym-V}{V}\ \text{增大而变短},\qquad \underbrace{2\,\htmlClass{sym-V}{V}\,\htmlClass{sym-d}{d}}_{\text{和词表有关的参数}}\ \text{随}\ \htmlClass{sym-V}{V}\ \text{线性增长} \]
+  <div class="fx-read">词表越大，句子越短（注意力越便宜），但输入嵌入和输出投影两张 \(V\times d\) 的表越大，输出时算 softmax 也越贵。</div>
+  <dl class="fx-syms">
+    <dt data-sym="n">\(n\)</dt><dd>一段文本切出的 token 数</dd>
+    <dt data-sym="V">\(V\)</dt><dd>词表大小：一共有多少种 token</dd>
+    <dt data-sym="d">\(d\)</dt><dd>隐藏维度：每个 token 用多少维的向量表示，例如 4096</dd>
+  </dl>
+  <div class="fx-eg">\(V = 128{,}256\)、\(d = 4096\)（Llama 3 8B）：\(2Vd \approx 10.5\) 亿个参数，占整个 80 亿参数模型的约 13%。如果换成 \(V = 32{,}000\)（Llama 2 的词表），这部分只有 2.6 亿，但同样的多语言文本要多切出不少 token。</div>
+</div>
+<p>衡量一个分词器“省不省”，常用<dfn data-t="fertility">平均每个词（或字）切成几个 token</dfn>，也叫 fertility。同一个分词器对不同语言的 fertility 差别很大，后面会看到这带来的不公平。</p>
+
+<h2 id="bpe">BPE：从单个字符开始，反复合并最常见的一对</h2>
+<p>最常用的子词算法是 <dfn data-t="bpe">BPE</dfn>（Byte Pair Encoding）。它本来是 1994 年的一个数据压缩算法，2015 年被 Sennrich 等人用到机器翻译上。训练过程只有一句话：</p>
+<div class="fx">
+\[ (a, b)^\star = \operatorname*{arg\,max}_{(a,b)}\ \htmlClass{sym-cnt}{\operatorname{count}(a, b)},\qquad \text{把所有相邻的}\ a\,b\ \text{合并成新 token}\ ab \]
+  <div class="fx-read">在语料里数一数，哪两个相邻的符号一起出现得最多，就把它们合并成一个新符号，加进词表。重复，直到词表达到目标大小。</div>
+  <dl class="fx-syms">
+    <dt data-sym="cnt">\(\operatorname{count}(a,b)\)</dt><dd>符号 \(a\) 后面紧跟符号 \(b\) 在语料中出现的次数</dd>
+  </dl>
+  <div class="fx-eg">设语料里“模 型”相邻出现 500 次，“大 模”300 次，“型 的”120 次。第一轮合并出现最多的“模 型”，得到新 token“模型”。之后原来的“大 模”变成了“大 模型”，这一对约 300 次，下一轮可能被合并成“大模型”。</div>
+</div>
+<p>用训练好的 BPE 切新文本（编码）时，按训练时<b>合并的先后顺序</b>，把这些合并规则依次应用到文本上。下面可以修改语料、拖动合并次数，看词表怎么一点点长出来：</p>
 <div data-demo="bpe"></div>
 
-<h3>几个值得知道的细节</h3>
+<details class="deep"><summary>BPE 为什么有效：它是一种贪心的压缩</summary><div class="in">
+<p>设语料当前的符号总数是 \(N\)。把出现 \(c\) 次的相邻对 \((a,b)\) 合并后，每次出现都把两个符号变成一个，总数减少 \(c\)：</p>
+\[ N' = N - \operatorname{count}(a, b) \]
+<p>所以“每次合并出现最多的一对”就是在每一步让序列尽量变短，是一种贪心的压缩：用 \(V\) 个符号的词表，尽量用少的符号写下整个语料。它不保证全局最优（找全局最优的分词是 NP 难问题），但简单、快、效果好。</p>
+<p>两个实现细节决定了它的行为：</p>
 <ul>
-  <li><b>字节级 BPE</b>（GPT-2 起）：基础符号是 UTF-8 字节而不是字符。一个汉字占 3 个字节，词表里如果没有合并出这个字，它就要占 3 个 token。早期英文为主的 tokenizer 处理中文很费 token，原因就在这里。在上面的演示里切到“字节级”看看。</li>
-  <li><b>词表越来越大</b>：GPT-2 约 5 万，Llama 2 是 3.2 万，Llama 3 是 12.8 万，Gemma 系列 25.6 万，Kimi K3 是 16 万。词表大了，同样的文本切出的 token 更少（多语言尤其明显），代价是嵌入矩阵和输出层变大。</li>
-  <li><b>特殊 token</b>：<code>&lt;|im_start|&gt;</code>、<code>&lt;think&gt;</code>、工具调用标记等。聊天模板、思维链、工具调用这些“格式”，本质上都是在序列里插特殊 token。</li>
-  <li><b>tokenizer 的副作用</b>：模型数不清 “strawberry” 里有几个 r、做多位数算术容易错，部分原因是它看到的是 <code>str|aw|berry</code> 这样的块，不是字母。</li>
-  <li><b>多模态也是 token</b>：图像切成 patch，经过视觉编码器变成向量，和文字 token 拼在同一条序列里。视频、音频同理。第 <a class="xref" data-ref="image">12</a>、<a class="xref" data-ref="video">13</a> 章还会讲到。</li>
-  <li><b>去掉 tokenizer 的尝试</b>：Meta 的 BLT（Byte Latent Transformer，2024-12）直接吃字节，再按熵动态分块，是 “tokenizer-free” 方向的代表。</li>
+  <li><b>预分词（pre-tokenization）。</b>先按空格、标点、数字把文本切成“词块”，合并只在词块内部进行。所以 “the cat” 里的 “e c” 永远不会被合并。GPT 系列用一个正则表达式做这一步；数字常被切成单个数字或最多三位一组。</li>
+  <li><b>编码时按优先级合并。</b>编码一个新词时，反复找出“训练时最早学到的”那条可用的合并规则来执行，而不是重新统计频率。同一个词的切法因此是确定的。</li>
 </ul>
+<p><b>这个推导告诉我们：</b>BPE 的目标是压缩，不是语言学上的“词素”。它切出的 token 往往和人对词的理解不一致，比如 “strawberry” 可能被切成 “str / aw / berry”。这是很多“模型不会数字母”的现象的根源。</p>
+</div></details>
+
+<h3 id="bytes">字节级 BPE：永远不会遇到不认识的字符</h3>
+<p>文本在计算机里按 <dfn data-t="utf8">UTF-8</dfn> 编码存储：ASCII 字符占 1 个字节，大部分欧洲文字占 2 个，汉字占 3 个，emoji 占 4 个。GPT-2（2019）的<dfn data-t="byte-bpe">字节级 BPE</dfn>把这 256 种字节当作起始符号，而不是字符。任何文本都能拆成字节，所以永远不会出现未登录词。</p>
+<p>代价是：一个汉字如果没被合并成单个 token，就要占 3 个 token。早期以英文为主训练的分词器，中文、印地语、阿拉伯语这类文字的 fertility 很高，同样的意思要多花几倍的 token，也就多付几倍的钱、少放几倍的上下文。在上面的演示里切到“字节级”，合并次数调小，可以看到一个汉字被拆成三个字节。</p>
+
+<h3 id="unigram">另一条路：Unigram，按概率挑一种切法</h3>
+<p>BPE 是“自底向上”地合并。Kudo（2018）提出的 <dfn data-t="unigram-lm">Unigram 语言模型分词</dfn>反过来：先准备一个很大的候选词表，给每个 token 一个概率 \(p(x)\)，然后在一句话所有可能的切法里，选整体概率最大的那一种：</p>
+<div class="fx">
+\[ \htmlClass{sym-xs}{\mathbf x}^\star = \operatorname*{arg\,max}_{\mathbf x\, \in\, \htmlClass{sym-S}{\mathcal S(s)}}\ \sum_{i} \log \htmlClass{sym-p}{p(x_i)} \]
+  <div class="fx-read">在句子 \(s\) 所有的切法里，挑一种：它的每个 token 的概率乘起来最大（等价于对数概率加起来最大）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="S">\(\mathcal S(s)\)</dt><dd>句子 \(s\) 所有可能的切法（只用词表里有的 token）</dd>
+    <dt data-sym="xs">\(\mathbf x = (x_1, x_2, \dots)\)</dt><dd>其中一种切法，切出的 token 序列</dd>
+    <dt data-sym="p">\(p(x_i)\)</dt><dd>token \(x_i\) 的概率，训练时用 EM 算法估计</dd>
+  </dl>
+  <div class="fx-eg">“推理加速”有两种切法：“推理 / 加速”：\(\log 0.009 + \log 0.008 \approx -9.53\)；“推 / 理 / 加 / 速”：\(\log 0.006 + \log 0.008 + \log 0.01 + \log 0.005 \approx -19.75\)。前者概率大得多，被选中。</div>
+</div>
+<p>所有切法可以用动态规划（Viterbi 算法）在线性时间内找到最优的一种。训练时从大词表出发，反复估计概率、删掉“删了之后整体似然下降最少”的 token，直到词表缩到目标大小。SentencePiece（2018）工具同时实现了 BPE 和 Unigram，并且把空格也当成普通字符处理，不依赖空格分词，所以对中文、日文这类没有空格的语言很友好。</p>
+<div data-demo="unigram-seg"></div>
+<p>Unigram 还带来一个有用的副产品：<dfn data-t="subword-reg">子词正则化</dfn>（subword regularization）。训练时不总用最优切法，而按概率随机采样一种，模型因此见过同一个词的多种切法，对拼写错误更稳健。</p>
+
+<aside class="dispute surprise">
+  <h4>数字怎么切，会影响模型的算术能力</h4>
+  <dl>
+    <dt>现象</dt><dd>早期分词器把数字切得很随意：“12345” 可能切成 “123 / 45”，也可能是 “1 / 2345”，取决于训练语料里哪些片段常见。同一个数字的位值（个位、十位……）在不同 token 里位置不同，模型很难学会进位。</dd>
+    <dt>证据</dt><dd>Singh 与 Strouse（2024）对比发现：把数字<b>从右往左</b>每三位切一组（与位值对齐），比从左往右切，加法的准确率明显更高。不少新模型干脆把数字切成单个数字（Llama 系列、DeepSeek 等）。</dd>
+    <dt>现在怎么看</dt><dd>分词不是中性的预处理，它决定了模型“看到”的结构。2026 年 COLM 的一项对比研究专门提出了“数字位值边界是否对齐”这一项分词器评价指标。</dd>
+  </dl>
+</aside>
+
+<h2 id="vocab">词表多大、包含什么</h2>
+<p>近几年的趋势是词表越来越大：</p>
+<div class="tablewrap"><table>
+  <tr><th>模型</th><th class="num">词表大小</th><th>备注</th></tr>
+  <tr><td>GPT-2（2019）</td><td class="num">50,257</td><td>字节级 BPE，以英文为主</td></tr>
+  <tr><td>Llama 2（2023）</td><td class="num">32,000</td><td>SentencePiece BPE，中文 fertility 很高</td></tr>
+  <tr><td>Llama 3（2024）</td><td class="num">128,256</td><td>英文压缩率提升约 15%，多语言明显改善</td></tr>
+  <tr><td>DeepSeek-V3（2024）</td><td class="num">约 12.9 万</td><td>中英双语优化</td></tr>
+  <tr><td>Qwen 系列</td><td class="num">约 15.2 万</td><td>多语言</td></tr>
+  <tr><td>Kimi K2 / K3</td><td class="num">约 16 万</td><td></td></tr>
+  <tr><td>Gemma 3</td><td class="num">约 26.2 万</td><td>覆盖语言最广</td></tr>
+</table></div>
+<aside class="dispute">
+  <h4>词表到底该多大</h4>
+  <dl>
+    <dt>主张</dt><dd>Tao 等（NeurIPS 2024）把词表大小也纳入规模定律：模型越大，最优词表越大。按他们的估算，Llama 2 70B 的最优词表应该在 21 万以上，而它只用了 3.2 万。大多数模型的词表都偏小。</dd>
+    <dt>反方</dt><dd>词表大了，嵌入和输出层占的参数变多，对小模型尤其不划算（一个 1B 模型可能有三分之一参数在这两张表里）；输出时对十几万个 token 算 softmax 也更慢；端侧部署更吃内存。</dd>
+    <dt>现在怎么看</dt><dd>大模型往 15 万到 26 万靠拢；小模型常与大模型共用同一个词表，便于蒸馏（第 <a class="xref" data-ref="distillation"></a> 章需要学生和老师的 token 一一对应）。</dd>
+  </dl>
+</aside>
+<p>词表里除了普通 token，还有一类<dfn data-t="special-token">特殊 token</dfn>：标记一段文本的开始和结束、区分系统提示和用户消息、包住思维链（如 <code>&lt;think&gt;</code>）、标记工具调用、给图像和音频占位。把一段对话按固定格式加上这些特殊 token，叫<dfn data-t="chat-template">聊天模板</dfn>。对话、推理、工具调用这些“能力”，在输入层面都只是序列里插了特定的 token；用错模板，模型的表现会明显下降。</p>
+<aside class="dispute surprise">
+  <h4>“故障 token”：词表里有、训练时却几乎没见过</h4>
+  <dl>
+    <dt>现象</dt><dd>2023 年有人发现，向 GPT-3 输入 “SolidGoldMagikarp” 这样的字符串，模型会胡言乱语、拒绝复述，甚至答成别的词。</dd>
+    <dt>原因</dt><dd>分词器和模型是用不同的数据训练的。这个字符串在分词器的训练数据（包含大量 Reddit 用户名）里很常见，所以成了一个独立的 token；但在模型的训练数据里几乎没出现过，它的嵌入向量几乎没被更新，停在初始化附近，模型不知道它是什么意思。</dd>
+    <dt>启示</dt><dd>分词器和模型应该用一致的数据训练；上线前要检查训练中从未或极少出现的 token。</dd>
+  </dl>
+</aside>
 
 <h2 id="embed">嵌入：查表得到向量</h2>
-<p>分词得到的是整数 id，比如 “模型” → 41823。模型里有一张 <b>嵌入矩阵</b> <span class="math">E ∈ ℝ<sup>V×d</sup></span>（V 是词表大小，d 是隐藏维度，比如 4096 或 7168），第 41823 行就是 “模型” 的向量。这张表和其它参数一样，是训练出来的。</p>
-<p>训练完后，语义相近的 token 向量方向也相近，而且某些 <b>方向</b> 会对应可解释的概念（性别、时态、国家→首都……）。2013 年 word2vec 有个经典例子 <span class="math">king − man + woman ≈ queen</span>。下面用一个手工构造的小例子演示这种“向量算术”：每个词有 11 个可解释的维度，图上画的是 PCA 投影到 2 维的结果。</p>
+<p>分词得到的是整数编号，比如 “模型” → 41823。模型里有一张<dfn data-t="embedding-matrix">嵌入矩阵</dfn> \(E\)，形状是 \(V \times d\)，第 41823 行就是 “模型” 的向量，叫它的<dfn data-t="embedding">嵌入</dfn>（embedding）。查表这个操作也可以写成矩阵乘法：用一个<dfn data-t="one-hot">独热向量</dfn>（长度为 \(V\)，只有第 \(i\) 位是 1、其余都是 0）去乘嵌入矩阵。</p>
+<div class="fx">
+\[ \htmlClass{sym-e}{\mathbf e_i} = \htmlClass{sym-E}{E}^{\top}\, \htmlClass{sym-oh}{\mathbf 1_i} = \htmlClass{sym-E}{E}[\,i,\, :\,] \]
+  <div class="fx-read">编号为 \(i\) 的 token，它的向量就是嵌入矩阵的第 \(i\) 行。写成“用一个只有第 \(i\) 位是 1 的向量去乘矩阵”，是为了说明它和普通的线性层一样，可以求梯度、可以训练。</div>
+  <dl class="fx-syms">
+    <dt data-sym="e">\(\mathbf e_i\)</dt><dd>编号为 \(i\) 的 token 的嵌入向量，\(d\) 维</dd>
+    <dt data-sym="E">\(E\)</dt><dd>嵌入矩阵，\(V\) 行 \(d\) 列，每行是一个 token 的向量，是要学习的参数</dd>
+    <dt data-sym="oh">\(\mathbf 1_i\)</dt><dd>独热向量：长度为 \(V\)，只有第 \(i\) 位是 1，其余都是 0</dd>
+  </dl>
+  <div class="fx-eg">\(V = 4\)、\(d = 2\)，\(E = \begin{pmatrix}0.1 & 0.3\\ -0.5 & 0.2\\ 0.9 & -0.1\\ 0 & 0.4\end{pmatrix}\)。token 2 的独热向量是 \((0,1,0,0)\)，\(E^\top \mathbf 1_2 = (-0.5,\ 0.2)\)，就是第 2 行。</div>
+</div>
+<p>这张表和其它参数一样，从随机数开始，靠训练学出来。训练之后，意思相近的 token 向量方向也相近。衡量两个向量方向是否接近，用<dfn data-t="cosine">余弦相似度</dfn>：</p>
+<div class="fx">
+\[ \cos(\mathbf u, \mathbf v) = \frac{\mathbf u\cdot\mathbf v}{\|\mathbf u\|\,\|\mathbf v\|} \]
+  <div class="fx-read">两个向量的点积，除以它们长度的乘积。只看方向、不看长短，结果在 −1 到 1 之间：1 表示方向相同，0 表示垂直，−1 表示相反。</div>
+  <div class="fx-eg">\(\mathbf u = (1, 2)\)，\(\mathbf v = (2, 4)\)：方向相同，\(\cos = \frac{10}{\sqrt5\cdot\sqrt{20}} = 1\)。\(\mathbf w = (2, -1)\)：\(\mathbf u\cdot\mathbf w = 0\)，\(\cos = 0\)，两者垂直。</div>
+</div>
 
+<h3 id="meaning">向量里的“意思”从哪来</h3>
+<p>为什么训练会让意思相近的词向量相近？背后是语言学里的<dfn data-t="distributional">分布假说</dfn>：一个词的意思由它出现的上下文决定（Firth, 1957: “You shall know a word by the company it keeps”）。“猫”和“狗”经常出现在相似的句子里（“喂___”“___在睡觉”），只要模型的任务是预测上下文，它们的向量自然会被推到一起。</p>
+<p>2013 年的 word2vec 把这个想法做成了一个很小的网络：给一个词，预测它周围的词（skip-gram）：</p>
+<div class="fx">
+\[ \max\ \sum_{t}\sum_{-k\le j\le k,\ j\ne 0} \log p(w_{t+j}\mid w_t),\qquad p(o\mid c) = \frac{\exp(\htmlClass{sym-u}{\mathbf u_o}\cdot \htmlClass{sym-v}{\mathbf v_c})}{\sum_{w}\exp(\htmlClass{sym-u}{\mathbf u_w}\cdot \htmlClass{sym-v}{\mathbf v_c})} \]
+  <div class="fx-read">对语料里的每个词，让模型给它前后 \(k\) 个位置上的真实邻居尽量高的概率；某个词作为邻居出现的概率，正比于两个向量点积的指数。</div>
+  <dl class="fx-syms">
+    <dt data-sym="v">\(\mathbf v_c\)</dt><dd>中心词 \(c\) 的向量（这就是最后拿来用的词向量）</dd>
+    <dt data-sym="u">\(\mathbf u_o\)</dt><dd>词 \(o\) 作为“上下文”时的向量</dd>
+  </dl>
+  <div class="fx-eg">句子“我 喂 猫 吃 饭”，中心词“猫”，\(k = 1\)：要让 \(p(\text{喂}\mid\text{猫})\) 和 \(p(\text{吃}\mid\text{猫})\) 尽量大。语料里“喂 狗 吃”也很常见，所以“狗”的向量会被推到和“猫”相似的方向。</div>
+</div>
+<p>训练完的词向量出现了著名的“向量算术”：\(\text{国王} - \text{男人} + \text{女人} \approx \text{王后}\)。下面用一个手工构造的小例子演示这种现象：每个词有 11 个可以解释的维度，图上是降到 2 维后的样子。</p>
 <div data-demo="embed-arith"></div>
 
-<p>真实模型的嵌入维度在几千，各维度并不对应人能读懂的概念，概念分布在许多维度的组合方向里（这叫 superposition，叠加）。可解释性研究用稀疏自编码器（SAE）把这些方向找出来，前沿章节里会提到。</p>
-<div class="callout"><b>输出端是反过来的。</b>模型最后一层输出一个 d 维向量 h，乘上 <span class="math">W<sub>out</sub> ∈ ℝ<sup>d×V</sup></span> 得到 V 个 logit，softmax 之后就是下一个 token 的概率分布。不少小模型让 <span class="math">W<sub>out</sub> = Eᵀ</span>（tied embeddings），省一份参数。第 <a class="xref" data-ref="generation">4</a> 章讲怎么从这个分布里采样。</div>
+<details class="deep"><summary>word2vec 其实在分解一个“共现矩阵”</summary><div class="in">
+<p>实际训练用的是“负采样”（SGNS）：不算整个词表的 softmax，而是让真实的（词, 上下文）对的 \(\sigma(\mathbf v_w\cdot\mathbf u_c)\) 变大，让随机抽的 \(k\) 个假上下文的变小（\(\sigma(x) = 1/(1+e^{-x})\)）。对某一对 \((w, c)\)，把目标函数里和 \(x = \mathbf v_w\cdot\mathbf u_c\) 有关的项收集起来：</p>
+\[ \ell(x) = \#(w,c)\,\log\sigma(x) + k\,\#(w)\,\frac{\#(c)}{|D|}\,\log\sigma(-x) \]
+<p>其中 \(\#(w,c)\) 是两者共现的次数，\(\#(w)\)、\(\#(c)\) 是各自出现的次数，\(|D|\) 是总的词对数。第二项是“\(c\) 被随机抽中当作 \(w\) 的负样本”的期望次数。对 \(x\) 求导并令其为 0，利用 \(\frac{d}{dx}\log\sigma(x) = \sigma(-x)\)：</p>
+\[ \#(w,c)\,\sigma(-x) = k\,\frac{\#(w)\#(c)}{|D|}\,\sigma(x) \;\Rightarrow\; e^{x} = \frac{\#(w,c)\,|D|}{k\,\#(w)\,\#(c)} \;\Rightarrow\; x = \underbrace{\log\frac{\#(w,c)\,|D|}{\#(w)\,\#(c)}}_{\mathrm{PMI}(w,c)} - \log k \]
+<p>括号里的量叫<dfn data-t="pmi">点互信息</dfn>（PMI）：两个词一起出现的频率，比“各自独立出现时偶然碰到一起”的频率高多少倍，再取对数。所以最优解满足 \(\mathbf v_w\cdot\mathbf u_c = \mathrm{PMI}(w,c) - \log k\)：word2vec 在用低维向量的点积去拟合 PMI 矩阵（Levy 与 Goldberg, 2014）。</p>
+<p><b>向量算术为什么成立。</b>如果 “国王”与“王后”的共现模式之差，和“男人”与“女人”的差大致相同（都只差在“性别”相关的上下文上），那么在 PMI 的意义下 \(\mathbf v_{\text{国王}} - \mathbf v_{\text{王后}} \approx \mathbf v_{\text{男人}} - \mathbf v_{\text{女人}}\)，移项就是向量算术。</p>
+<p><b>这个推导告诉我们：</b>词向量里的“意思”就是统计意义上的共现模式，没有什么神秘的东西；大模型的嵌入层也遵循同样的原理，只是它预测的“上下文”是整段前文。</p>
+</div></details>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2013</span>word2vec：用浅层网络学词向量，出现了“向量算术”现象</li>
-  <li><span class="d">2015</span>Sennrich 等把 BPE 用于神经机器翻译，子词分词成为主流</li>
-  <li><span class="d">2018</span>SentencePiece / Unigram LM：不依赖空格，适合中日文</li>
-  <li><span class="d">2019</span>GPT-2 的字节级 BPE：256 个字节兜底，彻底没有 OOV</li>
-  <li><span class="d">2023</span>tiktoken cl100k、Llama 3 的 128K 词表；多语言压缩率成为竞争点</li>
-  <li><span class="d">2024</span>BLT 等 tokenizer-free 尝试；多模态 token（图像 patch、音频帧）并入同一序列</li>
-  <li><span class="d">2025–26</span>词表普遍 15–26 万；特殊 token 承载思维链、工具调用、多模态分段</li>
+<p>大模型的嵌入层和 word2vec 有两点不同。第一，它不单独训练，而是和整个模型一起，为“预测下一个 token”这个任务端到端地学出来（第 <a class="xref" data-ref="generation"></a> 章）。第二，嵌入层给出的只是每个 token 的“字面”向量，同一个 token 在任何句子里都一样；“bank”是银行还是河岸，要等后面的注意力层结合上下文才能区分（第 <a class="xref" data-ref="attention"></a> 章）。真实模型的嵌入有几千维，单独的一维通常没有可读的意思，概念分布在很多维度的组合方向上，这一点在第 <a class="xref" data-ref="interpretability"></a> 章还会讲。</p>
+
+<h2 id="output">输出端：从向量回到 token</h2>
+<p>模型处理完一个位置后，得到一个 \(d\) 维向量 \(\mathbf h\)。要预测下一个 token，就把它和词表里每个 token 比一比，得到 \(V\) 个分数，叫 <dfn data-t="logit">logit</dfn>；再用 <dfn data-t="softmax">softmax</dfn> 把分数变成概率：</p>
+<div class="fx">
+\[ \htmlClass{sym-z}{\mathbf z} = \htmlClass{sym-W}{W}\,\htmlClass{sym-h}{\mathbf h},\qquad p(y = i \mid \mathbf h) = \operatorname{softmax}(\mathbf z)_i = \frac{e^{z_i}}{\sum_{j=1}^{V} e^{z_j}} \]
+  <div class="fx-read">用输出矩阵把最后的向量变成 \(V\) 个分数，每个分数取指数，再除以总和，得到下一个 token 是每个词的概率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="h">\(\mathbf h\)</dt><dd>模型在这个位置的最终向量，\(d\) 维</dd>
+    <dt data-sym="W">\(W\)</dt><dd>输出矩阵（也叫 LM head），\(V\times d\)，每行对应一个 token</dd>
+    <dt data-sym="z">\(\mathbf z\)</dt><dd>logit：\(V\) 个未归一化的分数，第 \(i\) 个是 \(\mathbf h\) 和第 \(i\) 个 token 的输出向量的点积</dd>
+  </dl>
+  <div class="fx-eg">三个候选 token 的 logit 是 \((2,\ 1,\ 0)\)：\(e^{z} \approx (7.39,\ 2.72,\ 1)\)，总和 11.11，概率 \(\approx (66.5\%,\ 24.5\%,\ 9.0\%)\)。所有 logit 同时加 5，概率不变，只有差值才重要。</div>
+</div>
+<p>注意输入的嵌入矩阵 \(E\) 和输出矩阵 \(W\) 形状相同，都是“每个 token 一行向量”。很多小模型直接让两者共用同一张表（\(W = E\)），叫<dfn data-t="tied-embeddings">共享嵌入</dfn>（tied embeddings），省下 \(Vd\) 个参数。大模型通常不共享，两张表各自学习。怎么从这个概率分布里挑出下一个 token（温度、top-p 等），是第 <a class="xref" data-ref="generation"></a> 章的内容。</p>
+
+<h2 id="frontier">2024–2026：要不要分词器</h2>
+<p>分词器是整个系统里少数还靠“手工规则 + 单独训练”的部分，它带来的问题一直存在：模型看不到字母和位值、不同语言付出的 token 不公平、分词器和模型的训练数据不一致。2024 年以后有两条改进方向：</p>
+<ul>
+  <li><b>更聪明的子词。</b>SuperBPE（COLM 2025）允许 token 跨越空格，先学普通子词，再学“超词”（如 “by the way”）：同样的文本少用约 33% 的 token，在 30 个评测上平均提升 4%。SupraTok 等方法沿着同一方向继续改进。2026 年 COLM 的一项研究在相同的预训练条件下只换分词器，系统比较了 BPE、Unigram、SuperBPE 等五种算法。</li>
+  <li><b>干脆不分词。</b>Meta 的 BLT（Byte Latent Transformer, 2024-12）直接读字节，再用一个小模型按“下一个字节有多难猜”（熵）动态地把字节分组成长短不一的片段：好猜的地方用长片段、难猜的地方用短片段，把算力花在难的地方。它是第一个在 8B 规模上追平基于分词器的模型的字节级模型。2026 年 10 月的一篇新论文称，用合适的训练方法，纯字节 Transformer 随模型变大可以持续超过子词模型。</li>
 </ul>
+<aside class="dispute">
+  <h4>分词器会被淘汰吗</h4>
+  <dl>
+    <dt>主张</dt><dd>字节级模型没有未登录词、没有语言偏见、能看到每个字母和数字位，而且 BLT 证明了它在 8B 规模上可以和子词模型打平。</dd>
+    <dt>反方</dt><dd>字节序列比 token 序列长 3–4 倍，注意力和 KV cache 的成本随之增长；分组的小模型增加了系统复杂度；推理框架、量化、投机解码等整个工具链都围绕 token 建立。</dd>
+    <dt>现在怎么看</dt><dd>截至 2026 年，主流前沿模型仍然使用 BPE 类分词器，只是词表更大、训练数据更多语言。字节级与动态分组是活跃的研究方向，还没有进入主流产品。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">一个 token 就是一个词（或一个字）。</b>token 是统计上常见的片段，可能是半个词、一个词、几个字，也可能是一个字节。英文平均约 0.75 个词一个 token，中文因分词器不同而差异很大。</li>
+  <li><b class="m">中文费 token 是因为中文更复杂。</b>主要取决于分词器的训练数据。以英文为主训练的字节级 BPE 会把汉字拆成 3 个字节；中文语料充足的分词器，一个常用词往往就是一个 token。</li>
+  <li><b class="m">嵌入向量的每一维都有一个含义。</b>单独的一维通常没有可读的含义，概念体现为很多维度组合出的方向。演示里“每一维可解释”是为了教学而手工构造的。</li>
+  <li><b class="m">词表越大越好。</b>大词表让序列更短，但增加了参数和输出层的计算量；最优大小随模型规模变化，小模型尤其不该用过大的词表。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2013</div>
+    <h4>word2vec：用稠密向量表示词</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>传统方法用独热向量表示词，任意两个词都正交，“猫”和“狗”与“猫”和“汽车”一样远，模型无法利用词之间的相似性。</dd>
+      <dt>怎么解决</dt><dd>训练一个小网络预测上下文，把每个词压成几百维的稠密向量；意思相近的词向量相近，还出现了向量算术。</dd>
+      <dt>代价</dt><dd>一个词只有一个向量，无法区分多义词；没见过的词没有向量。</dd>
+      <dt>引出</dt><dd>词表必须是封闭的，新词、罕见词怎么办？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">同时期</span>GloVe 与 fastText</summary><div>GloVe（2014）直接分解全局共现矩阵，和 word2vec 本质相同（见上面的推导）。fastText（2016）把词拆成字符 n-gram 再求和，第一次让没见过的词也能有向量，是子词思想在词向量上的先声。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2015–2016</div>
+    <h4>BPE 进入神经机器翻译</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>翻译模型的词表只能有几万个词，人名、地名、复合词大量被替换成“未知”符号，译文里出现成片的空洞。</dd>
+      <dt>怎么解决</dt><dd>Sennrich 等把 BPE 压缩算法用于分词：常见词完整保留，罕见词拆成子词，任何词都能表示。</dd>
+      <dt>代价</dt><dd>依赖按空格的预分词，对中文、日文这类不用空格的语言不友好；切法和语言学无关。</dd>
+      <dt>引出</dt><dd>需要一种不依赖空格、对所有语言一视同仁的分词方法。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">分支</span>WordPiece</summary><div>Google 在 2016 年的翻译系统和 2018 年的 BERT 里使用 WordPiece：和 BPE 类似，但按“合并后语言模型似然提升最多”而不是“频率最高”来选择合并。BERT 系列至今沿用。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2018</div>
+    <h4>SentencePiece 与 Unigram</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>不同语言要写不同的预分词规则。</dd>
+      <dt>怎么解决</dt><dd>把空格当作普通字符，直接在原始文本上训练；同时提出按概率选择切法的 Unigram 算法和子词正则化。</dd>
+      <dt>代价</dt><dd>仍然以字符为基本单位，遇到训练时没见过的字符（罕见汉字、emoji）还是会变成“未知”。</dd>
+      <dt>引出</dt><dd>能不能彻底消灭未知符号？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2019</div>
+    <h4>字节级 BPE</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>任何以字符为基础的词表都可能遇到没见过的字符。</dd>
+      <dt>怎么解决</dt><dd>GPT-2 以 256 种字节为起点做 BPE，任何文本都能编码，未知符号彻底消失。</dd>
+      <dt>代价</dt><dd>非拉丁文字被拆成多个字节，fertility 高，同样内容要多花几倍 token。</dd>
+      <dt>引出</dt><dd>多语言的 token 成本不公平，需要更大、更多语言的词表。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>大词表与多语言</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>3 万到 5 万的词表下，中文、印地语等语言的 token 成本是英文的几倍；上下文窗口被白白占用。</dd>
+      <dt>怎么解决</dt><dd>词表扩大到 10 万到 26 万（Llama 3 128K、Qwen 约 15 万、Gemma 约 26 万），用多语言语料训练分词器；数字按位切分。</dd>
+      <dt>代价</dt><dd>嵌入和输出层的参数随词表线性增长；输出 softmax 更贵。</dd>
+      <dt>引出</dt><dd>分词本身的局限（看不到字母、手工规则）是否该彻底去掉？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>词表的规模定律</summary><div>Tao 等（2024）认为最优词表应随模型规模增大，多数模型的词表偏小。反方认为小模型和端侧部署承受不起大词表。见上文的争议框。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-12 → 2026</div>
+    <h4>超词与字节级模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>子词分词器看不到字母和位值，有语言偏见，和模型分开训练。</dd>
+      <dt>怎么解决</dt><dd>两条路：让 token 跨越空格（SuperBPE、SupraTok），进一步压缩；或者直接读字节、按熵动态分组（BLT），2026 年的研究称纯字节模型随规模变大可以超过子词模型。</dd>
+      <dt>代价</dt><dd>字节序列更长、系统更复杂，整个工具链需要重写。</dd>
+      <dt>引出</dt><dd>无论用哪种方式切分，下一步都是让序列里的每个位置能“看到”其它位置：注意力。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被取代</span>MegaByte（2023）</summary><div>Meta 早期的字节级尝试，用固定长度的字节块。固定分块无法根据内容难度分配算力，被按熵动态分块的 BLT 取代。它留下的思想是“用一个小模型处理块内的字节、用大模型处理块之间的关系”。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 语料中相邻对的出现次数是：“模 型” 500 次，“型 的” 120 次，“大 模” 300 次。BPE 第一轮合并哪一对？合并后 “大 模” 的计数会怎样？</summary><div class="ans">第一轮合并出现最多的 “模 型”，得到新 token “模型”。合并后原来的 “大 模” 变成了 “大 模型”，所以 “大 模” 这一对的计数会大幅下降（只剩“模”后面不是“型”的情况），而新的一对 “大 模型” 出现约 300 次，可能在下一轮被合并。</div></details>
+<details class="quiz"><summary>2. 为什么字节级 BPE 永远不会遇到未登录词？它付出了什么代价？</summary><div class="ans">任何文本在 UTF-8 下都是字节序列，而 256 种字节全在初始词表里，所以最坏情况下可以逐字节编码。代价是没被合并的非拉丁字符要占多个 token（汉字 3 个），序列变长、成本变高。</div></details>
+<details class="quiz"><summary>3. 一个模型 \(V = 128{,}256\)、\(d = 4096\)，输入嵌入和输出矩阵不共享，用 BF16（每个参数 2 字节）存储。这两张表一共占多少显存？</summary><div class="ans">参数量 \(2Vd = 2\times 128{,}256\times 4096 \approx 10.5\) 亿，每个 2 字节，约 2.1 GB。对一个 8B 模型（约 16 GB），这两张表占了约 13%。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1508.07909">Neural Machine Translation of Rare Words with Subword Units</a>（Sennrich 等, 2016）<span class="why">BPE 用于神经网络的起点，篇幅很短，算法描述只有十几行。</span></li>
+  <li><a href="https://arxiv.org/abs/1804.10959">Subword Regularization</a>（Kudo, 2018）<span class="why">Unigram 分词和子词正则化的原始论文，讲清了“切法”本身也可以是概率模型。</span></li>
+  <li><a href="https://arxiv.org/abs/1301.3781">word2vec</a>（Mikolov 等, 2013）与 <a href="https://papers.nips.cc/paper/2014/hash/feab05aa91085b7a8012516bc3533958-Abstract.html">Neural Word Embedding as Implicit Matrix Factorization</a>（Levy 与 Goldberg, 2014）<span class="why">前者给出现象，后者给出解释：词向量在分解 PMI 矩阵。</span></li>
+  <li><a href="https://arxiv.org/abs/2412.09871">Byte Latent Transformer</a>（Meta, 2024）<span class="why">字节级模型第一次在大规模上追平子词模型，理解“不要分词器”这条路的关键论文。</span></li>
+  <li><a href="https://arxiv.org/abs/2407.13623">Scaling Laws with Vocabulary</a>（Tao 等, 2024）<span class="why">词表大小也有最优值，而且应随模型变大。</span></li>
+</ol>
+
+<div class="nextq">现在每个 token 都有了一个向量，但它们彼此独立：“bank” 在“河岸”和“银行”两句话里是同一个向量，“它”也不知道自己指的是谁。下一章（第 <a class="xref" data-ref="attention"></a> 章）讲让每个位置去“看”其它位置、按上下文改写自己的机制：注意力。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2503.13423">SuperBPE</a> · <a href="https://arxiv.org/abs/2508.11857">SupraTok</a> · <a href="https://arxiv.org/abs/2608.18062">分词器对比研究（COLM 2026）</a> · <a href="https://arxiv.org/html/2610.05978v1">Byte Language Models（2026）</a> · <a href="https://arxiv.org/abs/2402.14903">Tokenization counts: the impact of tokenization on arithmetic</a> · <a href="https://www.lesswrong.com/posts/aPeJE8bSo6rAFoLqg/solidgoldmagikarp-plus-prompt-generation">SolidGoldMagikarp</a> · <a href="https://ai.meta.com/blog/meta-llama-3/">Llama 3 发布说明</a>。各模型词表大小取自公开配置文件，标“约”的为近似值。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>
