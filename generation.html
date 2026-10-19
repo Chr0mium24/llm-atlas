@@ -12,51 +12,242 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>自回归生成：一次只吐一个 token</h1>
-  <p class="lede">GPT 类模型只做一件事：给定前文，输出下一个 token 的概率分布。从分布里取一个 token 接到末尾，再预测下一个。对话、写代码、推理，都是这个循环跑几千到几万次的结果。</p>
+  <h1>自回归生成：训练时预测下一个 token，生成时一个一个地采样</h1>
+  <p class="lede">GPT 类模型只做一件事：给定前文，输出下一个 token 的概率分布。训练时，让真实的下一个 token 概率尽量高；生成时，从分布里取一个 token 接到末尾，再预测下一个。对话、写代码、几万字的推理过程，都是这个循环跑很多次的结果。这一章讲清这个循环的两端：训练目标（交叉熵、困惑度，以及“预测即压缩”），和生成时的解码策略（温度、top-p、束搜索、约束解码），最后看试图打破“一次一个 token”的新方向。</p>
 </header>
 
-<h2 id="ar">训练：预测下一个 token</h2>
-<p>语言模型把整段文本的概率拆成一串条件概率的乘积：</p>
-<div class="eq">p(x₁, x₂, …, x<sub>T</sub>) = ∏<sub>t</sub> p(x<sub>t</sub> | x<sub>&lt;t</sub>)<span class="note">训练目标：最小化交叉熵 −Σ log p(真实的下一个 token)</span></div>
-<p>训练时整段文本一次性送进去，因果掩码保证第 t 个位置只能看到前 t 个 token，所以 T 个位置的预测可以 <b>并行</b> 计算，每个位置都产生一次损失。这叫 teacher forcing：不管模型自己会预测什么，下一步都喂真实答案。</p>
-<p><b>困惑度（perplexity）</b> = exp(平均交叉熵)。可以理解为“模型平均在多少个候选里犹豫”。困惑度 10 大致相当于每步在 10 个等可能的 token 里挑一个。</p>
-<div class="callout"><b>推理时不能并行。</b>第 t+1 个 token 依赖第 t 个 token 的采样结果，只能一个个生成。这是大模型推理慢的根本原因，第 <a class="xref" data-ref="serving">10</a> 章的投机解码、第 <a class="xref" data-ref="video">13</a> 章提到的扩散语言模型，都是想绕过这一点。</div>
+<div class="bridge">上一章搭好了完整的 Transformer：输入一串 token，最后一个位置输出一组 logit，softmax 后就是下一个 token 的概率分布。这一章回答：这个分布是怎样训练出来的，又怎样变成一段文字。</div>
 
-<h2 id="sampling">从分布里怎么挑：采样策略</h2>
-<p>模型输出的是 logit（未归一化的分数）。最终选哪个 token 由 <b>解码策略</b> 决定：</p>
-<ul>
-  <li><b>贪心（greedy）</b>：永远选概率最高的。确定性强，但容易陷入重复循环。</li>
-  <li><b>温度 T</b>：softmax(logit / T)。T &lt; 1 让分布更尖（保守），T &gt; 1 让分布更平（发散）。T → 0 就是贪心。</li>
-  <li><b>top-k</b>：只在概率最高的 k 个里采样。</li>
-  <li><b>top-p（nucleus）</b>：按概率从高到低累加，累计到 p 为止，只在这些里采样。分布尖的时候候选少，分布平的时候候选多，比固定 k 更自适应。</li>
-  <li><b>min-p</b>（2024）：只保留概率 ≥ min_p × 最高概率的 token。高温下比 top-p 更稳，llama.cpp、vLLM 等都已支持。</li>
-</ul>
-<div data-demo="sampling-lab"></div>
-<p>其它常见手段：<b>重复惩罚</b>（降低已出现 token 的 logit）；<b>束搜索 beam search</b>（同时保留几条最优路径，翻译里常用，开放式生成里反而会显得死板）；<b>结构化输出 / 约束解码</b>：用语法（JSON Schema、正则）在每一步把不合法的 token 的概率置零，保证输出一定能被解析。工具调用的可靠性很大程度上依赖它。</p>
+<div class="prereq">
+  <ul>
+    <li>logit、softmax、token：第 <a class="xref" data-ref="tokens"></a> 章</li>
+    <li>因果掩码：第 <a class="xref" data-ref="attention"></a> 章；Transformer 的整体结构：第 <a class="xref" data-ref="transformer"></a> 章</li>
+    <li>条件概率、对数、期望：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+  </ul>
+</div>
 
-<h2 id="ngram">为什么需要神经网络：n-gram 的天花板</h2>
-<p>最早的语言模型是 <b>n-gram</b>：统计“前 n−1 个字之后出现某个字”的次数，直接当概率。下面用 27 首唐诗训练一个字级 n-gram，看它能写出什么：</p>
+<h2 id="ar">把一段文本的概率拆成一串条件概率</h2>
+<p>任何一段文本 \(x_1, x_2, \dots, x_T\) 的联合概率，都可以用概率的链式法则拆开，不需要任何假设：</p>
+<div class="fx">
+\[ p(x_1, x_2, \dots, x_T) = \prod_{t=1}^{T} p_\theta\big(\htmlClass{sym-xt}{x_t} \,\big|\, \htmlClass{sym-prefix}{x_{&lt;t}}\big) \]
+  <div class="fx-read">整段文本的概率 = 第 1 个 token 的概率 × 在第 1 个之后第 2 个的概率 × 在前两个之后第 3 个的概率 × …… 模型只需要学会一件事：给定前缀，预测下一个 token。</div>
+  <dl class="fx-syms">
+    <dt data-sym="xt">\(x_t\)</dt><dd>第 \(t\) 个 token</dd>
+    <dt data-sym="prefix">\(x_{&lt;t}\)</dt><dd>它前面的所有 token（前缀）</dd>
+  </dl>
+  <div class="fx-eg">“今天 / 天气 / 很好”：\(p(\text{今天})\times p(\text{天气}\mid\text{今天})\times p(\text{很好}\mid\text{今天 天气})\)。若三个条件概率分别是 0.02、0.3、0.4，整句概率是 \(0.0024\)。</div>
+</div>
+<p>按这种方式从左到右逐个生成的模型叫<dfn data-t="autoregressive">自回归</dfn>模型：每一步的输出成为下一步的输入。训练目标是让真实文本中每个 token 的条件概率尽量大，等价于最小化<dfn data-t="cross-entropy">交叉熵</dfn>损失：</p>
+<div class="fx">
+\[ \mathcal L(\theta) = -\frac{1}{T}\sum_{t=1}^{T}\htmlClass{c-adv}{\log p_\theta\big(x_t \mid x_{&lt;t}\big)} \]
+  <div class="fx-read">对真实出现的每个 token，取模型给它的概率的对数，取负，求平均。模型给真实 token 的概率越高，<span style="color:var(--s2)">对数概率</span>越接近 0，损失越小。</div>
+  <div class="fx-eg">模型给真实的下一个 token 的概率是 0.5：损失 \(-\ln 0.5 = 0.69\)；概率 0.9：\(0.105\)；概率 0.01：\(4.6\)。损失对“自信地答错”惩罚很重：概率越接近 0，损失越接近无穷大。</div>
+</div>
+<p>训练时整段文本一次输入，因果掩码保证第 \(t\) 个位置只看到前 \(t\) 个 token，于是 \(T\) 个位置的预测在一次前向计算中并行完成，每个位置都贡献一项损失。每一步的输入都是<b>真实的</b>前缀，而不是模型自己生成的前缀，这叫<dfn data-t="teacher-forcing">teacher forcing</dfn>。</p>
+<details class="deep"><summary>交叉熵为什么是“对”的目标：它等于最大似然，也等于缩小与真实分布的 KL</summary><div class="in">
+<p>设真实的文本分布是 \(p_{\text{data}}\)。在大量数据上平均，交叉熵损失是：</p>
+\[ \mathbb E_{x\sim p_{\text{data}}}\big[-\log p_\theta(x)\big] = \underbrace{\mathbb E\big[-\log p_{\text{data}}(x)\big]}_{H(p_{\text{data}})\text{，与 }\theta\text{ 无关}} + \underbrace{\mathbb E\Big[\log\frac{p_{\text{data}}(x)}{p_\theta(x)}\Big]}_{D_{\text{KL}}(p_{\text{data}}\,\|\,p_\theta)\ \ge\ 0} \]
+<p>第一项是数据本身的熵，是任何模型都消不掉的不确定性；第二项是 <span class="term" data-t="kl">KL 散度</span>，衡量模型分布和真实分布差多少，恒 \(\ge 0\)，两者相同时为 0。所以最小化交叉熵就是让模型分布逼近真实分布；它同时等于最大化训练数据的似然。损失的下限是数据的熵，而不是 0。</p>
+<p>再看梯度。对单个位置，设 logit 为 \(\mathbf z\)，\(\mathbf p = \operatorname{softmax}(\mathbf z)\)，真实 token 的独热向量为 \(\mathbf y\)。利用第 <a class="xref" data-ref="attention"></a> 章的 softmax 雅可比 \(\partial p_i/\partial z_j = p_i(\delta_{ij} - p_j)\)：</p>
+\[ \frac{\partial \mathcal L}{\partial z_j} = -\frac{\partial \log p_y}{\partial z_j} = -(\delta_{yj} - p_j) = p_j - y_j \]
+<p><b>这个推导告诉我们：</b>梯度就是“预测概率减去正确答案”：真实 token 的 logit 被往上推 \(1 - p_y\)，其它每个 token 被往下推 \(p_j\)。形式极其简单，这也是交叉熵加 softmax 成为标准组合的原因。</p>
+</div></details>
+
+<h2 id="ppl">困惑度与“预测即压缩”</h2>
+<p>交叉熵的数值不直观。常用的换算是<dfn data-t="perplexity">困惑度</dfn>：</p>
+<div class="fx">
+\[ \operatorname{PPL} = \exp\big(\mathcal L\big) = \exp\Big(-\frac1T\sum_t \log p_\theta(x_t\mid x_{&lt;t})\Big) \]
+  <div class="fx-read">困惑度可以理解为“模型平均在多少个等可能的候选里犹豫”。完全确定时为 1；在 \(V\) 个词里瞎猜时为 \(V\)。</div>
+  <div class="fx-eg">损失 2.3 nats/token，困惑度 \(e^{2.3}\approx 10\)：相当于每一步在 10 个等可能的 token 里挑一个。损失降到 1.6，困惑度约 5。</div>
+</div>
+<p>困惑度有一个陷阱：它依赖分词方式。词表大、每个 token 包含更多字符的模型，每 token 的损失自然更高。跨模型比较时，常用<dfn data-t="bpb">每字节比特数</dfn>（bits per byte）：把整段文本的总损失换算成比特（除以 \(\ln 2\)），再除以文本的 UTF-8 字节数。它与分词无关。</p>
+<p>“比特”这个单位不是随便选的。香农的信源编码定理说，如果一个模型给一段文本的概率是 \(p\)，就可以用约 \(-\log_2 p\) 比特把这段文本编码下来（算术编码可以逼近这个界）。所以语言模型的损失就是它压缩文本的码长：<b>预测得越准，压缩得越小</b>，两者是同一件事。</p>
+<aside class="dispute surprise">
+  <h4>意外：只用文本训练的模型，压缩图像和音频胜过 PNG 和 FLAC</h4>
+  <dl>
+    <dt>原以为</dt><dd>语言模型只会处理语言，对其它数据没有用处。</dd>
+    <dt>实际发现</dt><dd>DeepMind 的 Delétang 等（2023）把 Chinchilla 70B 当作通用压缩器：把图像块和音频的原始字节当作“文本”输入，用算术编码压缩。ImageNet 图像块被压到原始大小的 43.4%（PNG 是 58.5%），LibriSpeech 音频压到 16.4%（FLAC 是 30.3%）。（计入模型本身的大小后，大模型就不划算了，这个结果说明的是预测能力，不是实用压缩。）</dd>
+    <dt>为什么</dt><dd>在海量数据上做下一个 token 预测，模型学到的是一般性的“找规律”能力，而不只是语言知识；上下文学习让它在输入的字节序列中即时发现模式。</dd>
+    <dt>现在怎么看</dt><dd>“压缩即智能”成了一个流行的视角：Huang 等（2024）发现，模型在新文本上的压缩率（每字符比特数）与它在各类基准上的得分几乎呈线性关系。但压缩率高是能力的必要条件之一，并不能说明模型具备规划、可靠推理等能力（见下面的争议）。</dd>
+  </dl>
+</aside>
+
+<h2 id="ngram">从计数到神经网络：n-gram 的天花板</h2>
+<p>最早的语言模型是<dfn data-t="ngram">n-gram</dfn>：假设下一个 token 只依赖前 \(n-1\) 个 token，直接用训练语料中的出现次数估计概率：</p>
+\[ p(x_t \mid x_{t-n+1}, \dots, x_{t-1}) \approx \frac{\operatorname{count}(x_{t-n+1}, \dots, x_{t-1}, x_t)}{\operatorname{count}(x_{t-n+1}, \dots, x_{t-1})} \]
+<p>下面用 27 首唐诗训练一个字级 n-gram，看它能写出什么：</p>
 <div data-demo="ngram-poet"></div>
-<p>n 小的时候语句不通顺；n 大的时候整句照抄原诗。原因是 <b>数据稀疏</b>：长度为 n 的上下文组合呈指数增长，绝大多数在训练数据里一次都没出现过，模型就只能退回到更短的上下文。</p>
-<p>神经语言模型（2003 年 Bengio 起）把上下文压成 <b>连续向量</b>，相似的上下文得到相似的预测，“没见过但相似”的上下文也能处理。Transformer 再把上下文窗口从几个词扩展到几十万、上百万 token，并且能根据内容选择看哪里（注意力）。从统计计数到“压缩并泛化”，这就是从 n-gram 到大模型的主线。</p>
+<p>\(n\) 小时语句不通；\(n\) 大时整句照抄原诗。根源是<b>数据稀疏</b>：常用汉字约 5000 个，长度为 3 的上下文就有 \(5000^3 = 1.25\times 10^{11}\) 种组合，任何语料都只覆盖其中极小一部分，绝大多数上下文一次都没出现过，模型只能退回更短的上下文（回退与平滑，如 Kneser-Ney, 1995）。</p>
+<p>Bengio 等（2003）的神经语言模型换了思路：把每个词映射成一个连续向量（第 <a class="xref" data-ref="tokens"></a> 章的嵌入），用神经网络从上下文向量预测下一个词。意思相近的上下文得到相近的向量，于是“没见过但相似”的上下文也能给出合理的预测。这就是泛化。之后 RNN 让上下文不再限于固定的 \(n-1\) 个词，Transformer 进一步把上下文扩展到几十万乃至上百万 token，并能按内容选择看哪里。从计数到“压缩并泛化”，是从 n-gram 到大模型的主线。</p>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">1948</span>香农用 n-gram 估计英文的熵</li>
-  <li><span class="d">2003</span>Bengio 神经概率语言模型：词向量 + 前馈网络</li>
-  <li><span class="d">2010–15</span>RNN / LSTM 语言模型；seq2seq + beam search 统治机器翻译</li>
-  <li><span class="d">2018-06</span>GPT-1：Transformer 解码器 + 无监督预训练 + 微调</li>
-  <li><span class="d">2019</span>GPT-2；同年 nucleus（top-p）采样论文指出 beam search 会让文本退化</li>
-  <li><span class="d">2020-05</span>GPT-3：不用微调，靠 prompt 和 few-shot 示例完成任务</li>
-  <li><span class="d">2023–24</span>约束解码 / 结构化输出普及；min-p 采样</li>
-  <li><span class="d">2024-12</span>DeepSeek-V3 的多 token 预测（MTP）：训练时预测后面多个 token</li>
-  <li><span class="d">2025–26</span>扩散语言模型（LLaDA、Gemini Diffusion、Mercury）尝试并行生成，打破“一次一个 token”</li>
+<h2 id="decode">从分布中挑 token：解码策略</h2>
+<p>模型每一步给出的是一个概率分布，最终选哪个 token 由<b>解码策略</b>决定。下面的演示把一次生成拆成 5 步，可以一步步看清楚“采样”到底在做什么：</p>
+<div data-demo="ar-loop" class="bleed"></div>
+<p>最简单的做法是<dfn data-t="greedy">贪心解码</dfn>：每步都选概率最高的 token。它是确定性的，但开放式生成时容易陷入重复的循环（推导见下面的折叠）。大多数场景用<b>随机采样</b>，并用几个参数调整分布的形状。最基本的是<dfn data-t="temperature">温度</dfn>：</p>
+<div class="fx">
+\[ p_i = \frac{\exp(z_i / \htmlClass{c-new}{\htmlClass{sym-T}{T}})}{\sum_j \exp(z_j / T)} \]
+  <div class="fx-read">softmax 之前把所有 logit 除以温度 \(T\)。\(T&lt;1\) 放大差距，分布变尖、更保守；\(T>1\) 缩小差距，分布变平、更发散；\(T\to 0\) 就是贪心。</div>
+  <dl class="fx-syms">
+    <dt data-sym="T">\(T\)</dt><dd>温度，常用 0.6–1.0；推理模型常用 0.6 左右，创意写作可略高于 1</dd>
+  </dl>
+  <div class="fx-eg">logit \((2, 1, 0)\)。\(T = 1\)：概率 \((0.665,\ 0.245,\ 0.090)\)。\(T = 0.5\)：相当于 logit \((4, 2, 0)\)，概率 \((0.867,\ 0.117,\ 0.016)\)。\(T = 2\)：相当于 \((1, 0.5, 0)\)，概率 \((0.506,\ 0.307,\ 0.186)\)。排序不变，只是差距被放大或缩小。</div>
+</div>
+<p>温度只改形状，不会把任何 token 的概率变成 0。尾部成千上万个“不太可能”的 token 加起来，概率可能并不小，偶尔抽中一个就会让文本跑偏。所以还要<b>截断</b>：</p>
+<div class="fx">
+\[ \begin{aligned} \text{top-}k:&\quad S = \{\text{概率最高的 }k\text{ 个 token}\}\\ \text{top-}p:&\quad S = \text{从高到低累加、使 }\textstyle\sum_{i\in S} p_i \ge p\text{ 的最小头部集合}\\ \text{min-}p:&\quad S = \{\,i : p_i \ge p_{\min}\cdot p_{\max}\,\} \end{aligned} \]
+  <div class="fx-read">三种方法都是先划定一个候选集合 \(S\)，把 \(S\) 之外的概率设为 0，再在 \(S\) 内重新归一化后采样。区别只在于怎样划定 \(S\)。</div>
+  <div class="fx-eg">概率从高到低为 \((0.5,\ 0.2,\ 0.15,\ 0.1,\ 0.05)\)。<b>top-\(k\)=2</b>：保留前两个，归一化为 \((0.714,\ 0.286)\)。<b>top-\(p\)=0.8</b>：累计 0.5、0.7、0.85，到第三个才达到 0.8，保留前三个，归一化为 \((0.588,\ 0.235,\ 0.176)\)。<b>min-\(p\)=0.25</b>：门槛 \(0.25\times 0.5 = 0.125\)，同样保留前三个。</div>
+</div>
+<p>三种截断各有道理：<dfn data-t="top-k">top-k</dfn> 最简单，但固定的 \(k\) 不适应分布的变化：分布很尖时 \(k\) 个里混进了垃圾，分布很平时又砍掉了合理的候选。<dfn data-t="top-p">top-p</dfn>（nucleus 采样, Holtzman 等, 2019）按累计概率截断，候选数随分布自动伸缩，是目前最常用的方法。<dfn data-t="min-p">min-p</dfn>（2024）按相对于最高概率的比例截断，号称在高温下更稳。在下面的实验室里组合这些参数，采样 500 次看实际分布：</p>
+<div data-demo="sampling-lab"></div>
+<details class="deep"><summary>为什么“概率最高”的文本反而不好：重复的自我强化</summary><div class="in">
+<p>贪心和束搜索都在找概率最高的序列。但人类写的文本并不是概率最高的那一条：Holtzman 等（2019）测量发现，人类文本中每个 token 在模型下的概率波动很大，常常不是第一名；而束搜索生成的文本每一步都极其“安全”，读起来空洞、重复。</p>
+<p>重复为什么会出现？设模型生成了一个短语 \(s\)。下次在相似的上下文中，注意力很容易匹配到刚生成的 \(s\)，归纳头（第 <a class="xref" data-ref="attention"></a> 章）会“复制”它，于是 \(p(s\mid\text{前文含 }s)\) 比第一次更高。实验表明，一个短语每重复一次，再次重复的概率就上升一截，形成正反馈：</p>
+\[ p\big(s \mid \dots s\big) &gt; p\big(s \mid \dots\big),\qquad p\big(s\mid \dots s\,s\big) &gt; p\big(s\mid\dots s\big),\ \ \dots \]
+<p>贪心解码每步都选最大值，一旦进入这个循环就出不来。随机采样偶尔会选到别的 token，打破循环。</p>
+<p><b>这个推导告诉我们：</b>“似然最高”不等于“质量最好”。这也是常用重复惩罚（直接降低已出现 token 的 logit）的原因；推理模型在长思维链中偶尔陷入无限循环，也是同一机制。</p>
+</div></details>
+<p>另一种经典方法是<dfn data-t="beam-search">束搜索</dfn>（beam search）：同时保留 \(b\) 条得分最高的部分序列，每步扩展后再保留最好的 \(b\) 条。它在翻译、语音识别这类“答案比较确定”的任务里有效，在开放式生成中则会放大上面说的空洞和重复，现在的对话模型基本不用。</p>
+<aside class="dispute">
+  <h4>新采样方法真的更好吗：min-p 的争议</h4>
+  <dl>
+    <dt>主张</dt><dd>min-p 论文（Nguyen 等）报告它在高温下兼顾创造性和连贯性，人类评测和基准评测都优于 top-p，获得 ICLR 2025 口头报告，并被 vLLM、llama.cpp 等广泛支持。</dd>
+    <dt>反方</dt><dd>斯坦福的 Schaeffer 等（2025）重新分析了原论文的四类证据：人类评测遗漏了部分数据、统计检验有误；在控制超参数搜索次数之后，基准上的优势消失；原文中“被数万个仓库采用”的说法缺乏依据，已从正式版中删除。</dd>
+    <dt>现在怎么看</dt><dd>min-p 在很高的温度下可能仍有一点优势，但“全面优于 top-p”的结论站不住。生产环境的主流仍是温度 + top-p（或 top-k）。这个争议本身也说明：采样方法的评测很容易受评测设计和调参次数影响。</dd>
+  </dl>
+</aside>
+
+<h2 id="constrained">约束解码与结构化输出</h2>
+<p>让模型调用工具或返回 JSON 时，输出必须能被程序解析，一个括号写错整个调用就失败。<dfn data-t="constrained-decoding">约束解码</dfn>在每一步把不合法的 token 屏蔽掉：</p>
+<div class="fx">
+\[ p'(x_t) \propto p_\theta(x_t \mid x_{&lt;t})\cdot \htmlClass{c-new}{\mathbb 1\big[x_{&lt;t}\,x_t\ \text{仍可能是合法输出的前缀}\big]} \]
+  <div class="fx-read">用 JSON Schema、正则表达式或语法规则构造一个状态机，记录“到目前为止写了什么、接下来允许什么”。每一步只在<span style="color:var(--s4)">允许的 token</span> 里采样，保证最终输出一定合法。</div>
+  <div class="fx-eg">Schema 要求 <code>{"age": 整数}</code>。已经生成了 <code>{"age": </code>，此时只有数字 token 合法：模型原本最想写的 <code>"twenty"</code> 被屏蔽，概率重新分配给 <code>2</code>、<code>20</code> 等。</div>
+</div>
+<p>工程上的难点是速度：词表有十几万个 token，每步都要判断哪些合法。现代实现（Outlines、XGrammar 等）把语法预编译成按 token 的查表，开销降到几乎可以忽略，主流推理框架和 API 都已内置。</p>
+<aside class="dispute">
+  <h4>格式约束会不会让模型变笨</h4>
+  <dl>
+    <dt>主张</dt><dd>Tam 等（2024）的 “Let Me Speak Freely?” 发现，要求模型按 JSON 等严格格式输出时，推理任务的准确率明显下降：模型没有空间先“想”再答。</dd>
+    <dt>反方</dt><dd>约束解码工具的开发者复现后指出，下降主要来自提示词写得不好和答案解析的问题；把推理过程也作为 schema 中的一个字段、放在答案之前，准确率不降反升。</dd>
+    <dt>现在怎么看</dt><dd>约束本身不必然有害，关键是不要剥夺模型先写推理过程的机会。字段的顺序很重要：先 <code>reasoning</code> 后 <code>answer</code>。推理模型把思考放在单独的通道里，格式约束只作用于最终答案，这个问题基本消失。另一个代价是多样性：2026 年一项覆盖 44 个模型的研究报告，结构化输出会让答案的多样性明显下降，这对需要多次采样再投票的用法不利。</dd>
+  </dl>
+</aside>
+
+<h2 id="beyond">超越“一次一个 token”</h2>
+<p>自回归有两个结构性的弱点。第一个是训练与生成的不一致：训练时每一步都看真实前缀（teacher forcing），生成时看的是自己生成的前缀，一旦早期出错，后面会在从没见过的错误前缀上继续，误差逐步累积。这叫<span class="term" data-t="exposure-bias">暴露偏差</span>，强化学习用模型自己生成的样本训练，正好弥补这一点（第 <a class="xref" data-ref="rl"></a> 章）。</p>
+<p>第二个是生成无法并行：第 \(t+1\) 个 token 依赖第 \(t\) 个的采样结果，只能一个个算，这是大模型推理慢的根本原因。几种绕开的思路：</p>
+<ul>
+  <li><b><dfn data-t="mtp">多 token 预测</dfn>（MTP）</b>：训练时除了下一个 token，还额外预测后面第 2、3 个 token（Meta 2024；DeepSeek-V3 用一个附加模块预测第 2 个）。训练信号更密；推理时额外的预测可以作为“草稿”。</li>
+  <li><b>投机解码</b>：用一个便宜的方法先猜几个 token，再让大模型一次并行验证，猜对的直接接受，数学上保证输出分布不变（第 <a class="xref" data-ref="serving"></a> 章）。</li>
+  <li><b><dfn data-t="diffusion-lm">扩散语言模型</dfn></b>：不从左到右生成，而是从一串全部被遮住的位置出发，每一轮并行地填出一部分、修改一部分，迭代若干轮得到全文（原理见第 <a class="xref" data-ref="diffusion"></a> 章）。LLaDA（2025）证明 8B 规模的扩散模型能与同规模自回归模型相当，LLaDA 2.0 扩展到 100B；Google 的 Gemini Diffusion（2025）和 Inception Labs 的 Mercury 2（2026-02）主打每秒上千 token 的速度。到 2026 年它们在速度和成本上有明显优势，在质量上尚未超越前沿的自回归模型。</li>
 </ul>
+<aside class="dispute">
+  <h4>“预测下一个 token”够不够</h4>
+  <dl>
+    <dt>一种看法</dt><dd>只是预测下一个 token 的模型，本质上只是在做局部的统计接龙，不可能真正地规划。Bachmann 与 Nagarajan（2024）构造了一个图上找路径的任务：答案的第一步需要“看到终点”才能决定。用 teacher forcing 训练的模型学会了一种取巧办法（根据真实前缀照抄后面的步骤），而始终学不会第一步。</dd>
+    <dt>另一种看法</dt><dd>“下一个 token”只是接口，不限制模型内部算什么。可解释性研究在模型内部找到了提前规划的证据，例如写押韵诗时提前选好行尾的韵脚（第 <a class="xref" data-ref="interpretability"></a> 章）；思维链让模型把规划过程写出来，再一步步执行；强化学习（第 <a class="xref" data-ref="rl"></a> 章）直接用最终结果训练，不再依赖 teacher forcing。</dd>
+    <dt>现在怎么看</dt><dd>纯粹的 teacher forcing 训练确实有盲区，但“预训练 + 思维链 + 强化学习”的组合在很大程度上弥补了它。多 token 预测和扩散模型则从训练目标本身入手，各自报告了在规划类任务上的改进。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">温度设成 0，输出就完全确定。</b>理论上是，但在推理服务里，同一个请求和不同的请求拼在一起计算，批大小变化会改变浮点运算的顺序，结果可能出现细微差别并逐步放大。Thinking Machines（2025）指出主因是内核缺乏“批不变性”，并给出了可复现的实现，代价是一定的速度损失。</li>
+  <li><b class="m">模型给出的概率就是它的把握程度。</b>预训练模型的概率通常校准得不错（说 70% 时大约 70% 是对的），但 RLHF 等后训练会明显破坏<dfn data-t="calibration">校准</dfn>：GPT-4 技术报告显示，后训练模型普遍过度自信。</li>
+  <li><b class="m">概率最高的那段文字就是最好的。</b>见上面的折叠：最大似然的序列往往空洞重复，人类文本本身就不是概率最高的那一条。</li>
+  <li><b class="m">困惑度越低越好，可以直接比较不同模型。</b>困惑度依赖分词：词表不同，每个 token 的含义不同，数值不可比。跨模型比较应换算成每字节比特数，并且要在同一份没被训练过的文本上测。</li>
+  <li><b class="m">模型一次生成整句话。</b>它每次只输出一个 token 的分布；看起来“流式”输出的每一个字，都对应一次完整的前向计算。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">1948–1951</div>
+    <h4>香农：用 n-gram 度量语言的信息量</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>如何定量描述语言的冗余和可预测性。</dd>
+      <dt>怎么解决</dt><dd>用 n 阶统计近似生成英文；让人猜下一个字母，估计英文的熵约为每字符 0.6–1.3 比特。</dd>
+      <dt>代价</dt><dd>只有统计，没有可用的模型。</dd>
+      <dt>引出</dt><dd>“预测下一个符号”从一开始就和信息论、压缩联系在一起。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">长期争论</span>乔姆斯基对统计语言模型的批评（1957）</summary><div>“无色的绿色想法狂怒地睡觉”语法正确但从未出现过，统计模型会给它和乱序句子同样的零概率，乔姆斯基据此认为概率无法刻画语法。Pereira（2000）用一个简单的平滑模型算出，语法正确的版本概率高出约 20 万倍。大模型时代这场争论以新形式继续：统计学习到的究竟是不是“语言能力”。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">1980s–2000s</div>
+    <h4>n-gram 统治语音识别与机器翻译</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>数据稀疏：长上下文几乎都没见过。</dd>
+      <dt>怎么解决</dt><dd>回退与平滑（Kneser-Ney 1995 是其中最好的），在数十亿词上计数。</dd>
+      <dt>代价</dt><dd>上下文最多四五个词，无法泛化到相似但没见过的上下文。</dd>
+      <dt>引出</dt><dd>能不能让“相似”的上下文共享统计信息？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2003–2015</div>
+    <h4>神经语言模型：从前馈网络到 RNN</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>n-gram 无法泛化。</dd>
+      <dt>怎么解决</dt><dd>Bengio（2003）用词向量 + 神经网络；Mikolov 的 RNN 语言模型（2010）去掉固定窗口；seq2seq + 束搜索（2014）统治机器翻译。</dd>
+      <dt>代价</dt><dd>RNN 训练慢、记不住远处的内容（第 <a class="xref" data-ref="attention"></a> 章）。</dd>
+      <dt>引出</dt><dd>换成 Transformer 后，语言模型能扩展到多大？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2018–2020</div>
+    <h4>GPT：生成式预训练</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>语言模型被当作其它任务的辅助部件，本身用处有限。</dd>
+      <dt>怎么解决</dt><dd>GPT-1（2018）在大量文本上预训练 Transformer 解码器再微调；GPT-2（2019）展示了不微调直接生成长文；GPT-3（2020）只靠提示词和示例完成各种任务。同期 nucleus 采样论文解释了为什么束搜索会让文本退化。</dd>
+      <dt>代价</dt><dd>模型会一本正经地编造，也不听指令（第 <a class="xref" data-ref="sft"></a> 章）。</dd>
+      <dt>引出</dt><dd>训练目标不变，只扩大规模，能走多远？（第 <a class="xref" data-ref="scaling"></a> 章）</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">基本不用</span>对比搜索、典型采样等（2022）</summary><div>为了兼顾多样性和连贯性提出了很多解码算法：对比搜索惩罚与前文过于相似的候选，典型采样只保留信息量接近平均值的 token。它们在当时的小模型上有改善，但模型变大、经过对齐之后，简单的温度 + top-p 已经足够好，这些方法很少用于生产。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>可靠的输出：约束解码、多 token 预测</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>工具调用需要严格合法的格式；逐 token 生成太慢。</dd>
+      <dt>怎么解决</dt><dd>语法约束解码普及到各家 API；投机解码进入主流推理框架；DeepSeek-V3（2024-12）把多 token 预测用于训练和加速推理。</dd>
+      <dt>代价</dt><dd>不改变自回归的本质，仍然一次确定一个 token。</dd>
+      <dt>引出</dt><dd>能不能彻底抛开从左到右的顺序？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">早期失败，后来复活</span>非自回归翻译（2018）</summary><div>Gu 等（2018）尝试一次并行输出整句译文，速度快但质量明显下降，因为各位置独立预测、彼此不协调。扩散语言模型用“多轮迭代修改”解决了这个协调问题，让并行生成重新变得可行。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>并行生成与可复现推理</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>逐 token 生成的延迟成为智能体和长推理的瓶颈；同一请求的结果不可复现。</dd>
+      <dt>怎么解决</dt><dd>扩散语言模型规模化（LLaDA 2.0、Gemini Diffusion、Mercury 2）；批不变的推理内核让温度 0 的结果可复现。</dd>
+      <dt>代价</dt><dd>扩散模型的质量和生态仍落后；批不变内核更慢。</dd>
+      <dt>引出</dt><dd>生成方式定下来了，下一个问题是用什么数据训练（第 <a class="xref" data-ref="data"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个模型在验证集上的交叉熵是每 token 2.0 nats，困惑度是多少？如果把它的每个 token 的概率都提高到原来的 2 倍（假设仍合法），损失和困惑度变成多少？</summary><div class="ans">困惑度 \(e^{2.0}\approx 7.39\)。概率翻倍，每个 token 的 \(-\ln p\) 减少 \(\ln 2\approx 0.693\)，损失变为 1.307，困惑度 \(e^{1.307}\approx 3.69\)，正好减半。</div></details>
+<details class="quiz"><summary>2. logit 为 \((2, 1, 0)\)，温度 0.5，用 top-p = 0.9 截断，最终的采样分布是什么？</summary><div class="ans">\(T = 0.5\) 时概率为 \((0.867,\ 0.117,\ 0.016)\)。累计 0.867 &lt; 0.9，加上第二个达到 0.984 ≥ 0.9，保留前两个。归一化：\(0.867/0.984 = 0.881\)，\(0.117/0.984 = 0.119\)。第三个 token 永远不会被选到。</div></details>
+<details class="quiz"><summary>3. 一个模型在中文文本上平均每 token 损失 1.5 nats，平均每个 token 对应 1.4 个汉字（每个汉字 3 字节 UTF-8）。换算成每字节比特数是多少？</summary><div class="ans">每 token \(1.5/\ln 2 \approx 2.16\) 比特；每 token \(1.4\times 3 = 4.2\) 字节；所以约 \(2.16/4.2\approx 0.52\) 比特 / 字节。也就是说，模型能把这些中文文本压缩到原始 UTF-8 大小的约 6.5%（\(0.52/8\)）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://doi.org/10.1002/j.1538-7305.1951.tb01366.x">Prediction and Entropy of Printed English</a>（Shannon, 1951）<span class="why">让人猜下一个字母来估计语言的熵，“预测”与“信息量”的联系从这里开始。</span></li>
+  <li><a href="https://www.jmlr.org/papers/volume3/bengio03a/bengio03a.pdf">A Neural Probabilistic Language Model</a>（Bengio 等, 2003）<span class="why">词向量与神经语言模型的起点，引言对维度灾难的讨论值得一读。</span></li>
+  <li><a href="https://arxiv.org/abs/1904.09751">The Curious Case of Neural Text Degeneration</a>（Holtzman 等, 2019）<span class="why">为什么最大似然解码会退化，以及 top-p 采样的提出。</span></li>
+  <li><a href="https://arxiv.org/abs/2309.10668">Language Modeling Is Compression</a>（Delétang 等, 2023）<span class="why">“预测即压缩”的系统阐述和实验。</span></li>
+  <li><a href="https://arxiv.org/abs/2403.06963">The Pitfalls of Next-Token Prediction</a>（Bachmann 与 Nagarajan, 2024）<span class="why">teacher forcing 的盲区，一个干净的反例。</span></li>
+  <li><a href="https://thinkingmachines.ai/blog/defeating-nondeterminism-in-llm-inference/">Defeating Nondeterminism in LLM Inference</a>（Thinking Machines, 2025）<span class="why">为什么温度 0 也不可复现，以及怎么修。</span></li>
+</ol>
+
+<div class="nextq">至此第一部分结束：我们知道了模型的结构、训练目标和生成方式。但同样的结构和目标，训练出来的模型能力天差地别，差别首先来自数据：几十万亿 token 从哪来，怎样清洗、去重、配比，合成数据能不能用？下一章（第 <a class="xref" data-ref="data"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2404.09937">Compression Represents Intelligence Linearly</a> · <a href="https://arxiv.org/abs/2407.01082">min-p 原论文（Turning Up the Heat）</a> · <a href="https://arxiv.org/abs/2506.13681">Min-p, Max Exaggeration</a> · <a href="https://arxiv.org/abs/2408.02442">Let Me Speak Freely?</a> · <a href="https://blog.dottxt.ai/say-what-you-mean.html">Say What You Mean（反驳）</a> · <a href="https://arxiv.org/abs/2607.18476">Structured Output Collapses Answer Diversity（2026）</a> · <a href="https://arxiv.org/abs/2404.19737">Better &amp; Faster LLMs via Multi-token Prediction</a> · <a href="https://arxiv.org/abs/2502.09992">LLaDA</a> · <a href="https://arxiv.org/abs/2512.15745">LLaDA 2.0</a> · <a href="https://arxiv.org/abs/2506.17298">Mercury</a> · <a href="https://arxiv.org/abs/2303.08774">GPT-4 技术报告（校准）</a> · <a href="https://arxiv.org/abs/1711.02281">Non-Autoregressive NMT</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

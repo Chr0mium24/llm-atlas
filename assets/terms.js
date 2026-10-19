@@ -95,4 +95,21 @@ window.ATLAS_TERMS = {
   'pos-enc': { t: '位置编码', en: 'positional encoding', d: '向模型注入 token 顺序信息的方法：正弦编码、可学习的位置向量、相对位置偏置、RoPE 等。', at: 'transformer#position' },
   rope: { t: 'RoPE', en: 'rotary position embedding', d: String.raw`按位置旋转 query 和 key：第 \(i\) 个二维平面转 \(m\theta_i\)，\(\theta_i = b^{-2i/d}\)。旋转后点积只依赖相对位置 \(n-m\)。`, at: 'transformer#position' },
   flops: { t: 'FLOPs', en: 'floating-point operations', d: String.raw`浮点运算次数，一次乘加记 2 次。稠密模型前向每 token 约 \(2N\)，训练约 \(6N\)（\(N\) 为参数量）。注意与表示“每秒运算次数”的 FLOPS 区分。`, at: 'transformer#params' },
+
+  // ---- generation (generation.html)
+  autoregressive: { t: '自回归', en: 'autoregressive', d: String.raw`按 \(p(x_1,\dots,x_T) = \prod_t p(x_t\mid x_{<t})\) 从左到右逐个生成：每一步的输出成为下一步的输入。`, at: 'generation#ar' },
+  'teacher-forcing': { t: 'teacher forcing', en: 'teacher forcing', d: '训练时每一步都输入真实的前缀，而不是模型自己生成的前缀。配合因果掩码，所有位置可以并行计算损失。', at: 'generation#ar' },
+  perplexity: { t: '困惑度', en: 'perplexity', d: String.raw`交叉熵损失的指数 \(\exp(\mathcal L)\)：模型平均在多少个等可能的候选里犹豫。依赖分词方式，不同词表的模型不可直接比较。`, at: 'generation#ppl' },
+  bpb: { t: '每字节比特数', en: 'bits per byte', d: String.raw`总损失换算成比特（除以 \(\ln 2\)）再除以文本的 UTF-8 字节数。与分词无关，可跨模型比较，也等于模型压缩这段文本的码长。`, at: 'generation#ppl' },
+  ngram: { t: 'n-gram 模型', en: 'n-gram model', d: String.raw`假设下一个 token 只依赖前 \(n-1\) 个，用语料中的出现次数估计条件概率。受数据稀疏限制，上下文很短。`, at: 'generation#ngram' },
+  greedy: { t: '贪心解码', en: 'greedy decoding', d: '每一步都选概率最高的 token。确定，但开放式生成时容易陷入重复。', at: 'generation#decode' },
+  temperature: { t: '温度', en: 'temperature', d: String.raw`softmax 前把 logit 除以 \(T\)：\(p_i\propto e^{z_i/T}\)。\(T<1\) 分布变尖，\(T>1\) 变平，\(T\to 0\) 即贪心。`, at: 'generation#decode' },
+  'top-k': { t: 'top-k 采样', en: 'top-k sampling', d: String.raw`只在概率最高的 \(k\) 个 token 中重新归一化后采样。`, at: 'generation#decode' },
+  'top-p': { t: 'top-p 采样', en: 'nucleus / top-p sampling', d: String.raw`按概率从高到低累加，保留累计达到 \(p\) 的最小头部集合，在其中采样。候选数随分布形状自动伸缩。`, at: 'generation#decode' },
+  'min-p': { t: 'min-p 采样', en: 'min-p sampling', d: String.raw`只保留概率不低于 \(p_{\min}\times p_{\max}\) 的 token。宣称在高温下更稳，但其优势在 2025 年的复查中受到质疑。`, at: 'generation#decode' },
+  'beam-search': { t: '束搜索', en: 'beam search', d: String.raw`同时保留 \(b\) 条得分最高的部分序列，逐步扩展。适合翻译等答案确定的任务，开放式生成中会导致空洞重复。`, at: 'generation#decode' },
+  'constrained-decoding': { t: '约束解码', en: 'constrained decoding', d: '每一步按语法（JSON Schema、正则等）屏蔽不合法的 token，保证输出一定能被解析。结构化输出和工具调用依赖它。', at: 'generation#constrained' },
+  mtp: { t: '多 token 预测', en: 'multi-token prediction (MTP)', d: '训练时额外预测后面第 2、3 个 token，训练信号更密；推理时这些额外预测可作为投机解码的草稿。DeepSeek-V3 采用。', at: 'generation#beyond' },
+  'diffusion-lm': { t: '扩散语言模型', en: 'diffusion language model', d: '从全部被遮住的序列出发，多轮并行地填写和修改各位置，而不是从左到右逐个生成。代表：LLaDA、Gemini Diffusion、Mercury。', at: 'generation#beyond' },
+  calibration: { t: '校准', en: 'calibration', d: '模型给出的概率与实际正确率是否一致：说 70% 有把握的答案，是否大约 70% 是对的。后训练常使模型过度自信。', at: 'generation#myths' },
 };

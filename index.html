@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
     attention: '从 RNN 的瓶颈到 Q/K/V 软查询，代入数字算一遍；多头、因果掩码、归纳头、注意力汇与平方代价',
     transformer: '残差连接与残差流、MLP 键值记忆、Pre-Norm 之争、RoPE 推导与上下文扩展、6N 估算；2026 年连残差都在改',
-    generation: '自回归、交叉熵、温度 / top-p / min-p；为什么需要神经网络',
+    generation: '交叉熵与困惑度、预测即压缩、n-gram 的天花板；逐步看采样循环，温度 / top-p / 约束解码，以及扩散语言模型',
     data: '去重、质量过滤、改写与合成、配比；合成数据的陷阱与模型崩溃',
     scaling: 'Kaplan 与 Chinchilla 规模定律、过训练、Muon 等优化器',
     sft: 'SFT 与浅层对齐假说、DPO 推导与家族、LoRA、模型合并',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 53]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 54]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

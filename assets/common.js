@@ -10,7 +10,7 @@
     { s: 'tokens', t: '分词与嵌入', st: 'new' },
     { s: 'attention', t: '注意力机制', st: 'new' },
     { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'new' },
-    { s: 'generation', t: '自回归生成与采样', st: 'old' },
+    { s: 'generation', t: '自回归生成与采样', st: 'new' },
     { part: '二 · 预训练' },
     { s: 'data', t: '预训练数据', st: 'todo' },
     { s: 'scaling', t: '规模定律与优化器', st: 'old' },
