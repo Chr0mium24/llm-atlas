@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>分词与嵌入 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="tokens">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>分词与嵌入：文字怎么变成向量</h1>
+  <p class="lede">神经网络只会算数字。所以第一步是把一段文字切成离散的 <b>token</b>，每个 token 查一张表，换成一个几千维的向量。后面所有的注意力、MLP、量化、推理加速，处理的都是这些向量。</p>
+</header>
+
+<h2 id="why">为什么要分词</h2>
+<p>把文本变成整数序列，最直接的有两种切法，但都不好用：</p>
+<ul>
+  <li><b>按字符/字节切</b>：词表很小（英文几十个字母，或者 256 个字节），什么文本都能表示。缺点是序列太长。注意力的代价随长度平方增长，一句话切成几百个 token 太浪费。</li>
+  <li><b>按词切</b>：序列短，但词表会爆炸，而且总会遇到没见过的词（OOV），比如新造的网络用语、拼错的单词、代码里的变量名。</li>
+</ul>
+<p>现在的方案折中：<b>子词（subword）分词</b>。高频的片段（比如 “the”、“ing”、“模型”、“的”）整体作为一个 token，低频的词拆成几块，最差退回到单个字节。因为字节是兜底，所以永远不会出现 OOV。主流算法是 <b>BPE（Byte Pair Encoding）</b>：从单个字符/字节开始，反复把语料里<b>出现次数最多的相邻对</b>合并成一个新 token，直到词表达到目标大小。</p>
+
+<div data-demo="bpe"></div>
+
+<h3>几个值得知道的细节</h3>
+<ul>
+  <li><b>字节级 BPE</b>（GPT-2 起）：基础符号是 UTF-8 字节而不是字符。一个汉字占 3 个字节，词表里如果没有合并出这个字，它就要占 3 个 token。早期英文为主的 tokenizer 处理中文很费 token，原因就在这里。在上面的演示里切到“字节级”看看。</li>
+  <li><b>词表越来越大</b>：GPT-2 约 5 万，Llama 2 是 3.2 万，Llama 3 是 12.8 万，Gemma 系列 25.6 万，Kimi K3 是 16 万。词表大了，同样的文本切出的 token 更少（多语言尤其明显），代价是嵌入矩阵和输出层变大。</li>
+  <li><b>特殊 token</b>：<code>&lt;|im_start|&gt;</code>、<code>&lt;think&gt;</code>、工具调用标记等。聊天模板、思维链、工具调用这些“格式”，本质上都是在序列里插特殊 token。</li>
+  <li><b>tokenizer 的副作用</b>：模型数不清 “strawberry” 里有几个 r、做多位数算术容易错，部分原因是它看到的是 <code>str|aw|berry</code> 这样的块，不是字母。</li>
+  <li><b>多模态也是 token</b>：图像切成 patch，经过视觉编码器变成向量，和文字 token 拼在同一条序列里。视频、音频同理。第 <a class="xref" data-ref="image">12</a>、<a class="xref" data-ref="video">13</a> 章还会讲到。</li>
+  <li><b>去掉 tokenizer 的尝试</b>：Meta 的 BLT（Byte Latent Transformer，2024-12）直接吃字节，再按熵动态分块，是 “tokenizer-free” 方向的代表。</li>
+</ul>
+
+<h2 id="embed">嵌入：查表得到向量</h2>
+<p>分词得到的是整数 id，比如 “模型” → 41823。模型里有一张 <b>嵌入矩阵</b> <span class="math">E ∈ ℝ<sup>V×d</sup></span>（V 是词表大小，d 是隐藏维度，比如 4096 或 7168），第 41823 行就是 “模型” 的向量。这张表和其它参数一样，是训练出来的。</p>
+<p>训练完后，语义相近的 token 向量方向也相近，而且某些 <b>方向</b> 会对应可解释的概念（性别、时态、国家→首都……）。2013 年 word2vec 有个经典例子 <span class="math">king − man + woman ≈ queen</span>。下面用一个手工构造的小例子演示这种“向量算术”：每个词有 11 个可解释的维度，图上画的是 PCA 投影到 2 维的结果。</p>
+
+<div data-demo="embed-arith"></div>
+
+<p>真实模型的嵌入维度在几千，各维度并不对应人能读懂的概念，概念分布在许多维度的组合方向里（这叫 superposition，叠加）。可解释性研究用稀疏自编码器（SAE）把这些方向找出来，前沿章节里会提到。</p>
+<div class="callout"><b>输出端是反过来的。</b>模型最后一层输出一个 d 维向量 h，乘上 <span class="math">W<sub>out</sub> ∈ ℝ<sup>d×V</sup></span> 得到 V 个 logit，softmax 之后就是下一个 token 的概率分布。不少小模型让 <span class="math">W<sub>out</sub> = Eᵀ</span>（tied embeddings），省一份参数。第 <a class="xref" data-ref="generation">4</a> 章讲怎么从这个分布里采样。</div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2013</span>word2vec：用浅层网络学词向量，出现了“向量算术”现象</li>
+  <li><span class="d">2015</span>Sennrich 等把 BPE 用于神经机器翻译，子词分词成为主流</li>
+  <li><span class="d">2018</span>SentencePiece / Unigram LM：不依赖空格，适合中日文</li>
+  <li><span class="d">2019</span>GPT-2 的字节级 BPE：256 个字节兜底，彻底没有 OOV</li>
+  <li><span class="d">2023</span>tiktoken cl100k、Llama 3 的 128K 词表；多语言压缩率成为竞争点</li>
+  <li><span class="d">2024</span>BLT 等 tokenizer-free 尝试；多模态 token（图像 patch、音频帧）并入同一序列</li>
+  <li><span class="d">2025–26</span>词表普遍 15–26 万；特殊 token 承载思维链、工具调用、多模态分段</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transformer 结构与位置编码 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="transformer">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>Transformer 的结构：注意力 + MLP，堆几十层</h1>
+  <p class="lede">一个 decoder-only Transformer 由同一种“块”重复堆叠而成。从 GPT-2 到 2026 年的 Kimi K3、DeepSeek V4，主体结构几乎没变，改的是块里的组件：归一化方式、激活函数、位置编码、注意力变体、MoE，以及最近开始改的残差连接。</p>
+</header>
+
+<h2 id="block">一个块里有什么</h2>
+<p>点击下图中的组件查看说明。这里画的是 2023 年以后的“现代标准块”（Llama 风格）：Pre-RMSNorm、RoPE、GQA、SwiGLU。</p>
+<div data-demo="block-diagram"></div>
+
+<h3>残差流：理解 Transformer 的一个视角</h3>
+<p>把每个 token 位置上那条贯穿所有层的向量看作一条 <b>残差流（residual stream）</b>。每一层的注意力和 MLP 都不是替换它，而是从中<b>读</b>一部分信息，算完再<b>加</b>回去：<span class="math">x ← x + Attn(Norm(x))</span>，<span class="math">x ← x + MLP(Norm(x))</span>。</p>
+<ul>
+  <li><b>注意力负责在位置之间搬运信息</b>：把别的 token 的信息搬到当前位置。</li>
+  <li><b>MLP 负责在单个位置内做变换</b>：可以看作一个巨大的键值记忆，很多事实性知识（“埃菲尔铁塔在巴黎”）存在 MLP 的权重里。</li>
+  <li>残差连接让梯度能直接穿过几十上百层，这是深层网络能训练起来的关键。</li>
+</ul>
+<div class="callout"><b>2026 年残差连接也开始被改了。</b>DeepSeek V4 用 <b>mHC（流形约束超连接）</b> 把单条残差流扩展成多条，并约束混合矩阵保持数值稳定；Kimi K3 的 <b>Attention Residuals</b> 让每一层可以选择性地从更早的任意一层取表示，而不是只接收上一层的输出。两者都在改“层与层之间怎么传信息”这个从 2015 年 ResNet 以来基本没动过的部分。</div>
+
+<h2 id="params">参数都在哪里</h2>
+<p>每层参数约 <span class="math">12d²</span>（注意力 4d²，MLP 约 8d²）。粗略看，<b>MLP 占大头（约 2/3）</b>，注意力占 1/3，嵌入层在小模型里占比明显，在大模型里可以忽略。前向一次每个 token 约 <span class="math">2N</span> FLOPs（N 是参数量），训练时前向加反向约 <span class="math">6N</span>。</p>
+<div data-demo="param-calc"></div>
+
+<h2 id="rope">位置编码：注意力本身不知道顺序</h2>
+<p>注意力对输入顺序是 <b>置换等变</b> 的：把 token 打乱顺序，每个位置的输出只是跟着打乱，数值本身不变。“狗咬人”和“人咬狗”在它看来没有区别。所以要另外注入位置信息：</p>
+<ul>
+  <li><b>正弦位置编码</b>（2017）：把不同频率的 sin/cos 直接加到嵌入上。</li>
+  <li><b>可学习位置嵌入</b>（GPT-2）：每个位置学一个向量。缺点是超出训练长度就没有对应的向量。</li>
+  <li><b>RoPE 旋转位置编码</b>（2021，现在的标准）：把 q、k 的每两维看成一个复数，按位置 m 旋转角度 <span class="math">m·θ<sub>i</sub></span>。旋转之后 <span class="math">q<sub>m</sub>·k<sub>n</sub></span> 只取决于 <span class="math">m − n</span>，也就是说<b>相对位置</b>自然地进入了注意力分数。</li>
+  <li><b>ALiBi</b>：直接给注意力分数加一个随距离线性增长的惩罚项。</li>
+</ul>
+<div class="eq">θ<sub>i</sub> = base<sup>−2i/d</sup>,&nbsp;&nbsp; RoPE(x, m)<sub>[2i,2i+1]</sub> = R(m·θ<sub>i</sub>) · x<sub>[2i,2i+1]</sub>&nbsp;&nbsp; ⇒ &nbsp;&nbsp;⟨RoPE(q,m), RoPE(k,n)⟩ = f(q, k, m−n)<span class="note">低维（i 小）转得快，用来分辨相邻位置；高维转得慢，用来编码远距离位置</span></div>
+<div data-demo="rope"></div>
+<p><b>上下文扩展</b>就是在改 RoPE：训练时只见过 8K 位置，推理时要用 128K，最慢的那组维度会转到训练时没见过的角度。Position Interpolation（2023）把位置等比例压缩；NTK-aware 和 YaRN 调大 base、只拉伸低频维度；Llama 3 把 base 设成 50 万，很多 2025 年以后的模型用到上百万甚至更高。在上面的演示里调大 base，可以看到远距离的分数衰减变慢。DeepSeek 的 MLA 只对 q、k 的一小部分维度用 RoPE（decoupled RoPE），这样剩余部分可以压缩缓存；也有模型在部分层完全不用位置编码（NoPE）。</p>
+
+<h2 id="modern">从 2017 到 2026：块里换掉了什么</h2>
+<div class="tablewrap"><table>
+  <tr><th>组件</th><th>原版 Transformer (2017)</th><th>现代标准 (2023–)</th><th>为什么换</th></tr>
+  <tr><td>结构</td><td>编码器 + 解码器</td><td>只有解码器</td><td>生成任务统一成“预测下一个 token”，结构最简单，规模化最好</td></tr>
+  <tr><td>归一化位置</td><td>Post-LN（加完残差再归一化）</td><td>Pre-LN（先归一化再进子层）</td><td>深层训练更稳定，可以不用复杂的学习率预热</td></tr>
+  <tr><td>归一化</td><td>LayerNorm</td><td>RMSNorm；另加 QK-Norm</td><td>去掉减均值更快；QK-Norm 防止注意力 logit 爆炸</td></tr>
+  <tr><td>激活</td><td>ReLU</td><td>SwiGLU（门控）</td><td>同参数量下效果更好</td></tr>
+  <tr><td>位置</td><td>正弦绝对位置</td><td>RoPE</td><td>相对位置、可外推</td></tr>
+  <tr><td>注意力</td><td>MHA</td><td>GQA / MLA / 混合线性注意力</td><td>KV cache 太大（第 <a class="xref" data-ref="long-context">8</a> 章）</td></tr>
+  <tr><td>MLP</td><td>稠密</td><td>MoE（大模型）</td><td>参数变多但计算不变（第 <a class="xref" data-ref="moe">7</a> 章）</td></tr>
+  <tr><td>偏置项</td><td>有</td><td>去掉</td><td>对效果几乎没影响，去掉更稳定</td></tr>
+  <tr><td>残差</td><td>单条残差流</td><td>mHC、Attention Residuals（2026）</td><td>超深层 MoE 中信息传递更灵活</td></tr>
+  <tr><td>输出头</td><td>只预测下一个 token</td><td>加多 token 预测 MTP</td><td>训练信号更密，推理时可做投机解码（第 <a class="xref" data-ref="serving">10</a> 章）</td></tr>
+</table></div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2015-12</span>ResNet 残差连接：让很深的网络能训练</li>
+  <li><span class="d">2016</span>LayerNorm</li>
+  <li><span class="d">2017-06</span>Transformer（Post-LN、正弦位置编码、ReLU）</li>
+  <li><span class="d">2019</span>GPT-2 改为 Pre-LN；RMSNorm 提出</li>
+  <li><span class="d">2020-02</span>GLU 变体（SwiGLU）论文</li>
+  <li><span class="d">2021-04</span>RoFormer 提出 RoPE；同年 ALiBi</li>
+  <li><span class="d">2022–23</span>PaLM、LLaMA 采用 SwiGLU + RoPE + RMSNorm，成为默认组合</li>
+  <li><span class="d">2023</span>Position Interpolation、NTK-aware、YaRN：基于 RoPE 的上下文扩展</li>
+  <li><span class="d">2024–25</span>QK-Norm、MTP 输出头（DeepSeek-V3）普及</li>
+  <li><span class="d">2026</span>DeepSeek V4 mHC 超连接；Kimi K3 Attention Residuals</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

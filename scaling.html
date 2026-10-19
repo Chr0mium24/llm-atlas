@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>规模定律与优化器 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="scaling">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>规模定律与训练流水线</h1>
+  <p class="lede">2020 年以后，大模型进展的主线可以用一句话概括：<b>损失随算力、参数量、数据量按幂律平滑下降</b>。这条规律让“砸算力”变成可以预先算账的工程问题。拿到一个预训练好的“基座模型”之后，还要经过几轮后训练，它才会对话、推理和使用工具。</p>
+</header>
+
+<h2 id="scaling">规模定律</h2>
+<p>Kaplan 等（OpenAI, 2020）发现，测试损失和参数量 N、数据量 D、算力 C 之间都是幂律关系，跨好几个数量级都成立。训练算力约为 <span class="math">C ≈ 6ND</span>（每个 token 前向 2N、反向 4N）。</p>
+<p>问题是：<b>给定算力预算，模型该做多大、喂多少数据？</b>Kaplan 当时的结论是优先把模型做大，GPT-3（175B 参数，只训练了 3000 亿 token）就是这个思路。2022 年 DeepMind 的 <b>Chinchilla</b> 重新做了实验，拟合出：</p>
+<div class="eq">L(N, D) = E + A / N<sup>α</sup> + B / D<sup>β</sup>&nbsp;&nbsp;&nbsp;(E=1.69, A=406.4, B=410.7, α=0.34, β=0.28)<span class="note">E 是数据本身的熵（不可约损失）；后两项分别是“模型太小”和“数据太少”带来的额外损失</span></div>
+<p>结论是 N 和 D 应该同比例增长，大约 <b>每个参数 20 个 token</b>。按这个标准，GPT-3 严重欠训练；70B 参数、训练 1.4T token 的 Chinchilla 比 280B 的 Gopher 更好。</p>
+<div data-demo="chinchilla"></div>
+<p>为什么现在的模型远远超过 20 token/参数？Llama 3 8B 训练了 15T token，约 1900 token/参数。原因是 <b>Chinchilla 只优化训练算力，没算推理成本</b>。模型上线后要服务海量请求，推理成本 ∝ N。把推理也算进去，更划算的做法是用小一点的模型多训练很多数据（在上面演示里拉高“预期推理 token 数”）。这也是端侧小模型、蒸馏小模型越来越强的原因。</p>
+<div class="callout warn"><b>拟合常数不通用。</b>上面的 E、A、B、α、β 是 Chinchilla 在它的数据和架构上拟合的。换了数据质量（比如 FineWeb-Edu 这类精选数据）、换了架构（MoE）、换了优化器，曲线都会平移。各家实验室的做法是在小规模上反复拟合自己的规模定律，再外推出大模型的配置。</div>
+
+<h3>规模定律在 2024–2026 年的变化</h3>
+<ul>
+  <li><b>数据墙</b>：高质量的公开人类文本大约几十 T token，前沿模型已经接近用完（DeepSeek V4 预训练超过 32T token）。应对办法有：多轮重复训练、合成数据、多模态数据（视频、图像），以及代码和数学的可验证数据。</li>
+  <li><b>MoE 的规模定律</b>：总参数和激活参数要分开看（第 <a class="xref" data-ref="moe">7</a> 章）。Kimi K3 声称其 Stable LatentMoE 比 K2 的“缩放效率”高约 2.5 倍，意思是达到同样损失所需的算力约为原来的 1/2.5。</li>
+  <li><b>新的规模化维度</b>：强化学习的算力（第 <a class="xref" data-ref="reasoning">6</a> 章）、推理时的思考长度（test-time compute）都表现出类似的幂律，算力开始从预训练往后训练和推理转移。</li>
+  <li><b>优化器</b>：AdamW 用了近十年，2025 年起 <b>Muon</b>（对更新矩阵做正交化）在大规模训练中被验证：Kimi K2 用 MuonClip 训练 1T 参数模型、全程无 loss spike，DeepSeek V4 也换成了 Muon。</li>
+</ul>
+
+<h2 id="pipeline">训练流水线：从基座到助手</h2>
+<p>点击各阶段查看细节：</p>
+<div data-demo="training-pipeline"></div>
+
+<h2 id="finetune">微调的平民版本：LoRA 与 QLoRA</h2>
+<p>全参数微调要为每个参数存权重、梯度和两份 Adam 状态，混合精度下约 16 字节/参数，8B 模型就要 128GB 以上。<b>LoRA</b>（2021）观察到微调带来的权重变化是 <b>低秩</b> 的：冻结原权重 W，只训练两个小矩阵，<span class="math">W′ = W + BA</span>，其中 <span class="math">B ∈ ℝ<sup>d×r</sup>, A ∈ ℝ<sup>r×k</sup></span>，r 通常只有 8–64。<b>QLoRA</b>（2023）再把冻结的 W 量化成 4-bit NF4，单张消费级显卡就能微调几十 B 的模型。</p>
+<div data-demo="lora"></div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2018–19</span>BERT / GPT-2：大规模无监督预训练 + 下游微调</li>
+  <li><span class="d">2020-01</span>Kaplan 规模定律</li>
+  <li><span class="d">2020-05</span>GPT-3：175B，展示 in-context learning</li>
+  <li><span class="d">2021-06</span>LoRA</li>
+  <li><span class="d">2022-03</span>Chinchilla：每参数约 20 token；InstructGPT：SFT + RLHF</li>
+  <li><span class="d">2022-11</span>ChatGPT</li>
+  <li><span class="d">2023</span>LLaMA 系列开源；QLoRA；DPO 不再需要单独的奖励模型</li>
+  <li><span class="d">2024</span>Llama 3 用 15T token 大幅“过训练”；FineWeb 等精选开源数据集；DeepSeek-V3 用 FP8 训练 671B MoE，花费约 280 万 H800 GPU 小时</li>
+  <li><span class="d">2025</span>RLVR 成为后训练主轴（第 <a class="xref" data-ref="reasoning">6</a> 章）；Kimi K2 用 MuonClip 训练 1T MoE</li>
+  <li><span class="d">2026</span>DeepSeek V4：32T+ token、Muon、据报道后训练改用在线策略蒸馏（on-policy distillation）；Kimi K3 从 SFT 阶段起做 MXFP4 量化感知训练（第 <a class="xref" data-ref="quantization">9</a> 章）；NVIDIA 展示用 NVFP4 精度完成 10T token 预训练</li>
+</ul>
+<p class="src">资料：Hoffmann et al. 2022（Chinchilla）；Sardana et al. 2023（Beyond Chinchilla-Optimal）；<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a>；<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

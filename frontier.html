@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>前沿地图与开放问题 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="frontier">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>2026 前沿地图：大家现在在做什么</h1>
+  <p class="lede">截至 2026 年 10 月。前 13 章讲的每一条线，现在都还在往前推。这一章把它们放在一张图上：每个方向要解决什么问题、主流做法是什么、代表工作有哪些、对应前面哪一章。最后是开源模型的格局，以及几个还没有答案的问题。</p>
+</header>
+
+<div class="callout warn"><b>时效与可靠性。</b>本章信息来自模型卡、技术报告、官方博客和新闻报道（文末列出）。2026 年下半年的部分数字来自排行榜或媒体，尚未逐一核实，标注了“据报道”的请以官方发布为准。</div>
+
+<h2 id="scale">一张图看规模：开源模型越来越大，激活参数却没怎么涨</h2>
+<div data-demo="model-scale"></div>
+
+<h2 id="map">前沿方向地图</h2>
+<div data-demo="frontier-map"></div>
+
+<h2 id="open">开源格局（2026 年 10 月）</h2>
+<div class="tablewrap"><table>
+  <tr><th>模型</th><th>机构</th><th>时间</th><th>规模</th><th>看点</th></tr>
+  <tr><td>Kimi K3</td><td>月之暗面</td><td>2026-07</td><td>2.8T / 104B 激活</td><td>迄今最大的开源权重；KDA 混合注意力、Attention Residuals、896 专家、MXFP4 QAT、1M 上下文</td></tr>
+  <tr><td>DeepSeek V4 / V4.1-Flash-1017</td><td>DeepSeek</td><td>2026 上半年 / 09 / 10-17</td><td>Pro 1.6T / 49B；Flash 284B / 13B</td><td>CSA/HCA 稀疏压缩注意力、mHC、Muon、FP4 QAT；1017 版据报道进入开源第一梯队</td></tr>
+  <tr><td>MiMo-V2.6 Pro</td><td>小米</td><td>2026</td><td>—</td><td>据 BenchLM 10 月榜单开源第一</td></tr>
+  <tr><td>GLM-5.3</td><td>智谱</td><td>2026</td><td>—</td><td>智能体与代码能力突出</td></tr>
+  <tr><td>Qwen3.8</td><td>阿里</td><td>2026</td><td>27B 稠密等多尺寸</td><td>混合注意力；Bonsai 2 27B 即由其压缩而来</td></tr>
+  <tr><td>Muse Spark Open</td><td>Meta</td><td>2026-10-15</td><td>816B</td><td>Meta 称其为最强的美国开源权重模型；原生文本 / 图像 / 视频 / 音频输入；可在两台 Mac Studio 上运行</td></tr>
+  <tr><td>Beam 1.0</td><td>Reflection AI</td><td>2026-10</td><td>501B / 23B 激活</td><td>首个公开模型，Apache 2.0（据排行榜）</td></tr>
+  <tr><td>Mistral Large 4</td><td>Mistral</td><td>2026-10-06 预览</td><td>—</td><td>承诺 10 月底前开放权重</td></tr>
+  <tr><td>Wan 2.2 / HunyuanVideo / LTX</td><td>阿里 / 腾讯 / Lightricks</td><td>2025–26</td><td>Wan 2.2 27B / 14B 激活</td><td>开源视频生成；Wan 3.0 目前只提供 API</td></tr>
+  <tr><td>FLUX.2 / Qwen-Image-2.0</td><td>BFL / 阿里</td><td>2025-11 / 2026</td><td>—</td><td>开源图像生成与编辑的第一梯队</td></tr>
+  <tr><td>Bonsai 2 系列</td><td>PrismML</td><td>2026</td><td>4B / 9B / 27B 三值</td><td>1.76 bpw，端侧和消费级显卡</td></tr>
+</table></div>
+
+<h2 id="open-q">还没有答案的问题</h2>
+<ol>
+  <li><b>线性注意力能不能完全替代 softmax？</b>混合架构效果很好，但精确检索仍然依赖少数全注意力层。3:1 是不是最优比例，没有定论。</li>
+  <li><b>RL 的规模定律能走多远？</b>可验证的任务（数学、代码、终端）进步飞快，写作、科研判断这类难验证的任务如何给奖励，还在摸索。</li>
+  <li><b>持续学习</b>：现在的模型训练完就“冻结”，新知识只能靠上下文或检索补充。让模型在部署后安全地持续学习，被普遍认为是 2027 年前后的重点方向。</li>
+  <li><b>数据墙</b>：高质量人类文本快用完了；合成数据、视频数据、智能体交互数据能否接替，各家做法差异很大。</li>
+  <li><b>世界模型的路线之争</b>：像素级生成（Genie、Cosmos），还是在抽象表示空间里预测（LeCun 的 JEPA 路线，2026 年创立 AMI Labs），或是 3D 显式表示（World Labs 的 Marble）。</li>
+  <li><b>评测</b>：静态基准很快饱和或被污染，评测正转向真实任务（终端、浏览器、软件工程）和人类偏好竞技场，但这些评测成本高、方差大。</li>
+  <li><b>可解释性与可靠性</b>：稀疏自编码器、电路追踪（attribution graphs）能解释的部分在增加，但离“读懂一个前沿模型”还很远。</li>
+</ol>
+
+<h2 id="follow">怎么持续跟进</h2>
+<ul>
+  <li><b>一手资料</b>：模型卡与技术报告（Hugging Face、GitHub、arXiv）。DeepSeek、Kimi、Qwen 的技术报告写得很详细，值得精读。</li>
+  <li><b>推理框架博客</b>：vLLM、SGLang、llama.cpp 的发布说明，新架构一出来，这里最先告诉你“它到底快不快、怎么部署”。</li>
+  <li><b>排行榜</b>：LMArena（人类偏好）、Artificial Analysis（速度、价格、多模态）、各类智能体基准，看趋势，不迷信单个分数。</li>
+  <li><b>本站的方法</b>：每遇到一个新名词，问它属于哪条线（架构 / 训练 / 效率 / 生成），它在解决哪个瓶颈（算力、显存、带宽、数据、奖励），再回到对应章节看原理。</li>
+</ul>
+
+<p class="src">主要资料：<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a> · <a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 架构分析</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://fundaai.substack.com/p/deepllm-deepseek-v41-flash-1017-reaches">DeepSeek V4.1-Flash-1017 评测</a> · <a href="https://aifront-page.com/open-weights-october-2026-ai-model-launches/">2026 年 10 月开源模型发布</a> · <a href="https://benchlm.ai/best/open-source">BenchLM 开源榜</a> · <a href="https://docs.prismml.com/download/formats">PrismML Bonsai 文档</a> · <a href="https://research.nvidia.com/labs/eai/blogs/pushing-intelligence-to-4-bit/">NVIDIA 4-bit</a> · <a href="https://vllm.ai/blog/2026-04-07-moriio-kv-connector">vLLM P/D 分离</a> · <a href="https://hugobowne.substack.com/p/llm-architecture-in-2026-agent-harnesses">LLM Architecture in 2026</a> · <a href="https://magazine.sebastianraschka.com/p/state-of-llms-2025">State of LLMs 2025</a> · <a href="https://arxiv.org/abs/2608.06628">扩散语言模型 + 线性注意力</a> · <a href="https://ocdevel.com/mlg/mla-26">AI Video 2026</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://introl.com/blog/world-models-race-agi-2026">World Models Race 2026</a> · <a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench</a></p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

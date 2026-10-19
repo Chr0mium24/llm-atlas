@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>量化 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="quantization">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>量化：把 16 位权重压到 4 位、2 位，甚至 1 位</h1>
+  <p class="lede">量化是让大模型在你的显卡、Mac、手机上跑起来的最重要的技术，也是 2025–26 年前沿模型训练的一部分：Kimi K3 从 SFT 阶段就开始用 MXFP4 训练，DeepSeek V4 给专家权重做 FP4 量化感知训练，PrismML 的 Bonsai 把 27B 模型压到每权重 1.76 位。这一章从数字格式讲起，用一个可以直接调参的量化实验室，把 llama.cpp 的 K-quants、MXFP4/NVFP4、三值/二值和 Hadamard 旋转放在同一组数据上比较。</p>
+</header>
+
+<h2 id="why">为什么量化有用：解码受带宽限制</h2>
+<p>生成每个 token，都要把 <b>全部（激活的）权重</b> 从显存读一遍到计算单元。batch 小的时候，计算单元大部分时间在等数据，速度上限大致是：</p>
+<div class="eq">tokens/s ≈ 显存带宽 ÷ 每 token 要读的权重字节数<span class="note">例：RTX 4090（约 1 TB/s）跑 8B 模型。BF16 每 token 读 16 GB → 约 60 tok/s；4-bit 读 4.5 GB → 约 200 tok/s</span></div>
+<p>所以量化同时带来三个好处：<b>装得下</b>（显存/内存占用变小）、<b>跑得快</b>（读的字节少）、<b>更省电</b>。代价是精度损失。量化研究的核心问题就是：<b>怎样在尽量少的位数下，让误差尽量小。</b></p>
+
+<h2 id="formats">数字格式：位数怎么分配</h2>
+<p>浮点数 = 符号位 + 指数位 + 尾数位。<b>指数位</b> 决定动态范围（能表示多大和多小的数），<b>尾数位</b> 决定精度（相邻两个可表示数之间的间隔）。整数格式则是在 [−max, max] 内等间隔取值。</p>
+<div data-demo="num-format"></div>
+<ul>
+  <li><b>BF16</b>：和 FP32 一样有 8 位指数，但尾数只有 7 位。范围大、不容易溢出，是 2020 年后训练的默认格式。</li>
+  <li><b>FP8</b>（E4M3 / E5M2）：Hopper（H100）起硬件原生支持。DeepSeek-V3（2024-12）证明了用 FP8 训练超大 MoE 是可行的。</li>
+  <li><b>FP4 E2M1</b>：只有 16 个值：±{0, 0.5, 1, 1.5, 2, 3, 4, 6}。单靠它几乎没法表示权重，必须配合<b>分块缩放</b>（见下文 MXFP4 / NVFP4）。Blackwell（B200）起原生支持。</li>
+  <li><b>NF4</b>（QLoRA, 2023）：16 个值按正态分布的分位数排列，适合钟形分布的权重。</li>
+  <li><b>三值 {−1, 0, +1}</b>：log₂3 ≈ 1.58 位。矩阵乘法退化为加减法，不再需要乘法器。</li>
+</ul>
+
+<h2 id="basics">量化的基本操作：缩放、取整、分组</h2>
+<p>把一组浮点权重 w 映射到 b 位整数：</p>
+<div class="eq">q = clamp( round( w / s ) , q<sub>min</sub>, q<sub>max</sub> ),&nbsp;&nbsp;&nbsp; ŵ = s · q&nbsp;&nbsp;&nbsp;（对称量化，s = max|w| / q<sub>max</sub>）<span class="note">非对称量化再加一个零点 z：ŵ = s·(q − z)，适合不以 0 为中心的分布</span></div>
+<p>关键是 <b>s 由谁共享</b>，也就是量化 <b>粒度</b>：</p>
+<ul>
+  <li><b>逐张量（per-tensor）</b>：整个矩阵一个 s。只要有一个极大的离群值，s 就被撑大，其余权重全挤在 0 附近的一两个格子里。</li>
+  <li><b>逐通道（per-channel）</b>：每行一个 s。</li>
+  <li><b>分组（per-group / block）</b>：每 32、64 或 128 个权重一个 s，是 4-bit 以下的标配。代价是 s 本身也占位：每 32 个权重配一个 FP16 scale，就多出 16/32 = 0.5 位/权重。所以 Q4_0 实际是 4.5 bpw（bits per weight，每权重位数）。</li>
+  <li><b>两级缩放</b>：scale 自己也量化。llama.cpp 的 <b>K-quants</b>（2023）用 256 个权重组成一个超块，超块存一个 FP16 主缩放，内部 8 或 16 个子块各存一个 6 位的子缩放。<b>MXFP4</b>（OCP 标准，2023）每 32 个 FP4 共享一个 8 位的 2 的幂次缩放（E8M0）；<b>NVFP4</b>（NVIDIA）每 16 个 FP4 共享一个 FP8 E4M3 缩放，外加一个张量级 FP32 缩放。</li>
+</ul>
+
+<h2 id="outliers">真正的敌人：离群值</h2>
+<p>2022 年 LLM.int8() 发现，模型超过约 6.7B 参数后，激活里会出现少数 <b>幅度大几十倍的固定通道</b>（emergent outlier features）。权重里也有少量重要的大值。它们让缩放因子变大，普通权重的精度就被牺牲了。主要对策有四类：</p>
+<ul>
+  <li><b>混合精度</b>（LLM.int8）：离群通道单独用 FP16 计算。</li>
+  <li><b>把难度搬到权重上</b>（SmoothQuant, 2022）/ <b>按激活保护重要通道</b>（AWQ, 2023）：给输入通道乘一个缩放 s，<span class="math">Wx = (W·diag(s))(x / s)</span>，结果不变，但激活大的通道对应的权重被放大，量化时相对误差变小。</li>
+  <li><b>误差补偿</b>（GPTQ, 2022）：逐列量化，用校准数据估计的二阶信息（Hessian），把当前列的量化误差摊到还没量化的列上。llama.cpp 的 <b>imatrix</b> 也是用校准数据决定哪些权重更重要。</li>
+  <li><b>旋转</b>（QuIP#、QuaRot、SpinQuant，2024）：乘一个正交矩阵 R，<span class="math">Wx = (WRᵀ)(Rx)</span>。随机 Hadamard 旋转把集中在少数坐标上的能量摊到所有坐标，分布变得接近高斯、没有尖峰，低位量化就容易得多。<b>Ternary Bonsai 2 就是这样做的</b>：权重离线乘好 1024 维分块 Hadamard 旋转再量化成三值，推理时运行时对激活做同样的旋转。所以必须用 PrismML 的 llama.cpp 分支，原版 llama.cpp 没有激活端的旋转，加载后只会输出乱码。</li>
+</ul>
+
+<h2 id="lab">量化实验室</h2>
+<p>下面生成一个 64×256 的权重矩阵（含离群通道），再用一批带离群通道的激活 x 去乘它。所有方法用同一组数据比较 <b>输出误差 ‖Wx − Ŵx‖ / ‖Wx‖</b>。这比权重误差更能反映模型实际受到的影响。打开 Hadamard 旋转或 AWQ 缩放，看三值、二值和 2-bit 的误差怎么变化。</p>
+<div data-demo="quant-lab" class="bleed"></div>
+<div class="callout"><b>几个值得观察的现象：</b>① 离群强度调高后，逐张量 INT4 的误差急剧变大，分组越细的方法越稳。② MXFP4 的缩放只能是 2 的幂，按 OCP 规范取 floor 时，块内最大值可能被截断到 6，离群值越强误差越大；NVFP4 用 FP8 缩放、组更小，误差明显更低。这正是 NVFP4 被提出、各种 FP4 缩放优化论文涌现的原因。打开旋转后两者的差距大幅缩小。③ 有离群值时，三值和二值的误差很大；打开 Hadamard 旋转后能下降一半以上。这就是 Bonsai 2 用旋转的原因。④ 把两个离群强度都调到 0：高斯分布的权重直接三值化，输出误差仍有约 40%。这是三值网格本身的极限。BitNet、Bonsai 能保住效果，靠的是训练让模型适应三值网格（见下文 QAT），旋转只是去掉离群值这个额外的障碍。⑤ AWQ 缩放对激活离群的情况有效，因为它按激活大小保护了对应的权重列。⑥ 这里都是“直接取整”的 PTQ；真实的 GPTQ、imatrix、QAT 还会进一步降低误差，尤其在 3 位以下。</div>
+
+<h2 id="families">实际在用的格式</h2>
+<div class="tablewrap"><table>
+  <tr><th>格式</th><th>生态</th><th class="num">bpw</th><th>结构</th><th>用在哪</th></tr>
+  <tr><td>Q8_0</td><td>GGUF / llama.cpp</td><td class="num">8.5</td><td>32 个一组，FP16 scale</td><td>几乎无损</td></tr>
+  <tr><td>Q6_K</td><td>GGUF</td><td class="num">6.56</td><td>超块 256 = 16×16，8 位子缩放</td><td>高质量本地部署</td></tr>
+  <tr><td>Q4_K_M</td><td>GGUF</td><td class="num">≈4.8</td><td>以 Q4_K 为主，敏感层用 Q6_K</td><td>本地部署的默认选择</td></tr>
+  <tr><td>Q3_K / Q2_K</td><td>GGUF</td><td class="num">3.44 / 2.63</td><td>超块 256 = 16×16</td><td>显存紧张时；损失明显</td></tr>
+  <tr><td>IQ2_XXS 等 I-quants</td><td>GGUF</td><td class="num">≈2.06</td><td>8 维格点码本（E8 lattice，源自 QuIP#）+ imatrix</td><td>极限压缩</td></tr>
+  <tr><td>GPTQ / AWQ INT4</td><td>vLLM、TensorRT-LLM 等 GPU 推理</td><td class="num">≈4.1–4.25</td><td>分组 128，W4A16</td><td>GPU 服务</td></tr>
+  <tr><td>NF4</td><td>bitsandbytes</td><td class="num">≈4.13</td><td>正态分位数 16 值 + 双重量化</td><td>QLoRA 微调</td></tr>
+  <tr><td>MXFP4</td><td>OCP 标准，Blackwell / MI355 原生</td><td class="num">4.25</td><td>32 个 E2M1 + E8M0 缩放</td><td>gpt-oss、Kimi K3 专家权重</td></tr>
+  <tr><td>NVFP4</td><td>NVIDIA Blackwell</td><td class="num">4.5</td><td>16 个 E2M1 + E4M3 缩放 + FP32 张量缩放</td><td>FP4 推理 / 训练</td></tr>
+  <tr><td>TQ1_0 / Q2_0（三值）</td><td>llama.cpp</td><td class="num">1.69 / 2.06</td><td>{−1,0,1} 打包</td><td>BitNet b1.58 类模型</td></tr>
+  <tr><td>PTQ1_0 / PQ2_0</td><td>PrismML 分支</td><td class="num">1.76 / 2.16</td><td>三值，分组 128 + Hadamard 旋转元数据</td><td>Ternary Bonsai 2</td></tr>
+  <tr><td>Q1_0</td><td>PrismML</td><td class="num">1.125</td><td>符号位 + 每 128 个一个 FP16 缩放</td><td>1-bit Bonsai</td></tr>
+</table></div>
+<p><b>激活和 KV cache 也能量化。</b>只量化权重、计算时还原成 16 位，叫 W4A16，主要是省带宽。权重和激活都低位（W8A8、W4A4），才能用上低精度张量核心的算力，FP8 和 FP4 的硬件支持就是为此准备的。KV cache 量化（FP8、Q4）对长上下文尤其重要（第 <a class="xref" data-ref="long-context">8</a> 章）。</p>
+
+<h2 id="qat">PTQ vs QAT：低于 4 位就得在训练里解决</h2>
+<p><b>PTQ（训练后量化）</b>：模型训练好之后直接量化，最多再用少量校准数据。4 位以上通常够用。<b>QAT（量化感知训练）</b>：训练时前向就用量化后的权重（“伪量化”），反向传播用 <b>直通估计器 STE</b> 把梯度原样传回高精度的“潜权重”。模型在训练中就学会在量化网格上工作，会主动避开那些一量化就出错的权重组合。</p>
+<div data-demo="qat-toy"></div>
+<p>这就是 2025–26 年的趋势：<b>量化不再是部署时才做的事，而是训练流程的一部分。</b></p>
+<ul>
+  <li>Gemma 3 QAT（2025-04）：官方发布 int4 QAT 版本，显存约为 BF16 的 1/4，质量损失很小。</li>
+  <li>gpt-oss（2025-08）：MoE 权重直接以 MXFP4 发布，120B 模型可以放进单张 80GB 显卡。</li>
+  <li>Kimi K2 Thinking（2025-11）：INT4 QAT，权重只有约一半大小，长思维链推理速度约翻倍。</li>
+  <li>DeepSeek V4（2026）：专家权重和稀疏注意力索引器做 FP4 QAT，其余 FP8，针对 Blackwell。</li>
+  <li><b>Kimi K3（2026-07）</b>：从 SFT 阶段开始做 QAT，MoE 专家权重 MXFP4、激活 MXFP8。2.8T 参数按 4 位存储约 1.4 TB，加上分块缩放约 1.5 TB。Blackwell 的张量核心能原生执行分块缩放的 MXFP4；Hopper 需要用 Marlin/Machete 类内核先反量化。</li>
+  <li><b>原生低精度预训练</b>：NVIDIA 展示了用 NVFP4 精度预训练 12B 模型到 10T token，与 FP8 基线几乎无差距。</li>
+  <li><b>极低位</b>：BitNet b1.58（2024）从头训练三值模型；BitNet b1.58 2B4T（2025-04）是第一个原生训练的开源 1-bit 模型；PrismML 1-bit Bonsai（2026-03，8B 只占 1.15 GB）和 Ternary Bonsai 2 27B（基于 Qwen3.8-27B，1.76 bpw，5.9 GB，PrismML 报告保留约 98% 的评测成绩）；腾讯混元 HY-1.8B-2Bit 走 2 位 QAT 端侧路线。</li>
+</ul>
+
+<h2 id="size">算一算：多大的模型能放进你的设备</h2>
+<div data-demo="model-size"></div>
+
+<h2 id="frontier">2026 年的研究前沿</h2>
+<ul>
+  <li><b>FP4 的缩放怎么选</b>：大量 2026 年的论文在优化 NVFP4/MXFP4 的块缩放，例如 Four over Six（自适应块缩放）、SOAR、ScaleSweep、H-Scale（用 Hessian 引导缩放）、FOCUS。NVIDIA 报告 DeepSeek-R1 量化到 NVFP4 后，推理和知识类评测与 FP8 相差约 1% 以内。</li>
+  <li><b>FP4 训练</b>：前向、反向都用 FP4，需要随机舍入、Hadamard 旋转梯度等技巧来控制误差。</li>
+  <li><b>2 位以下的 PTQ</b>：PT2-LLM（ICLR 2026）等研究训练后三值化；旋转加码本（QTIP、AQLM 一类）继续压低误差。</li>
+  <li><b>多模态量化</b>：视觉编码器和投影层对量化更敏感，例如 Llama-Mobile 做 2.7 位 VLM。</li>
+  <li><b>内核与硬件</b>：三值、二值模型要真正变快，需要专门的内核（bitnet.cpp、PrismML 的 Metal/CUDA 内核把 Hadamard 变换融合进权重加载路径）。</li>
+</ul>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2016</span>BinaryConnect / XNOR-Net / TWN：CNN 的二值、三值网络</li>
+  <li><span class="d">2018</span>Jacob 等：整数量化推理（TFLite）；STE 成为 QAT 标准做法</li>
+  <li><span class="d">2022</span>LLM.int8()（离群特征）、SmoothQuant、GPTQ</li>
+  <li><span class="d">2023</span>AWQ、QLoRA / NF4；llama.cpp K-quants（6 月）与 GGUF（8 月）；QuIP；OCP MX 规范；BitNet</li>
+  <li><span class="d">2024</span>BitNet b1.58（2 月）、QuIP#、QuaRot、SpinQuant、I-quants；DeepSeek-V3 FP8 训练；Blackwell FP4</li>
+  <li><span class="d">2025</span>Gemma 3 QAT；BitNet b1.58 2B4T；gpt-oss MXFP4；Kimi K2 Thinking INT4 QAT</li>
+  <li><span class="d">2026</span>1-bit Bonsai（3 月）→ Ternary Bonsai 2；DeepSeek V4 FP4 QAT；Kimi K3 MXFP4 QAT；NVFP4 预训练与 PTQ 研究集中出现</li>
+</ul>
+<p class="src">资料：<a href="https://docs.prismml.com/download/formats">PrismML 格式文档</a>；<a href="https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf">Ternary-Bonsai-2-27B</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3：2.8T 参数，四位一组</a>；<a href="https://research.nvidia.com/labs/eai/blogs/pushing-intelligence-to-4-bit/">NVIDIA：Pushing Intelligence to 4-bit</a>；<a href="https://tensorfoundry.io/blog/llm-quantisation-field-guide">LLM Quantisation Field Guide 2026</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

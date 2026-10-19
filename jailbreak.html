@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>越狱与防御 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="jailbreak">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>越狱与防御</h1>
+  <p class="lede">只讲机制和防御，不给攻击配方：为什么安全对齐这么容易被绕过，防御又怎样一步步下移。</p>
+</header>
+
+<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（第 4 节）。</div>
+
+<h2 id="plan">计划内容</h2>
+<ul>
+  <li>三个机制：目标冲突、浅层对齐（只有几个 token 深）、拒绝是一个方向</li>
+  <li>攻击分类：优化后缀、多轮渐进、长上下文、采样暴力、微调、权重编辑、提示注入</li>
+  <li>量级：多轮攻击在闭源旗舰上的成功率</li>
+  <li>防御演进：对抗训练 → 表示层 → 分类器级联 → 数据过滤 → 架构隔离（CaMeL）</li>
+  <li>开源模型能不能防篡改</li>
+</ul>
+
+
+<footer id="pager"></footer>
+</div></main>
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

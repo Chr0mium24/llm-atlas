@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>视频生成 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="video">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>视频生成与世界模型：从“动起来的图”到可以玩的世界</h1>
+  <p class="lede">视频生成比图像难在三点：<b>时间上要连贯</b>（同一个人不能每帧换脸），<b>运动要合理</b>（物理、因果），<b>数据量巨大</b>（5 秒 720p 就是一亿多个像素值）。2024 年 Sora 用“时空 patch + DiT”给出了可规模化的答案；到 2026 年，主流模型能直接生成带同步音频的 1080p/4K 多镜头视频，实时可交互的“世界模型”也已经出现。</p>
+</header>
+
+<h2 id="arch">主流架构：3D VAE + 时空 patch + DiT + 流匹配</h2>
+<ol>
+  <li><b>3D 因果 VAE</b>：在空间上压缩 8× 或 16×，在时间上压缩 4×。比如 Wan 的 VAE 是 4×8×8，Seedance 1.0 是 4×16×16。“因果”指每一帧的编码只依赖它之前的帧，第一帧可以单独当图像处理，所以同一个模型可以同时用图像和视频训练。</li>
+  <li><b>时空 patch</b>：潜视频再切成 1×2×2 的小块，每块一个 token。Sora 的技术报告把它叫作 spacetime patches：不同时长、分辨率、宽高比的视频都变成一串长度不一的 token。</li>
+  <li><b>DiT 去噪</b>：所有 token 做 <b>全 3D 注意力</b>（每个 token 看所有帧的所有位置），或者分解成“空间注意力 + 时间注意力”以省算力。文本条件通过交叉注意力或联合注意力注入。</li>
+  <li><b>流匹配训练与采样</b>（第 <a class="xref" data-ref="diffusion">11</a> 章），配合 CFG。</li>
+</ol>
+<p>视频 token 数非常大，注意力代价又是平方级，所以视频生成很贵：</p>
+<div data-demo="video-tokens"></div>
+
+<h2 id="consistency">为什么要“时空联合”去噪</h2>
+<p>最朴素的想法是用图像模型一帧一帧地生成。问题在于每帧的去噪都是独立随机的：第 1 帧生成了左边的红球，第 2 帧可能生成右边的红球，画面会跳动和闪烁。视频扩散把整段视频当成 <b>一个</b> 样本联合去噪，所有帧在同一个去噪过程里互相“商量”，运动自然连贯。</p>
+<p>下面的玩具用的还是“精确最优去噪器”（第 <a class="xref" data-ref="diffusion">11</a>、<a class="xref" data-ref="image">12</a> 章）。训练集是 72 段 8 帧的小视频：4 种形状 × 3 种颜色 × 6 种运动方式。三种生成方式各自独立运行：</p>
+<div data-demo="video-consistency" class="bleed"></div>
+<ul>
+  <li><b>逐帧独立</b>：每帧都是合理的图，但连起来乱跳。这是 2022 年以前用图像模型做视频的典型问题。AnimateDiff（2023）等在图像模型里插入时间注意力模块来缓解。</li>
+  <li><b>时空联合</b>：整段一起去噪，运动连贯。Sora、Wan、Veo、Kling、Seedance 都是这类。缺点是长度固定，必须一次生成完。</li>
+  <li><b>自回归逐帧（带上下文）</b>：每一帧以前面已经生成的帧为条件去噪，可以无限延长、实时流式输出，也能在中途插入用户的动作。代价是误差会逐帧累积（drift）。Diffusion Forcing（2024）、CausVid、Self-Forcing（2025）等方法专门缓解这个问题，它们是实时世界模型的基础。</li>
+</ul>
+
+<h2 id="frontier">2024–2026：视频模型的进化</h2>
+<ul>
+  <li><b>原生音频</b>：Veo 3（2025-05）让视频和音频（对白、音效、音乐）一起生成；Sora 2（2025-09）、Seedance 2.0（2026-02，统一的音视频联合生成架构）、Kling 3.0（2026 初，图像 / 视频 / 音频统一，原生 4K，5 种语言口型同步）跟进。</li>
+  <li><b>按噪声水平分工的 MoE</b>：Wan 2.2（2025-07）用两个专家，高噪声阶段的专家负责构图和运动，低噪声阶段的专家负责细节；27B 总参数，每步激活 14B。开源，Apache 2.0。</li>
+  <li><b>参考与多镜头</b>：Seedance 2.5 一次最多接收 50 个参考输入（30 张图、10 段视频、10 段音频），原生 1080p、最长 30 秒；Wan 3.0（2026-08）在多个排行榜上位居第一。</li>
+  <li><b>行业洗牌</b>：OpenAI 在 2026 年 9 月关闭了 Sora 应用和 API；Google 的 Gemini Omni Flash 成为其应用内的默认视频模型，Veo 3.1 面向开发者。</li>
+  <li><b>开源</b>：Wan 2.x、HunyuanVideo、LTX-2.5、MiniMax H3 等；Wan 2.2 的 5B 版本能在 RTX 4090 上生成 720p。</li>
+</ul>
+
+<h2 id="world">世界模型：能实时交互的视频</h2>
+<p>如果视频模型能 <b>实时</b> 地、<b>根据用户动作</b> 生成下一帧，它就成了一个可以“玩”的世界。也就是 <b>交互式世界模型</b>。它和游戏引擎的区别是：没有手写的物理和渲染代码，一切从视频数据里学。用途包括游戏原型、自动驾驶和机器人的仿真训练（Waymo 2026 年用 Genie 3 构建了驾驶世界模型）、以及给智能体提供练习场。</p>
+<div data-demo="world-model-toy"></div>
+<p>真实的世界模型要解决的问题，这个玩具里都有缩影：<b>实时性</b>（每帧只能用 1–4 步去噪，靠蒸馏）、<b>动作条件</b>、<b>长时记忆</b>（转身再转回来，房间要和刚才一样；Genie 3 能记住约 1 分钟，Matrix-Game 3.5 用 “Patch Memory”）、<b>误差累积</b>（几分钟后画面崩坏）。</p>
+<ul class="history">
+  <li><span class="d">2018</span>Ha & Schmidhuber《World Models》：在学到的“梦境”里训练智能体</li>
+  <li><span class="d">2022</span>Video Diffusion Models、Make-A-Video、Imagen Video、Phenaki</li>
+  <li><span class="d">2023</span>Gen-2、AnimateDiff、Stable Video Diffusion</li>
+  <li><span class="d">2024-02</span>Sora（时空 patch DiT，“视频生成模型作为世界模拟器”）；Genie（从无标注视频学可控环境）</li>
+  <li><span class="d">2024</span>Kling、Veo / Veo 2、CogVideoX、HunyuanVideo（开源 13B）；GameNGen（神经网络实时“运行” DOOM）；Genie 2；Diffusion Forcing</li>
+  <li><span class="d">2025</span>Wan 2.1（2 月开源）；Veo 3 原生音频（5 月）；Wan 2.2 MoE；Genie 3（8 月，720p / 24fps 实时，可连续交互数分钟）；Sora 2（9 月）；Self-Forcing 实时流式生成</li>
+  <li><span class="d">2026</span>Project Genie 向付费用户开放（1 月）；Seedance 2.0（2 月）；Kling 3.0；Waymo World Model；Matrix-Game 3.0 / 3.5 开源实时世界模型；Wan 3.0（8 月）；Sora 关停（9 月）；NVIDIA Cosmos 3 全模态世界模型</li>
+</ul>
+<p class="src">资料：<a href="https://arxiv.org/abs/2604.14148">Seedance 2.0 技术报告</a>；<a href="https://ocdevel.com/mlg/mla-26">AI Video Generation in 2026</a>；<a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a>；<a href="https://9to5google.com/2026/01/29/google-project-genie/">Project Genie</a>；<a href="https://introl.com/blog/world-models-race-agi-2026">World Models Race 2026</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

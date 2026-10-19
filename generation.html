@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>自回归生成与采样 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="generation">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>自回归生成：一次只吐一个 token</h1>
+  <p class="lede">GPT 类模型只做一件事：给定前文，输出下一个 token 的概率分布。从分布里取一个 token 接到末尾，再预测下一个。对话、写代码、推理，都是这个循环跑几千到几万次的结果。</p>
+</header>
+
+<h2 id="ar">训练：预测下一个 token</h2>
+<p>语言模型把整段文本的概率拆成一串条件概率的乘积：</p>
+<div class="eq">p(x₁, x₂, …, x<sub>T</sub>) = ∏<sub>t</sub> p(x<sub>t</sub> | x<sub>&lt;t</sub>)<span class="note">训练目标：最小化交叉熵 −Σ log p(真实的下一个 token)</span></div>
+<p>训练时整段文本一次性送进去，因果掩码保证第 t 个位置只能看到前 t 个 token，所以 T 个位置的预测可以 <b>并行</b> 计算，每个位置都产生一次损失。这叫 teacher forcing：不管模型自己会预测什么，下一步都喂真实答案。</p>
+<p><b>困惑度（perplexity）</b> = exp(平均交叉熵)。可以理解为“模型平均在多少个候选里犹豫”。困惑度 10 大致相当于每步在 10 个等可能的 token 里挑一个。</p>
+<div class="callout"><b>推理时不能并行。</b>第 t+1 个 token 依赖第 t 个 token 的采样结果，只能一个个生成。这是大模型推理慢的根本原因，第 <a class="xref" data-ref="serving">10</a> 章的投机解码、第 <a class="xref" data-ref="video">13</a> 章提到的扩散语言模型，都是想绕过这一点。</div>
+
+<h2 id="sampling">从分布里怎么挑：采样策略</h2>
+<p>模型输出的是 logit（未归一化的分数）。最终选哪个 token 由 <b>解码策略</b> 决定：</p>
+<ul>
+  <li><b>贪心（greedy）</b>：永远选概率最高的。确定性强，但容易陷入重复循环。</li>
+  <li><b>温度 T</b>：softmax(logit / T)。T &lt; 1 让分布更尖（保守），T &gt; 1 让分布更平（发散）。T → 0 就是贪心。</li>
+  <li><b>top-k</b>：只在概率最高的 k 个里采样。</li>
+  <li><b>top-p（nucleus）</b>：按概率从高到低累加，累计到 p 为止，只在这些里采样。分布尖的时候候选少，分布平的时候候选多，比固定 k 更自适应。</li>
+  <li><b>min-p</b>（2024）：只保留概率 ≥ min_p × 最高概率的 token。高温下比 top-p 更稳，llama.cpp、vLLM 等都已支持。</li>
+</ul>
+<div data-demo="sampling-lab"></div>
+<p>其它常见手段：<b>重复惩罚</b>（降低已出现 token 的 logit）；<b>束搜索 beam search</b>（同时保留几条最优路径，翻译里常用，开放式生成里反而会显得死板）；<b>结构化输出 / 约束解码</b>：用语法（JSON Schema、正则）在每一步把不合法的 token 的概率置零，保证输出一定能被解析。工具调用的可靠性很大程度上依赖它。</p>
+
+<h2 id="ngram">为什么需要神经网络：n-gram 的天花板</h2>
+<p>最早的语言模型是 <b>n-gram</b>：统计“前 n−1 个字之后出现某个字”的次数，直接当概率。下面用 27 首唐诗训练一个字级 n-gram，看它能写出什么：</p>
+<div data-demo="ngram-poet"></div>
+<p>n 小的时候语句不通顺；n 大的时候整句照抄原诗。原因是 <b>数据稀疏</b>：长度为 n 的上下文组合呈指数增长，绝大多数在训练数据里一次都没出现过，模型就只能退回到更短的上下文。</p>
+<p>神经语言模型（2003 年 Bengio 起）把上下文压成 <b>连续向量</b>，相似的上下文得到相似的预测，“没见过但相似”的上下文也能处理。Transformer 再把上下文窗口从几个词扩展到几十万、上百万 token，并且能根据内容选择看哪里（注意力）。从统计计数到“压缩并泛化”，这就是从 n-gram 到大模型的主线。</p>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">1948</span>香农用 n-gram 估计英文的熵</li>
+  <li><span class="d">2003</span>Bengio 神经概率语言模型：词向量 + 前馈网络</li>
+  <li><span class="d">2010–15</span>RNN / LSTM 语言模型；seq2seq + beam search 统治机器翻译</li>
+  <li><span class="d">2018-06</span>GPT-1：Transformer 解码器 + 无监督预训练 + 微调</li>
+  <li><span class="d">2019</span>GPT-2；同年 nucleus（top-p）采样论文指出 beam search 会让文本退化</li>
+  <li><span class="d">2020-05</span>GPT-3：不用微调，靠 prompt 和 few-shot 示例完成任务</li>
+  <li><span class="d">2023–24</span>约束解码 / 结构化输出普及；min-p 采样</li>
+  <li><span class="d">2024-12</span>DeepSeek-V3 的多 token 预测（MTP）：训练时预测后面多个 token</li>
+  <li><span class="d">2025–26</span>扩散语言模型（LLaDA、Gemini Diffusion、Mercury）尝试并行生成，打破“一次一个 token”</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

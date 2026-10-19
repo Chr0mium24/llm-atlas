@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>注意力机制 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="attention">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>注意力：每个 token 都去“查”其它 token</h1>
+  <p class="lede">2017 年的论文标题叫 <i>Attention Is All You Need</i>。它去掉了循环网络，只用注意力处理序列。这个设计能在 GPU 上并行训练，后来证明它还能随规模持续变强。</p>
+</header>
+
+<h2 id="before">注意力之前：RNN 的瓶颈</h2>
+<p>2014–2016 年的机器翻译用 RNN/LSTM：一个词一个词读进来，把整句压进一个固定大小的隐藏状态，再由解码器展开。问题有两个：</p>
+<ol>
+  <li><b>信息瓶颈</b>：长句子被压进一个向量，前面的信息会被冲淡。</li>
+  <li><b>无法并行</b>：第 t 步依赖第 t−1 步，训练时 GPU 只能一步步串行算。</li>
+</ol>
+<p>2014 年 Bahdanau 等人给解码器加了 <b>注意力</b>：每生成一个词，都回头对编码器的所有位置算一个权重，按权重取加权平均。Transformer 把这件事推到底：编码器和解码器内部都只用注意力，叫做 <b>自注意力（self-attention）</b>。</p>
+
+<h2 id="qkv">Q、K、V：一次“软”的字典查询</h2>
+<p>普通字典查询是精确匹配：给一个 key，返回唯一对应的 value。注意力把它变成 <b>软匹配</b>：</p>
+<ul>
+  <li>每个 token 的向量 x 经过三个矩阵，得到 <b>Query</b>（我要找什么）、<b>Key</b>（我有什么标签）、<b>Value</b>（我要交出去的内容）：<span class="math">q = xW<sub>Q</sub>, k = xW<sub>K</sub>, v = xW<sub>V</sub></span>。</li>
+  <li>当前 token 的 q 和所有 token 的 k 做点积，点积越大表示越相关；softmax 之后变成和为 1 的权重。</li>
+  <li>输出 = 用这些权重对所有 v 求加权平均。</li>
+</ul>
+<div class="eq">Attention(Q, K, V) = softmax( QKᵀ / √d<sub>k</sub> ) · V<span class="note">一次矩阵乘法同时为 n 个 query 算出 n×n 的权重矩阵，所以可以并行</span></div>
+
+<div data-demo="attn-lookup"></div>
+
+<h3>为什么要除以 √d</h3>
+<p>如果 q、k 的每一维都是均值 0、方差 1 的随机数，它们的点积是 d 项之和，方差是 d。d=128 时点积的标准差约 11，softmax 一下几乎全部权重都落在最大那一项上（接近 one-hot），梯度也几乎为 0，训练会卡住。除以 √d 把方差拉回 1。下面可以直接看到这个效果：</p>
+<div data-demo="attn-scale"></div>
+
+<h2 id="multihead">多头、因果掩码与注意力模式</h2>
+<p><b>多头注意力</b>：把 d 维切成 h 份（比如 64 个头，每头 128 维），每个头有自己的 W<sub>Q</sub>、W<sub>K</sub>、W<sub>V</sub>，各自计算注意力，结果拼接后再乘一个输出矩阵 W<sub>O</sub>。不同的头会学会关注不同的关系：有的看上一个词，有的看句法上的主语，有的做“复制”。</p>
+<p><b>因果掩码</b>：GPT 这类解码器模型预测下一个 token，第 i 个位置只能看 ≤ i 的位置，否则就看到答案了。实现上把 n×n 分数矩阵的上三角设为 −∞，softmax 后权重为 0。</p>
+<p>可解释性研究（Anthropic, 2021–2022）在训练好的模型里发现了一些可以清楚描述的头。下面的演示按规则构造出这些模式，让你看它们分别在做什么：</p>
+<div data-demo="attn-heads"></div>
+<div class="callout"><b>归纳头（induction head）</b>可以简单理解成“上次见到 A 后面跟着 B，这次又见到 A，就预测 B”。它由两层配合实现：前一层的“前一个 token 头”把每个位置的前一个 token 信息写进当前位置，后一层的归纳头再用这个信息去匹配。Olsson 等（2022）发现，这类头在训练中突然形成的时刻，正好对应模型 <b>上下文学习（in-context learning）</b> 能力的跃升。few-shot 示例之所以有用，很大程度上靠的就是这种机制。</div>
+<div class="callout"><b>注意力汇聚（attention sink）</b>：很多头会把大量权重放在第一个 token 上，哪怕它只是 <code>&lt;bos&gt;</code>。softmax 的权重和必须为 1，当一个头“没什么要看的”时，第一个 token 就成了存放多余权重的地方。StreamingLLM（2023）利用这一点：做滑动窗口推理时保留开头几个 token，模型就不会崩。</div>
+
+<h2 id="cost">代价：n² 的计算与显存</h2>
+<p>自注意力要为每对 token 算一个分数，计算量和显存都是 <span class="math">O(n²)</span>。8K 上下文是 6400 万对，1M 上下文就是一万亿对。后面几章讲的大部分工作，都在想办法绕开这个平方：</p>
+<ul>
+  <li><b>FlashAttention</b>（第 <a class="xref" data-ref="long-context">8</a> 章）：结果和原来完全相同，但通过分块计算不在显存里存 n×n 矩阵，显存从 O(n²) 降到 O(n)。</li>
+  <li><b>KV cache 与 GQA/MLA</b>（第 <a class="xref" data-ref="long-context">8</a> 章）：生成时缓存历史的 K、V，并压缩缓存的大小。</li>
+  <li><b>线性注意力 / 状态空间模型</b>（第 <a class="xref" data-ref="long-context">8</a> 章）：Mamba、DeltaNet、Kimi Delta Attention 等，把历史压进一个固定大小的状态，代价变为 O(n)。</li>
+  <li><b>稀疏注意力</b>：每个 query 只看挑选出来的少量 token，例如 DeepSeek 的 DSA，以及 V4 的 CSA/HCA。</li>
+</ul>
+<p><b>交叉注意力（cross-attention）</b>：Q 来自一个序列，K、V 来自另一个序列。原始 Transformer 的解码器用它读取编码器输出；Stable Diffusion 的 U-Net 用它读取文本向量，图像中的每个位置去“查”提示词里的每个词（第 <a class="xref" data-ref="image">12</a> 章）。</p>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2014-09</span>Bahdanau 注意力：给 RNN 翻译模型加上对齐</li>
+  <li><span class="d">2017-06</span>Transformer：只用注意力；多头、缩放点积、位置编码</li>
+  <li><span class="d">2018</span>GPT-1（只有解码器）与 BERT（只有编码器，双向）分道</li>
+  <li><span class="d">2019</span>Multi-Query Attention：所有头共享一组 K、V，为推理省显存</li>
+  <li><span class="d">2020-10</span>ViT：图像切成 patch 之后也用 Transformer，视觉开始统一</li>
+  <li><span class="d">2021–22</span>Transformer Circuits：归纳头、残差流等可解释性框架</li>
+  <li><span class="d">2022-05</span>FlashAttention：IO 感知的精确注意力</li>
+  <li><span class="d">2023</span>GQA（Llama 2 70B 起普及）；注意力汇聚 / StreamingLLM</li>
+  <li><span class="d">2024-05</span>DeepSeek-V2 的 MLA：把 KV 压到低维潜变量</li>
+  <li><span class="d">2025–26</span>混合架构：线性注意力层与全注意力层按约 3:1 交替（Qwen3-Next、Kimi Linear、Kimi K3）；稀疏注意力（DeepSeek V3.2 DSA、V4 CSA/HCA）</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

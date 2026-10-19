@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>长上下文与注意力变体 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="long-context">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>长上下文：KV cache、FlashAttention 与线性注意力</h1>
+  <p class="lede">2023 年主流模型的上下文是 4K–8K token，2026 年的 Kimi K3、DeepSeek V4 是 1M。智能体要读整个代码仓库、几百轮工具调用记录、几小时的视频，都需要很长的上下文。障碍有两个：注意力计算是 O(n²)，生成时要缓存的 K/V 随长度线性增长。</p>
+</header>
+
+<h2 id="kv">KV cache：生成时最占显存的东西</h2>
+<p>自回归生成时，第 t 步的新 token 要和前面所有 token 做注意力。前面 token 的 K、V 每一步都一样，没必要重算，就缓存下来，这就是 <b>KV cache</b>。它的大小：</p>
+<div class="eq">KV 字节数 / token = 2 (K 和 V) × 层数 L × KV 头数 × 头维度 × 每个数的字节数<span class="note">Llama 3 70B（80 层，8 个 KV 头，头维度 128，BF16）：每 token 320 KB；128K 上下文 ≈ 40 GB，单个请求就要这么多</span></div>
+<p>减小 KV cache 的思路有四类：<b>减少 KV 头</b>（MQA、GQA）、<b>压缩到低维</b>（MLA）、<b>只存最近的</b>（滑动窗口）、<b>换成固定大小的状态</b>（线性注意力 / SSM）。2025–26 年的模型通常把几种组合起来，比如 Kimi K3 用 69 层 KDA 线性注意力加 24 层 Gated MLA。</p>
+<div data-demo="kv-cache"></div>
+<ul>
+  <li><b>MQA</b>（2019）：所有 Q 头共享 1 组 K/V。省得最多，但质量有损。</li>
+  <li><b>GQA</b>（2023）：Q 头分组，每组共享一组 K/V（如 64 个 Q 头配 8 个 KV 头）。现在的默认选择。</li>
+  <li><b>MLA</b>（DeepSeek-V2, 2024）：把 K/V 压到一个 512 维的潜向量（另加 64 维给 RoPE），计算时再升维。缓存很小，效果却不比 MHA 差。DeepSeek-V3/V4、Kimi K2/K3 都在用。</li>
+  <li><b>滑动窗口 / 局部-全局交替</b>：大部分层只看最近 w 个 token，少数层看全部（Gemma 3 是 5:1）。</li>
+  <li><b>KV cache 量化</b>：把 K/V 存成 FP8 或 4-bit（第 <a class="xref" data-ref="quantization">9</a> 章）。llama.cpp 的 <code>--cache-type-k q4_0</code> 就是这个。</li>
+</ul>
+
+<h2 id="flash">FlashAttention：计算一样，只是换个顺序</h2>
+<p>朴素实现会把 n×n 的分数矩阵完整写进显存（HBM），再读出来做 softmax，再读出来乘 V。GPU 的瓶颈往往不在算力，而在 <b>显存读写</b>。FlashAttention（2022）把 Q、K、V 切成小块，放进片上 SRAM 里算完，<b>n×n 矩阵从不写回显存</b>。难点在 softmax 需要整行的最大值和总和。办法是 <b>在线 softmax</b>：一边扫描一边维护当前最大值 m 和归一化因子 l，遇到更大的值时，把之前累积的结果乘一个修正系数。</p>
+<div data-demo="online-softmax"></div>
+<p>FlashAttention 的结果和朴素实现在数学上完全一致，不是近似，只是让注意力的显存从 O(n²) 降到 O(n)，速度提升 2–4 倍。FA2（2023）改进了并行划分，FA3（2024）针对 Hopper 的异步与 FP8，2025 年后的 FA4 和各家的 Blackwell 内核继续沿这个方向优化。<b>Ring Attention / 上下文并行</b> 把同一个序列切到多张卡上，K/V 块在卡之间环形传递，用来训练百万级上下文。</p>
+
+<h2 id="linear">线性注意力：把历史压进固定大小的状态</h2>
+<p>softmax 注意力相当于一个 <b>只增不减的记忆</b>：每个 token 的 K/V 都原样保存，查询时逐一比对。<b>线性注意力</b> 去掉 softmax，把记忆变成一个固定大小的矩阵 <span class="math">S</span>（d<sub>k</sub>×d<sub>v</sub>），每来一个 token 就写进去：</p>
+<div class="eq">线性注意力：S<sub>t</sub> = S<sub>t−1</sub> + v<sub>t</sub>k<sub>t</sub>ᵀ　　DeltaNet：S<sub>t</sub> = S<sub>t−1</sub> + β<sub>t</sub>(v<sub>t</sub> − S<sub>t−1</sub>k<sub>t</sub>)k<sub>t</sub>ᵀ　　读取：o<sub>t</sub> = S<sub>t</sub>q<sub>t</sub>
+<span class="note">Gated DeltaNet 再乘一个衰减 α<sub>t</sub>；Kimi Delta Attention（KDA）把 α 变成逐通道的 Diag(α<sub>t</sub>)，可以分别控制每个维度的遗忘</span></div>
+<p>这样每步生成的代价是常数，显存也是常数，像 RNN 一样。问题是固定大小的矩阵 <b>容量有限</b>：存的东西一多就会互相干扰。<b>Delta rule</b> 的改进是，写入前先读出当前存的值，只写“差值”，相当于覆盖而不是叠加；<b>门控 / 衰减</b> 则让模型主动遗忘不再需要的旧信息。下面的演示把 N 对随机的 (key, value) 依次写进 d×d 的状态，再逐个查询，看能取回多少：</p>
+<div data-demo="delta-memory"></div>
+<p>纯线性注意力在“精确回忆”（比如从长文中找出某个电话号码）上始终不如 softmax 注意力。所以 2025–26 年的主流做法是 <b>混合</b>：大部分层用线性注意力（便宜，负责局部和摘要），每隔几层插一层全注意力（负责精确检索）。Qwen3-Next、Kimi Linear 用约 3:1，Kimi K3 是 69:24。Kimi 报告称在百万 token 下 KV cache 减少约 75%，解码吞吐最高提升约 6 倍。</p>
+<p>另一条路线是 <b>稀疏注意力</b>：保留 softmax，但每个 query 只看挑出来的 top-k 个 token。DeepSeek V3.2 的 DSA 用一个轻量的“闪电索引器”给所有 token 快速打分再选 top-k；V4 的 <b>CSA</b> 先把每 4 个 token 的 KV 压成 1 条再做稀疏选择，<b>HCA</b> 压得更狠但保持稠密注意力。据其报告，百万上下文时 V4-Pro 的单 token 推理 FLOPs 只有 V3.2 的 27%，KV cache 只有 10%。</p>
+
+<h2 id="eval">长上下文真的“用得上”吗</h2>
+<p>标称上下文长度不等于有效长度。<b>大海捞针</b>（needle in a haystack）只测单点检索，太简单；RULER、多跳推理、长文档问答等更难的测试显示，很多模型在标称长度的一半处就明显退化（俗称 “context rot”）。工程上，智能体系统会配合 <b>上下文工程</b>：压缩历史、外部记忆、检索、子智能体分工，不把所有东西都塞进上下文。</p>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2019</span>MQA；Transformer-XL 的段级循环</li>
+  <li><span class="d">2020</span>Linear Transformer（“Transformers are RNNs”）、Longformer、BigBird 稀疏模式</li>
+  <li><span class="d">2022-05</span>FlashAttention</li>
+  <li><span class="d">2023</span>GQA；PagedAttention；RoPE 插值 / YaRN；Ring Attention；12 月 Mamba（选择性状态空间）</li>
+  <li><span class="d">2024</span>MLA（DeepSeek-V2）；Mamba-2；DeltaNet 并行化；Jamba（Mamba 混合）；Gemini 1.5 达到 1M–10M 上下文；FlashAttention-3</li>
+  <li><span class="d">2025</span>Gated DeltaNet；MiniMax-M1 lightning attention；Qwen3-Next（3:1 混合）；DeepSeek V3.2 DSA 稀疏注意力；10 月 Kimi Linear（KDA）</li>
+  <li><span class="d">2026</span>DeepSeek V4（CSA + HCA，1M）；Kimi K3（69 KDA + 24 Gated MLA，1M）；Nemotron 3（Mamba 混合）</li>
+</ul>
+<p class="src">资料：<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 报告</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 架构分析</a>；<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

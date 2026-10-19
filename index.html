@@ -4,211 +4,102 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>大模型全景图谱：从 Transformer 到 2026 前沿</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
 <link rel="stylesheet" href="assets/style.css">
-<style>
-  .hero h1 { font-size: 40px; margin-bottom: 8px; }
-  .partname { margin: 30px 0 4px; font-weight: 700; color: var(--ink-2); font-size: 14px; letter-spacing: .04em; }
-  .tl-year { font-size: 22px; font-weight: 700; margin: 26px 0 8px; font-variant-numeric: tabular-nums; }
-  .tl { list-style: none; padding: 0; margin: 0; }
-  .tl li { display: grid; grid-template-columns: 64px 116px 1fr; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--grid); align-items: baseline; }
-  .tl .m { color: var(--muted); font-variant-numeric: tabular-nums; font-size: 13.5px; }
-  .tl .trk { font-size: 12px; color: var(--ink-2); white-space: nowrap; }
-  .tl .trk i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
-  .tl .ti { font-weight: 650; }
-  .tl .ds { color: var(--ink-2); font-size: 14px; }
-  @media (max-width: 640px) { .tl li { grid-template-columns: 56px 1fr; } .tl .trk { display: none; } }
-  .demos { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }
-</style>
 </head>
-<body>
+<body data-chapter="index">
 <nav id="side"></nav>
 <main><div class="wrap">
 <header class="hero">
-  <div class="kicker">截至 2026 年 10 月 · 16 章 · 43 个交互演示</div>
+  <div class="kicker">截至 2026 年 10 月 · 34 章 + 序章 + 附录 · 改版进行中</div>
   <h1>大模型全景图谱</h1>
-  <p class="lede">从 2017 年的 Transformer 讲起，到 2026 年 Kimi K3、DeepSeek V4、Bonsai 三值模型、Wan / Seedance 视频生成和 Genie 世界模型，以及会用工具的智能体和能看会听的多模态模型。每一章讲清一个环节的 <b>原理</b> 和 <b>脉络</b>，并附上可以直接调参的演示。演示都在浏览器里实时计算，不是录屏，也不调用任何外部 API。</p>
+  <p class="lede">从 2017 年的 Transformer 讲到 2026 年的前沿：模型怎么工作、怎么训练、怎么部署，图像和视频怎么生成，以及怎么理解、评判和约束它们。每一章讲清原理和推导，历史按“当时卡在哪 → 怎么解决 → 代价是什么 → 引出了什么”的因果链来写，并附上可以直接调参的演示。演示都在浏览器里实时计算，不调用任何外部服务。</p>
 </header>
 
+<div id="progress" class="stats"></div>
+
 <h2 id="read">怎么读</h2>
-<p>大模型的发展可以拆成几条交织的线。前四条在第 14 章（前沿）汇到一起，第六部分再补上模型怎么“做事”、怎么“看和听”：</p>
+<p>全书分八个部分，每一章只依赖前面讲过的内容。从头读是一条完整的主线；也可以挑一章单独读，正文里提到其它章的地方都有链接。</p>
 <ol>
-  <li><b>模型本身</b>（第 1–4 章）：文字怎么变成向量，注意力在做什么，一个 Transformer 由什么组成，它怎么一个字一个字地生成。</li>
-  <li><b>训练与能力</b>（第 5–7 章）：为什么越大越强（规模定律），怎么从“会续写”变成“会对话、会推理”（SFT、RLHF、RLVR），以及怎么用 MoE 低成本地做大。</li>
-  <li><b>效率</b>（第 8–10 章）：长上下文、量化（INT8 → FP4 → 三值 / 1-bit）、推理和训练系统。这一部分决定模型能不能跑在你的显卡上、API 卖多少钱。</li>
-  <li><b>生成图像和视频</b>（第 11–13 章）：扩散 / 流匹配的数学，文生图与图生图，视频生成与可交互的世界模型。</li>
-  <li><b>智能体与多模态理解</b>（第 15–16 章）：工具调用、MCP、上下文工程、检索和 harness；视觉编码器、CLIP、图像与视频的 token 账、语音和全模态模型。</li>
+  <li><b>Transformer 怎么工作</b>：文字怎么变成向量，注意力在做什么，一个块由什么组成，模型怎么一个 token 一个 token 地生成。</li>
+  <li><b>预训练</b>：数据从哪来、怎么洗；为什么越大越强，模型和数据该按什么比例增长。</li>
+  <li><b>后训练</b>：从“会续写”到“会对话、会推理、会干活”：SFT、偏好优化、强化学习、蒸馏、智能体和 AI 编程。</li>
+  <li><b>架构演进</b>：怎么低成本地做大（MoE），怎么看得更长（长上下文）。</li>
+  <li><b>硬件与部署</b>：芯片和编译器，量化，推理和训练系统，以及怎么在你自己的设备上跑起来。</li>
+  <li><b>多模态</b>：先看懂（视觉、视频、语音），再生成（扩散、图像、视频、声音、3D），最后走向世界模型和机器人。</li>
+  <li><b>理解与评判</b>：模型内部是什么样，分数可不可信，怎么让它按我们的意图行事，以及安全对齐为什么会被绕过。</li>
+  <li><b>应用与社会</b>：科学与数学，产业、算力和监管。最后用一张前沿地图收尾。</li>
 </ol>
-<p>每一章都可以单独读。遇到不熟的概念，正文里会写明它在哪一章。</p>
+<p class="small muted">章节旁的“旧版”表示还是改版前的文字（演示可用），“待写”表示只有计划内容。序章和附录（神经网络速成）可以按需阅读。</p>
 
 <h2 id="chapters">章节</h2>
 <div id="cards"></div>
 
 <h2 id="timeline">大事年表</h2>
-<p>点击标签筛选不同的线。每一条都链接到讲它的那一章。</p>
-<div id="demo-tl"></div>
+<p>按领域筛选，点标题跳到讲它的那一章。</p>
+<div data-demo="timeline"></div>
 
 <footer id="pager"></footer>
 </div></main>
-
-<script src="assets/common.js"></script>
-<script>
-(function () {
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+<script defer>
+document.addEventListener('DOMContentLoaded', () => {
   const INFO = {
-    'ch01-tokens.html': ['BPE 如何把文字切成 token；嵌入向量与“向量算术”', 'BPE 分词器 · 词向量算术'],
-    'ch02-attention.html': ['Q/K/V 软查询、多头、因果掩码、归纳头与注意力汇聚', '拖动的注意力 · √d 缩放 · 注意力头浏览器'],
-    'ch03-transformer.html': ['残差流、RMSNorm、SwiGLU、RoPE；从 2017 到 2026 改了什么', '块结构图 · 参数计算器 · RoPE 旋转'],
-    'ch04-generation.html': ['自回归、交叉熵、温度 / top-k / top-p / min-p；为什么需要神经网络', '采样实验室 · n-gram 写唐诗'],
-    'ch05-training.html': ['Kaplan 与 Chinchilla 规模定律；预训练 → SFT → RL → 蒸馏；LoRA', 'Chinchilla 计算器 · 训练流水线 · LoRA'],
-    'ch06-reasoning.html': ['思维链、推理时算力、RLHF → RLVR、GRPO、智能体 RL', '多数投票 vs 验证器 · GRPO 玩具'],
-    'ch07-moe.html': ['路由、负载均衡、共享专家；总参数 vs 激活参数', '路由模拟器 · 主流 MoE 对比'],
-    'ch08-long-context.html': ['KV cache、GQA / MLA、FlashAttention、线性注意力、DSA / CSA', 'KV 计算器 · 在线 softmax · Delta rule 记忆'],
-    'ch09-quantization.html': ['数字格式、K-quants、MXFP4 / NVFP4、离群值、Hadamard 旋转、三值 / 1-bit、QAT', '格式浏览器 · 12 种方法量化实验室 · PTQ vs QAT · 设备容量表'],
-    'ch10-infra.html': ['Roofline、连续批处理、PagedAttention、投机解码、并行训练、P/D 分离', '速度估算器 · 批处理模拟 · 投机解码 · 训练显存'],
-    'ch11-diffusion.html': ['前向加噪、最优去噪器、DDPM / DDIM / 流匹配、CFG、少步蒸馏', '2D 扩散实验室 · 噪声调度'],
-    'ch12-image.html': ['潜空间扩散、DiT / MMDiT、编辑与控制、原生多模态自回归', 'token 计算器 · 玩具文生图 + 图生图'],
-    'ch13-video.html': ['3D VAE、时空 patch、时空联合去噪、音视频联合、世界模型', '视频 token 账 · 三种生成方式 · 玩具世界模型'],
-    'ch14-frontier.html': ['2026 年各方向在解决什么问题；开源格局；开放问题', '规模散点图 · 前沿方向地图'],
-    'ch15-agents.html': ['ReAct 循环、工具调用、MCP、上下文工程、RAG 与智能体搜索、harness、子智能体；Kimi K3 / DeepSeek V4 的智能体成绩', '智能体循环模拟器 · RAG 玩具 · 长任务可靠性'],
-    'ch16-vlm.html': ['ViT、CLIP / SigLIP、LLaVA 式编码器 + 投影、动态分辨率、视频理解、语音与全模态', '迷你 CLIP · 图像 token 计算器 · 视频 token 预算'],
+    prologue: '把各章的主干连成一条故事线：每个时代卡在哪个瓶颈，又怎么突破',
+    tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
+    attention: 'Q/K/V 软查询、多头、因果掩码、归纳头与注意力汇聚',
+    transformer: '残差流、RMSNorm、SwiGLU、RoPE；从 2017 到 2026 改了什么',
+    generation: '自回归、交叉熵、温度 / top-p / min-p；为什么需要神经网络',
+    data: '去重、质量过滤、改写与合成、配比；合成数据的陷阱与模型崩溃',
+    scaling: 'Kaplan 与 Chinchilla 规模定律、过训练、Muon 等优化器',
+    sft: 'SFT 与浅层对齐假说、DPO 推导与家族、LoRA、模型合并',
+    rl: '策略梯度推导、PPO → GRPO → DAPO / GSPO / CISPO、奖励与环境、训练-推理不一致、“发现还是挑选”之争',
+    distillation: '在线策略蒸馏、强到弱蒸馏、MOPD 多教师、自蒸馏与持续学习',
+    reasoning: '思维链、推理时算力、并行与串行思考',
+    agents: '智能体循环、工具调用、MCP、上下文工程、RAG、harness',
+    coding: '代码模型训练、SWE-bench 演进、编程智能体与沙盒 RL',
+    moe: '路由、负载均衡、共享专家；专家到底在分工什么',
+    'long-context': 'KV cache、GQA / MLA、FlashAttention、线性与稀疏注意力',
+    hardware: 'GPU / TPU / LPU 的设计取舍；CUDA、Triton、TVM、MLIR',
+    quantization: '数字格式、K-quants、MXFP4 / NVFP4、Hadamard 旋转、三值 / 1-bit、QAT',
+    serving: 'Roofline、连续批处理、PagedAttention、投机解码、P/D 分离',
+    'training-systems': 'ZeRO / FSDP、张量 / 流水线 / 专家 / 上下文并行、低精度训练',
+    'on-device': 'Mac、显卡、手机 NPU 与嵌入式芯片上能跑什么、跑多快',
+    vlm: 'ViT、CLIP、编码器 + 投影 + LLM、动态分辨率、视频理解、全模态',
+    diffusion: '前向加噪、最优去噪器、DDPM / DDIM / 流匹配、CFG、少步蒸馏',
+    image: '潜空间扩散、DiT / MMDiT、编辑与控制、原生多模态生成',
+    video: '3D VAE、时空 patch、时空联合去噪、音视频联合生成',
+    audio: '语音识别、编解码器语言模型、全双工语音、音乐生成',
+    spatial: 'NeRF、SDS、3D 高斯泼溅、前馈重建、3D 资产与世界生成',
+    'world-models': '动作条件的实时视频生成、长时记忆、路线之争',
+    embodied: 'RT-2、π0 系列、双系统 VLA、世界动作模型',
+    interpretability: '残差流与电路、叠加与稀疏自编码器、人设向量与助手轴',
+    evaluation: '污染与饱和、榜单幻觉、新一代评测、METR 时间跨度',
+    alignment: '规范文档、谄媚、钻奖励空子与涌现不对齐、思维链可监控性',
+    jailbreak: '浅层对齐与拒绝方向、攻击分类、防御层次（只讲机制）',
+    science: 'AlphaFold、AlphaProof、IMO 金牌、AI 科研助手',
+    industry: '成本曲线、芯片、版权诉讼、欧盟 AI 法案',
+    frontier: '开源格局、各方向在解决什么问题、开放问题',
+    'nn-basics': '梯度下降、反向传播、优化器、归一化（可选）',
   };
   const box = document.getElementById('cards');
   let grid = null;
-  A.CHAPTERS.slice(1).forEach((c) => {
+  const cnt = { new: 0, old: 0, todo: 0 };
+  A.CHAPTERS.forEach((c) => {
+    if (c.home) return;
     if (c.part) { box.append(A.el('div', { class: 'partname' }, c.part)); grid = A.el('div', { class: 'grid-cards', style: { marginTop: '8px' } }); box.append(grid); return; }
-    const [d, demos] = INFO[c.f];
-    grid.append(A.el('a', { class: 'card', href: c.f }, A.el('div', { class: 'n' }, '第 ' + c.n + ' 章'), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, d), A.el('div', { class: 'demos' }, '▸ ' + demos)));
+    if (!grid) { grid = A.el('div', { class: 'grid-cards' }); box.append(grid); }
+    cnt[c.st]++;
+    grid.append(A.el('a', { class: 'card' + (c.st === 'todo' ? ' todo' : ''), href: c.f },
+      A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]),
+      A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
-})();
-
-(function () {
-  const { bd } = A.demo('demo-tl', '2017 → 2026 的关键节点', '');
-  const TR = { lm: ['语言模型与架构', 1], train: ['训练与对齐', 2], eff: ['效率：量化与 Infra', 3], img: ['图像生成', 4], vid: ['视频与世界模型', 5], agent: ['智能体', 6], mm: ['多模态理解', 7] };
-  const E = [
-    ['2017-06', 'lm', 'Transformer', '《Attention Is All You Need》：去掉循环，只用注意力', 2],
-    ['2018-06', 'lm', 'GPT-1', 'Transformer 解码器 + 无监督预训练 + 微调', 4],
-    ['2018-10', 'lm', 'BERT', '双向编码器，NLP 全面进入预训练时代', 2],
-    ['2018-11', 'eff', 'GPipe', '流水线并行', 10],
-    ['2019-02', 'lm', 'GPT-2', '1.5B 参数；字节级 BPE；零样本能力初现', 1],
-    ['2019-10', 'eff', 'ZeRO / Megatron-LM', '大模型训练的并行基础设施', 10],
-    ['2020-01', 'train', '规模定律', 'Kaplan 等：损失随参数、数据、算力按幂律下降', 5],
-    ['2020-05', 'lm', 'GPT-3', '175B；in-context learning', 5],
-    ['2020-06', 'img', 'DDPM', '扩散模型第一次在图像质量上和 GAN 相当', 11],
-    ['2020-05', 'agent', 'RAG', '先检索、再生成：给模型接上外部资料', 15],
-    ['2020-10', 'mm', 'ViT', '图像切成 patch 也能用 Transformer', 16],
-    ['2020-10', 'img', 'DDIM', '确定性采样，步数从 1000 降到几十', 11],
-    ['2021-01', 'img', 'DALL·E', '文生图起步', 12],
-    ['2021-01', 'mm', 'CLIP', '4 亿图文对的对比学习，图和文落进同一个向量空间', 16],
-    ['2021-01', 'lm', 'Switch Transformer', '1.6T 参数的稀疏 MoE', 7],
-    ['2021-04', 'lm', 'RoPE', '旋转位置编码，后来成为标配', 3],
-    ['2021-06', 'train', 'LoRA', '低秩微调，平民化定制模型', 5],
-    ['2021-12', 'img', '潜空间扩散 LDM', '先压缩再扩散，Stable Diffusion 的基础', 12],
-    ['2022-01', 'train', '思维链 CoT', '“让我们一步步思考”', 6],
-    ['2022-04', 'mm', 'Flamingo', '冻结的语言模型 + 交叉注意力看图，图文交错的少样本学习', 16],
-    ['2022-03', 'train', 'Chinchilla', '计算最优：每参数约 20 token', 5],
-    ['2022-03', 'train', 'InstructGPT', 'SFT + RLHF 的完整流程', 6],
-    ['2022-05', 'eff', 'FlashAttention', 'IO 感知的精确注意力，显存 O(n²) → O(n)', 8],
-    ['2022-07', 'img', '无分类器引导 CFG', '文生图“听话”的关键', 11],
-    ['2022-08', 'img', 'Stable Diffusion 开源', '文生图走进个人电脑', 12],
-    ['2022-08', 'eff', 'LLM.int8()', '发现大模型的激活离群特征', 9],
-    ['2022-09', 'img', 'Rectified Flow / Flow Matching', '直线路径的生成模型', 11],
-    ['2022-10', 'agent', 'ReAct', '思考与行动交替：智能体循环的原型', 15],
-    ['2022-10', 'eff', 'GPTQ', '二阶误差补偿的 4-bit 量化', 9],
-    ['2022-11', 'lm', 'ChatGPT', '对话产品引爆大模型', 5],
-    ['2022-11', 'eff', '投机解码', '小模型猜、大模型验证，输出分布不变', 10],
-    ['2022-12', 'img', 'DiT', '用 Transformer 做去噪网络', 12],
-    ['2023-02', 'lm', 'LLaMA', '开源基座模型爆发', 5],
-    ['2023-02', 'img', 'ControlNet', '用边缘、姿态、深度控制生成', 12],
-    ['2023-02', 'agent', 'Toolformer', '模型自己学会插入 API 调用', 15],
-    ['2023-03', 'lm', 'GPT-4', '多模态输入、能力大幅跃升', 5],
-    ['2023-04', 'mm', 'LLaVA', 'CLIP 编码器 + 投影层 + 语言模型，视觉指令微调', 16],
-    ['2023-05', 'train', 'DPO', '不需要奖励模型的偏好优化', 6],
-    ['2023-05', 'eff', 'QLoRA / NF4', '4-bit 冻结权重上微调', 9],
-    ['2023-06', 'eff', 'vLLM / PagedAttention', 'KV cache 分页管理', 10],
-    ['2023-06', 'eff', 'llama.cpp K-quants', '超块两级缩放；8 月推出 GGUF 格式', 9],
-    ['2023-06', 'eff', 'AWQ', '按激活保护重要权重', 9],
-    ['2023-06', 'agent', 'Function calling', 'API 原生支持结构化工具调用', 15],
-    ['2023-10', 'agent', 'SWE-bench', '用真实 GitHub issue 评测编码智能体', 15],
-    ['2023-12', 'lm', 'Mamba', '选择性状态空间模型', 8],
-    ['2023-12', 'lm', 'Mixtral 8×7B', '开源 MoE 进入主流', 7],
-    ['2024-02', 'vid', 'Sora', '时空 patch + DiT，“视频模型作为世界模拟器”', 13],
-    ['2024-02', 'eff', 'BitNet b1.58', '三值权重从头训练', 9],
-    ['2024-02', 'vid', 'Genie', '从无标注视频学可控环境', 13],
-    ['2024-03', 'img', 'Stable Diffusion 3', 'MMDiT + Rectified Flow 成为新标准', 12],
-    ['2024-05', 'lm', 'DeepSeek-V2 / MLA', '多头潜注意力，KV cache 大幅压缩', 8],
-    ['2024-01', 'mm', 'LLaVA-NeXT AnyRes', '按宽高比切片，高分辨率看图', 16],
-    ['2024-05', 'mm', 'GPT-4o', '文本、图像、音频端到端，语音回应约 320 毫秒', 16],
-    ['2024-08', 'img', 'FLUX.1', '开源图像生成新标杆', 12],
-    ['2024-09', 'mm', 'Qwen2-VL', '原生动态分辨率 + M-RoPE', 16],
-    ['2024-09', 'train', 'OpenAI o1', '推理时算力成为新的规模化维度', 6],
-    ['2024-10', 'agent', 'Computer Use', '模型看屏幕截图操作电脑', 15],
-    ['2024-11', 'agent', 'MCP', '连接模型与工具的开放协议', 15],
-    ['2024-12', 'lm', 'DeepSeek-V3', '671B MoE、FP8 训练、MTP、无辅助损失均衡', 7],
-    ['2024-12', 'vid', 'HunyuanVideo / Veo 2 / Genie 2', '开源 13B 视频模型；3D 世界生成', 13],
-    ['2025-01', 'train', 'DeepSeek-R1', 'GRPO + 可验证奖励，长思维链自发涌现', 6],
-    ['2025-02', 'vid', 'Wan 2.1 开源', '14B 开源视频模型', 13],
-    ['2025-02', 'agent', 'Deep Research / Claude Code', '深度研究智能体与终端编码智能体', 15],
-    ['2025-02', 'mm', 'SigLIP 2 / Qwen2.5-VL', '开源多模态的主力视觉编码器与模型', 16],
-    ['2025-03', 'mm', 'Qwen2.5-Omni', 'Thinker–Talker：边想边说的全模态模型', 16],
-    ['2025-03', 'img', 'GPT-4o 原生图像生成', '自回归 / 统一模型路线回归', 12],
-    ['2025-04', 'eff', 'Gemma 3 QAT', '官方量化感知训练的 int4 模型', 9],
-    ['2025-04', 'agent', 'BrowseComp / A2A', '网页检索智能体评测；智能体间通信协议', 15],
-    ['2025-06', 'agent', '上下文工程', '从“写提示”到“管理每一步的上下文”', 15],
-    ['2025-05', 'vid', 'Veo 3', '原生音频：对白、音效与画面同步生成', 13],
-    ['2025-07', 'lm', 'Kimi K2', '1T 参数 MoE，MuonClip 优化器', 7],
-    ['2025-07', 'vid', 'Wan 2.2', '按噪声水平分工的 MoE 视频模型', 13],
-    ['2025-08', 'eff', 'gpt-oss', '以 MXFP4 发布，120B 可放进单张 80GB 卡', 9],
-    ['2025-08', 'vid', 'Genie 3', '720p / 24fps 实时可交互世界', 13],
-    ['2025-08', 'img', 'Nano Banana', '对话式图像编辑', 12],
-    ['2025-09', 'lm', 'Qwen3-Next', 'Gated DeltaNet 混合注意力 + 超稀疏 MoE', 8],
-    ['2025-09', 'lm', 'DeepSeek V3.2 DSA', '稀疏注意力', 8],
-    ['2025-09', 'vid', 'Sora 2', '带音频的视频生成应用', 13],
-    ['2025-09', 'mm', 'Qwen3-VL / Qwen3-Omni', 'DeepStack、交错 M-RoPE；全模态开源', 16],
-    ['2025-10', 'agent', 'Agent Skills', '按需加载的技能包，12 月成为开放标准', 15],
-    ['2025-10', 'mm', 'DeepSeek-OCR', '光学压缩：一页文档 256 个视觉 token', 16],
-    ['2025-10', 'lm', 'Kimi Linear / KDA', '逐通道门控的 Delta 线性注意力', 8],
-    ['2025-11', 'eff', 'Kimi K2 Thinking', 'INT4 量化感知训练', 9],
-    ['2025-11', 'img', 'FLUX.2 / Nano Banana Pro', '开源与闭源图像模型新一代', 12],
-    ['2025-11', 'agent', 'Terminal-Bench 2.0', '89 个 Docker 终端任务', 15],
-    ['2025-12', 'agent', 'MCP 捐给 AAIF', 'Linux 基金会下的 Agentic AI Foundation', 15],
-    ['2026-01', 'vid', 'Project Genie', 'Genie 3 向付费用户开放', 13],
-    ['2026-01', 'agent', 'Kimi K2.5 Agent Swarm', 'RL 学会调度最多 100 个并行子智能体；原生视觉', 15],
-    ['2026-02', 'vid', 'Seedance 2.0', '统一的音视频联合生成', 13],
-    ['2026-03', 'eff', '1-bit Bonsai', 'PrismML：8B 模型只占 1.15 GB', 9],
-    ['2026-03', 'mm', 'Qwen3.5-Omni', '256K 上下文，约 10 小时音频输入，实时语音交互', 16],
-    ['2026-05', 'agent', 'Terminal-Bench 2.1', '修正 2.0 中 28 道题', 15],
-    ['2026-05', 'lm', 'DeepSeek V4', '1.6T MoE、CSA/HCA 注意力、mHC、Muon、FP4 QAT、1M 上下文（2026 上半年）', 8],
-    ['2026-06', 'img', 'Seedream 5.0', '字节图像旗舰', 12],
-    ['2026-07', 'lm', 'Kimi K3', '2.8T / 104B，最大开源权重模型；MXFP4 QAT', 7],
-    ['2026-07', 'eff', 'Ternary Bonsai 27B → Bonsai 2', '三值 + Hadamard 旋转，27B 约 6 GB', 9],
-    ['2026-07', 'agent', 'MCP 2026-07-28 规范', '无状态协议，异步任务成为正式扩展', 15],
-    ['2026-08', 'vid', 'Wan 3.0', '多个视频排行榜第一', 13],
-    ['2026-08', 'vid', 'Matrix-Game 3.5', '开源实时世界模型 + Patch Memory', 13],
-    ['2026-09', 'vid', 'Sora 关停', 'OpenAI 关闭 Sora 应用与 API', 13],
-    ['2026-10', 'lm', 'Muse Spark Open / V4.1-Flash-1017 / Beam', 'Meta 816B 全模态开源；开源模型密集发布', 14],
-  ].sort((a, b) => a[0].localeCompare(b[0]));
-  let on = new Set(Object.keys(TR));
-  const chips = A.el('div', { class: 'chips' }); bd.append(chips);
-  const chipEls = Object.entries(TR).map(([k, [n, c]]) => { const b = A.el('button', { class: 'chip on', onclick: () => { on.has(k) ? on.delete(k) : on.add(k); if (!on.size) on = new Set(Object.keys(TR)); render(); } }, A.el('span', { class: 'dot', style: { background: `var(--s${c})` } }), n); chips.append(b); return [k, b]; });
-  chips.append(A.el('button', { class: 'chip', onclick: () => { on = new Set(Object.keys(TR)); render(); } }, '全部'));
-  const list = A.el('div'); bd.append(list);
-  const count = A.el('p', { class: 'hint' }); bd.append(count);
-  function render() {
-    chipEls.forEach(([k, b]) => b.classList.toggle('on', on.has(k)));
-    list.innerHTML = '';
-    let year = null, ul = null, n = 0;
-    E.filter((e) => on.has(e[1])).forEach(([d, tr, t, ds, ch]) => {
-      const y = d.slice(0, 4);
-      if (y !== year) { year = y; list.append(A.el('div', { class: 'tl-year' }, y)); ul = A.el('ul', { class: 'tl' }); list.append(ul); }
-      const c = A.CHAPTERS.find((x) => x.n === String(ch));
-      if (!c) return;
-      ul.append(A.el('li', null, A.el('span', { class: 'm' }, d.slice(5) + ' 月'), A.el('span', { class: 'trk' }, A.el('i', { style: { background: `var(--s${TR[tr][1]})` } }), TR[tr][0]),
-        A.el('span', null, A.el('a', { class: 'ti', href: c.f }, t), ' ', A.el('span', { class: 'ds' }, '— ' + ds))));
-      n++;
-    });
-    count.textContent = `显示 ${n} / ${E.length} 条。月份为首次公开（论文或发布）的大致时间。`;
-  }
-  render();
-})();
+  const pg = document.getElementById('progress');
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 47]].forEach(([k, v]) =>
+    pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
+});
 </script>
 </body>
 </html>

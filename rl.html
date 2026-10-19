@@ -1,0 +1,334 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>强化学习 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="rl">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>强化学习：让模型从自己的尝试里学</h1>
+  <p class="lede">监督学习只能教模型模仿示范。强化学习换了一种教法：让模型自己生成回答，按结果打分，把好的回答变得更可能。2025 年以后，它从“对齐时的最后一步”变成了后训练的主力：o1、R1 的长思维链，智能体在终端和浏览器里干活的能力，都主要来自 RL。这一章从策略梯度的推导讲起，沿着 PPO → GRPO → DAPO / GSPO / CISPO 讲清每一代在修什么，再讲奖励、环境、训练与推理不一致这些规模化以后才暴露的问题，最后讲一个还在争论的问题：RL 到底教会了模型新东西，还是只是把它本来会的挑了出来。</p>
+</header>
+
+<div class="bridge">SFT 和偏好优化（第 <a class="xref" data-ref="sft"></a> 章）都在模仿：模仿示范答案，或者模仿“更好的那个”回答。模仿有天花板：示范里没有的解法学不到，模型自己犯的错也没人纠正。这一章换一个思路：不给答案，只给对错。</div>
+
+<h2 id="why">为什么需要强化学习</h2>
+<p>把一道数学题交给模型。监督学习的做法是准备一份标准解答，让模型逐 token 地模仿它。这有三个问题：</p>
+<ul>
+  <li><b>示范决定上限。</b>模型最多学到示范的水平。题目越难，越难写出足够多、足够好的示范。</li>
+  <li><b>正确的解法不止一种。</b>示范只给了其中一条路。模型自己想出另一条同样正确的路，在交叉熵损失看来反而是“错”的。</li>
+  <li><b>暴露偏差（exposure bias）。</b>训练时模型永远看到的是正确的前文，推理时却要接着自己写的、可能已经出错的前文往下写。它从没练过“写错之后怎么办”。</li>
+</ul>
+<p>强化学习把训练数据换成模型自己的输出：对同一道题采样几个回答，检查哪个答对了，提高答对回答的概率，降低答错回答的概率。模型学的是自己会走到的状态，示范也不再是上限。AlphaGo 靠自我对弈超过人类棋手，用的就是这个逻辑。</p>
+<p>放到语言模型上，强化学习的各个概念是这样对应的：</p>
+<div class="tablewrap"><table>
+  <tr><th>RL 概念</th><th>在语言模型里</th></tr>
+  <tr><td>策略 \(\pi_\theta\)</td><td>语言模型本身：给定前文，输出下一个 token 的分布</td></tr>
+  <tr><td>状态 \(s_t\)</td><td>题目 \(q\) 加上已经生成的前缀 \(y_{&lt;t}\)</td></tr>
+  <tr><td>动作 \(a_t\)</td><td>下一个 token \(y_t\)，动作空间就是整个词表（十几万个）</td></tr>
+  <tr><td>一局（episode）</td><td>生成一条完整的回答 \(y\)；智能体任务里是一整段“思考—调用工具—看结果”的轨迹</td></tr>
+  <tr><td>奖励 \(R\)</td><td>通常只在最后给一次：答案对不对、测试过没过、任务完成没有。中间的 token 没有奖励（稀疏奖励）</td></tr>
+</table></div>
+
+<h2 id="pg">策略梯度：一个公式说清“试错”</h2>
+<p>目标是让回答的期望奖励最大：</p>
+\[ J(\theta) = \mathbb{E}_{q\sim\mathcal D,\; y\sim\pi_\theta(\cdot\mid q)}\big[\,R(q, y)\,\big] \]
+<p>难点在于 \(y\) 是从模型里<b>采样</b>出来的，采样这一步不可导，没法直接对 \(R\) 反向传播。<b>对数导数技巧</b>（log-derivative trick）绕开了这一点，得到策略梯度：</p>
+\[ \nabla_\theta J = \mathbb{E}\Big[\,\big(R(q,y) - b(q)\big)\sum_{t} \nabla_\theta \log \pi_\theta(y_t\mid q, y_{&lt;t})\Big] \]
+<span class="eqnote">采样一条回答，把它每个 token 的对数概率往上推，推多少由“它比基线好多少”决定</span>
+<p>直觉很简单：奖励高于基线 \(b\) 的回答，整条回答里每个 token 的概率都被提高；低于基线的被压低。\(R - b\) 叫<b>优势</b>（advantage），记作 \(A\)。基线不改变梯度的期望，但能大幅降低方差：如果所有奖励都是正的又没有基线，每条回答都会被往上推，只是推的力度不同，信号被淹没在噪声里。</p>
+
+<details class="deep"><summary>策略梯度的完整推导</summary><div class="in">
+<p><b>第 1 步，对数导数技巧。</b>把期望写成求和（对所有可能的回答）：\(J = \sum_y \pi_\theta(y)\,R(y)\)。对 \(\theta\) 求导，奖励和 \(\theta\) 无关：</p>
+\[ \nabla_\theta J = \sum_y R(y)\,\nabla_\theta \pi_\theta(y) = \sum_y R(y)\,\pi_\theta(y)\,\nabla_\theta \log \pi_\theta(y) = \mathbb{E}_{y\sim\pi_\theta}\big[R(y)\,\nabla_\theta\log\pi_\theta(y)\big] \]
+<p>中间一步用了 \(\nabla \pi = \pi\,\nabla\log\pi\)。好处是结果又变回了“对 \(\pi_\theta\) 的期望”，可以用采样来估计：采几条回答，算 \(R\cdot\nabla\log\pi\) 的平均。</p>
+<p><b>第 2 步，拆成 token。</b>自回归模型的整条回答概率是逐 token 条件概率的乘积，取对数变成求和：\(\log\pi_\theta(y\mid q) = \sum_t \log\pi_\theta(y_t\mid q, y_{&lt;t})\)。所以“提高整条回答的概率”就是提高其中每个 token 的概率。这正是普通的语言模型训练代码可以直接复用的原因：RL 的损失就是“按优势加权的交叉熵”。</p>
+<p><b>第 3 步，基线不引入偏差。</b>减去任何只依赖题目 \(q\)、不依赖回答 \(y\) 的量 \(b(q)\)，期望不变：</p>
+\[ \mathbb{E}_{y\sim\pi_\theta}\big[b(q)\,\nabla_\theta\log\pi_\theta(y)\big] = b(q)\sum_y \nabla_\theta\pi_\theta(y) = b(q)\,\nabla_\theta \sum_y \pi_\theta(y) = b(q)\,\nabla_\theta 1 = 0 \]
+<p><b>第 4 步，为什么能降方差。</b>估计量是 \((R-b)\nabla\log\pi\)。\(b\) 取在 \(R\) 的均值附近时，\(R - b\) 有正有负、绝对值小，估计量的方差就小。最好的基线接近“这道题的平均得分”，这正是后面价值网络和 GRPO 各自想办法估计的东西。</p>
+<p><b>这个推导告诉我们：</b>RL 不需要奖励可导，只需要能对完整回答打一个分；每条回答提供的信息只有一个数（优势），这也是 RL 样本效率低、需要大量采样的根本原因（第 <a class="xref" data-ref="distillation"></a> 章会把它和蒸馏做对比）。</p>
+</div></details>
+
+<h2 id="ppo">PPO：重复利用样本，但每次别走太远</h2>
+<p>生成回答很贵。一个推理模型的回答动辄几千上万 token，采样往往要占 RL 总算力的一半左右。所以大家希望一批样本能用来更新好几步。问题是更新一步之后，模型已经不是采样时的那个模型 \(\pi_{\text{old}}\) 了，这批样本变成了“别人的数据”（off-policy）。修正办法是<b>重要性采样</b>：给每个 token 乘一个比率</p>
+\[ r_t(\theta) = \frac{\pi_\theta(y_t\mid q, y_{&lt;t})}{\pi_{\text{old}}(y_t\mid q, y_{&lt;t})} \]
+<p>比率偏离 1 越远，估计就越不可靠，一次大更新还可能把模型改坏。PPO（2017）的办法是把比率<b>裁剪</b>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
+\[ L^{\text{CLIP}}(\theta) = \mathbb{E}_t\Big[\min\big(r_t A_t,\; \operatorname{clip}(r_t, 1-\epsilon, 1+\epsilon)\,A_t\big)\Big] \]
+<p>效果是：一个 token 已经被往好的方向推得够多了（\(A&gt;0\) 且 \(r_t &gt; 1+\epsilon\)，或 \(A&lt;0\) 且 \(r_t &lt; 1-\epsilon\)），它的梯度就变成 0，不再继续推。这是一个“悲观”的目标：只信任离采样策略不远的那部分改进。</p>
+<p>用在语言模型上（RLHF，第 <a class="xref" data-ref="sft"></a> 章）还要再加两样东西：</p>
+<ul>
+  <li><b>KL 约束</b>：目标里减去 \(\beta\,D_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{ref}})\)，不让模型离初始模型 \(\pi_{\text{ref}}\) 太远，防止语言变得不通顺、防止它找到奖励的漏洞。</li>
+  <li><b>价值网络</b>（critic）：估计每个前缀“接下来平均能拿多少奖励”，用来算每个 token 的优势（GAE）。它通常和策略一样大。</li>
+</ul>
+<p>于是 PPO 版的 RLHF 要同时放 4 个大模型：策略、参考模型、奖励模型、价值网络。这是它昂贵、难调的主要原因。</p>
+
+<details class="deep"><summary>重要性采样与裁剪为什么成立</summary><div class="in">
+<p><b>重要性采样。</b>想要 \(\mathbb{E}_{y\sim\pi_\theta}[f(y)]\)，手里却只有从 \(\pi_{\text{old}}\) 采的样本。乘上概率比就能换分布：</p>
+\[ \mathbb{E}_{y\sim\pi_\theta}[f(y)] = \sum_y \pi_{\text{old}}(y)\,\frac{\pi_\theta(y)}{\pi_{\text{old}}(y)}\,f(y) = \mathbb{E}_{y\sim\pi_{\text{old}}}\Big[\frac{\pi_\theta(y)}{\pi_{\text{old}}(y)}\,f(y)\Big] \]
+<p>整条回答的比率是所有 token 比率的乘积 \(\prod_t r_t\)。几千个 token 相乘，哪怕每个只偏离 1%，乘积也会变得极大或极小，方差爆炸。PPO 的近似是<b>逐 token</b> 地用 \(r_t\)，不做整条相乘。这在两个策略很接近时误差不大，这也是为什么必须限制每步更新的幅度。后面的 GSPO 会在这一点上做文章。</p>
+<p><b>裁剪的四种情况。</b>令 \(\hat r = \operatorname{clip}(r_t, 1-\epsilon, 1+\epsilon)\)，看 \(\min(r_t A, \hat r A)\)：</p>
+<ul>
+  <li>\(A&gt;0\)，\(r_t \le 1+\epsilon\)：取 \(r_tA\)，正常往上推。</li>
+  <li>\(A&gt;0\)，\(r_t &gt; 1+\epsilon\)：取 \(\hat rA\)，它是常数，梯度为 0。已经推够了。</li>
+  <li>\(A&lt;0\)，\(r_t \ge 1-\epsilon\)：取 \(r_tA\)，正常往下压。</li>
+  <li>\(A&lt;0\)，\(r_t &lt; 1-\epsilon\)：取 \(\hat rA\)，梯度为 0。已经压够了。</li>
+</ul>
+<p>另外两种组合（\(A&gt;0\) 但 \(r_t&lt;1-\epsilon\)，\(A&lt;0\) 但 \(r_t&gt;1+\epsilon\)，也就是改反了）不裁剪，取 \(r_tA\) 继续纠正。所以 PPO 只拦“往对的方向走太远”，不拦“纠错”。</p>
+<p><b>这个推导告诉我们：</b>裁剪是对“逐 token 比率”这个近似的补丁。它丢掉的恰好是比率最大的那些 token 的梯度，下面会看到，这在推理模型上会出问题。</p>
+</div></details>
+
+<h2 id="grpo">GRPO：用同一道题的其它回答当基线</h2>
+<p>价值网络要解决的问题是“这道题的平均分是多少”。DeepSeek 在 DeepSeekMath（2024-02）里换了一个更直接的办法：<b>每道题采样一组 \(G\) 个回答，用组内平均奖励当基线</b>，再除以组内标准差做归一化：</p>
+\[ \hat A_i = \frac{R_i - \operatorname{mean}(R_1,\dots,R_G)}{\operatorname{std}(R_1,\dots,R_G)} \]
+<span class="eqnote">第 i 个回答的每个 token 都用这个优势；答得比同组平均好就加强，差就削弱</span>
+<p>这就是 <b>GRPO</b>（Group Relative Policy Optimization）。它非常适合语言模型：奖励本来就是给整条回答的，不需要逐 token 估价值；同一道题的几个回答天然可比；省掉了一个和策略一样大的价值网络。DeepSeek-R1（2025-01）用它在纯规则奖励（答案对不对、格式对不对）上训练，长思维链、自我检查、回头验证都从训练中自己长了出来。</p>
+<div data-demo="grpo-toy"></div>
+<p>演示里把难度拉到最大会看到 GRPO 最大的弱点：<b>一组回答全对或全错时，标准差为 0，优势全为 0，这道题提供不了任何梯度</b>。题目太简单或太难都是在浪费采样。这一点后面会反复出现：它决定了 RL 能从哪些题里学到东西。</p>
+
+<details class="deep"><summary>GRPO 的完整目标，以及它隐含的两个偏差</summary><div class="in">
+<p>GRPO 的目标（原论文形式）：</p>
+\[ J_{\text{GRPO}} = \mathbb{E}\Bigg[\frac1G\sum_{i=1}^{G}\frac{1}{|o_i|}\sum_{t=1}^{|o_i|}\Big(\min\big(r_{i,t}\hat A_i,\ \operatorname{clip}(r_{i,t},1-\epsilon,1+\epsilon)\hat A_i\big) - \beta\, D_{\text{KL}}\big[\pi_\theta\,\|\,\pi_{\text{ref}}\big]\Big)\Bigg] \]
+<p>其中 KL 用无偏、恒非负的估计 \(\frac{\pi_{\text{ref}}}{\pi_\theta} - \log\frac{\pi_{\text{ref}}}{\pi_\theta} - 1\)。注意两个归一化：</p>
+<p><b>按回答长度除以 \(|o_i|\)。</b>每个 token 分到的优势是 \(\hat A_i / |o_i|\)。对于答错的回答（\(\hat A&lt;0\)），写得越长，每个 token 受到的惩罚越小，于是模型有动机把<b>错误的回答写得越来越长</b>。对答对的回答则偏爱短的。Dr. GRPO（2025-03）指出了这一点，去掉了这个归一化。</p>
+<p><b>除以组内标准差。</b>一组里几乎全对或几乎全错时，标准差很小，优势被放大。结果是太简单和太难的题获得了过大的权重（难度偏差）。Dr. GRPO 也去掉了它。</p>
+<p><b>和 RLOO 的关系。</b>如果基线用“除自己以外其它 \(G-1\) 个回答的平均”（leave-one-out），基线就和自己无关，估计严格无偏。GRPO 的组均值包含自己，相当于把优势缩小了 \((G-1)/G\) 倍，\(G\) 不太小时影响不大。</p>
+<p><b>这个推导告诉我们：</b>看起来只是“归一化”的细节，会系统性地改变模型学到的行为（比如回答长度）。读 RL 论文时，要留意损失到底是按 token、按回答还是按整个批次平均的。</p>
+</div></details>
+
+<h2 id="variants">GRPO 之后：每一代在修什么</h2>
+<p>2025 年把 GRPO 用到更大的模型、更长的思维链上，暴露出一串问题。这一年出现的算法，几乎都是在修其中某一个：</p>
+<div class="tablewrap"><table>
+  <tr><th>方法</th><th>时间 / 来源</th><th>改了什么</th><th>修的问题</th></tr>
+  <tr><td>DAPO</td><td>2025-03，字节 Seed、清华</td><td>非对称裁剪（clip-higher，\(\epsilon_{\text{low}}=0.2,\ \epsilon_{\text{high}}=0.28\)）；动态采样（丢弃全对 / 全错的组）；按 token 平均；对超长回答逐步扣分；去掉 KL</td><td>熵塌缩、无效的组、长度偏差</td></tr>
+  <tr><td>Dr. GRPO</td><td>2025-03，Sea AI Lab</td><td>去掉按长度和按标准差的归一化</td><td>错误回答越写越长、难度偏差</td></tr>
+  <tr><td>CISPO</td><td>2025-06，MiniMax-M1</td><td>不再把被裁剪 token 的梯度清零，只截断重要性权重</td><td>关键的“反思 token”被裁掉、学不到</td></tr>
+  <tr><td>GSPO</td><td>2025-07，Qwen</td><td>比率和裁剪都改在整条回答上（按长度取几何平均）</td><td>逐 token 比率噪声大，MoE 尤其不稳定</td></tr>
+  <tr><td>DPPO</td><td>2026-02</td><td>重新设计信任域</td><td>CISPO 在 MoE 上可能突然崩溃</td></tr>
+</table></div>
+<p><b>熵塌缩与 clip-higher。</b>裁剪限制的是比率，所以一个 token 一步之内最多从概率 \(p\) 涨到约 \(p(1+\epsilon)\)。高概率 token 很容易涨满（0.9 → 1），低概率 token 几乎涨不动（0.01 → 0.012）。结果是模型越训越“确定”，输出的多样性（熵）迅速下降，探索停止。DAPO 把上界单独放大，给低概率 token 留出成长空间。</p>
+<p><b>反思 token。</b>MiniMax 在训练 M1 时发现，“等等”“不对”“再检查一下”这类 token 在旧策略里概率很低，一旦它们出现在答对的回答里，更新后比率很高，第一步就被 PPO 裁掉了。可它们正是长思维链里最有价值的部分。CISPO 让所有 token 都保留梯度，只把权重截断在 \(1+\epsilon_{\text{high}}\)。</p>
+<p><b>序列级比率。</b>Qwen 的看法是：奖励是给整条回答的，重要性采样的单位也应该是整条回答。GSPO 用 \(s_i = \big(\pi_\theta(o_i)/\pi_{\text{old}}(o_i)\big)^{1/|o_i|}\)，即逐 token 比率的几何平均，整条一起裁剪。在 MoE 上，更新前后路由可能选到不同专家，个别 token 的比率剧烈跳动；序列级比率把这些波动平均掉了，原本需要的“路由回放”也不再必要。</p>
+<div data-demo="rl-clip" class="bleed"></div>
+<p><b>还在变化的部分。</b>“去掉价值网络”并不是终点。组内比较在短任务里够用；智能体任务的轨迹有几十上百轮，只在最后给一个分数时，组内方差非常大。据报道，GLM-5.2 在长程智能体阶段改回了带价值网络的方法。</p>
+
+<details class="deep"><summary>CISPO 与 GSPO 的目标函数</summary><div class="in">
+<p><b>CISPO</b>（\(\operatorname{sg}\) 表示停止梯度）：</p>
+\[ J_{\text{CISPO}} = \mathbb{E}\Bigg[\frac{1}{\sum_i |o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\operatorname{sg}\big(\hat r_{i,t}\big)\,\hat A_i\,\log\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\Bigg],\qquad \hat r_{i,t} = \operatorname{clip}\big(r_{i,t},\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\big) \]
+<p>它回到了最原始的策略梯度形式 \(w\cdot A\cdot\nabla\log\pi\)，只是权重 \(w\) 被截断、不参与求导。所以每个 token 都有梯度，只是大比率的 token 权重有上限。</p>
+<p><b>GSPO</b>：</p>
+\[ J_{\text{GSPO}} = \mathbb{E}\Bigg[\frac1G\sum_{i=1}^{G}\min\big(s_i\hat A_i,\ \operatorname{clip}(s_i,1-\epsilon,1+\epsilon)\hat A_i\big)\Bigg],\qquad s_i = \exp\Big(\frac{1}{|o_i|}\sum_t \log r_{i,t}\Big) \]
+<p>求导得 \(\nabla s_i = s_i\cdot\frac{1}{|o_i|}\sum_t\nabla\log\pi_\theta(o_{i,t})\)：一条回答里所有 token 的权重相同。</p>
+<p><b>为什么取几何平均。</b>设每个 token 的对数比率独立、方差为 \(\sigma^2\)。整条回答的对数比率 \(\sum_t\log r_t\) 方差是 \(|o|\sigma^2\)，随长度线性增长；几何平均的对数是 \(\frac{1}{|o|}\sum_t \log r_t\)，方差是 \(\sigma^2/|o|\)，反而随长度缩小。所以序列级比率只有在按长度归一化之后才可用。下面“训练与推理不一致”的演示会直接看到这两条曲线。</p>
+</div></details>
+
+<aside class="dispute surprise">
+  <h4>秩为 1 的 LoRA 就够做 RL</h4>
+  <dl>
+    <dt>发现</dt><dd>Thinking Machines（2025-09）的实验：做强化学习时，秩为 1 的 LoRA 能达到全参数微调的效果；做 SFT 时则不行，batch 越大差距越大。</dd>
+    <dt>解释</dt><dd>上面推导里的结论：每条回答只提供一个优势值，约 O(1) 比特信息；一条几千 token 的 SFT 样本却提供 O(token 数) 比特。8B 模型上秩为 1 的 LoRA 也有约 300 万参数，足够装下 RL 给的全部信息。</dd>
+    <dt>意义</dt><dd>RL 改变的东西“很少”，这与后面“RL 只是挑选”的观点相互印证；也说明 RL 的瓶颈在信号密度，而不在模型容量。第 <a class="xref" data-ref="distillation"></a> 章的蒸馏正是从提高信号密度入手的。</dd>
+  </dl>
+</aside>
+
+<h2 id="reward">奖励：从对错到细则，再到组内评分</h2>
+<p>RL 学到什么，完全取决于奖励在奖励什么。奖励的来源大致有四类：</p>
+<ol>
+  <li><b>可验证奖励（RLVR）。</b>数学题比对最终答案，代码跑单元测试，智能体任务检查终态（文件改对没有、网页上找到答案没有）。规则写死，很难被钻空子，是推理能力提升的主力。代价是只覆盖有标准答案的领域。</li>
+  <li><b>奖励模型。</b>RLHF 里用人类偏好训练的模型打分（第 <a class="xref" data-ref="sft"></a> 章）。覆盖面广，但会被优化压力“攻破”：模型学会写出奖励模型喜欢、实际并不更好的回答（reward hacking），例如更长、更讨好（第 <a class="xref" data-ref="alignment"></a> 章）。</li>
+  <li><b>细则奖励（rubrics）。</b>把“好回答”拆成一条条可检查的标准，让 LLM 评审逐条打分。Rubrics as Rewards（ICLR 2026）在医疗问答上比整体打分提升 31%。Kimi K2 让模型自己当评审，按细则做成对比较，还专门加了“不要开头夸用户”“不要多余的辩解”这类约束来防钻空子。</li>
+  <li><b>组内评分。</b>两个解法都通过了测试，0/1 奖励分不出好坏。MiMo-V2.6（2026-09）把同一组的解法放在一起比较打分（Groupwise Agentic Grading），评分本身用掉了 RL 算力的 12.7%。奖励也开始被规模化。</li>
+</ol>
+<aside class="dispute">
+  <h4>过程奖励为什么没成为主流</h4>
+  <dl>
+    <dt>主张</dt><dd>只给最终答案打分太稀疏，应该给每一步推理打分（过程奖励模型 PRM）。OpenAI 的 “Let's Verify Step by Step”（2023）显示 PRM 挑答案比结果奖励模型更准。</dd>
+    <dt>反方</dt><dd>DeepSeek-R1 的报告专门列了“没成功的尝试”：推理“一步”很难定义，逐步标注很贵，而且在大规模 RL 里，PRM 本身会被钻空子，需要不断重训。同一份报告里，蒙特卡洛树搜索（MCTS）也没成功：token 级的搜索空间太大，价值模型很难训好。</dd>
+    <dt>现在怎么看</dt><dd>大规模 RL 的主流仍是结果奖励。逐 token 的密集信号转而通过蒸馏获得（老师的概率本身就是逐 token 的打分，第 <a class="xref" data-ref="distillation"></a> 章）；过程监督更多用在验证器和数据筛选上。</dd>
+  </dl>
+</aside>
+
+<h2 id="env">环境与系统：RL 也要规模化</h2>
+<p>推理模型的 RL 是“给题—采样—打分”。<b>智能体 RL</b> 的一局是多轮的：模型调用工具，环境返回结果，模型再决定下一步，最后检查任务是否完成。每条轨迹都需要一个独立的沙盒（终端、浏览器、代码仓库），环境本身成了最稀缺的资源：</p>
+<ul>
+  <li>Qwen3-Coder 用约 2 万个并行环境；MiniMax 的 Forge 有几十万个真实环境；Cursor 训练 Composer 需要几十万个并发沙盒；Kimi K3 支持百万 token 的智能体 RL，沙盒状态可以持久保存。</li>
+  <li>MiMo-V2.6 开源了 7000 多个 RL 环境（软件开发、漏洞复现、知识型任务、网页开发）。专门出售 RL 环境的公司也出现了。</li>
+  <li>研究上，环境可以自动合成：从上万个代码仓库生成几万个 Docker 环境（SWE-bench 上呈对数线性的规模效应），或让模型自己出题、自己解（Absolute Zero，用代码执行器验证）。</li>
+</ul>
+<p>系统层面，主流做法是<b>异步 RL</b>：推理集群持续生成轨迹，训练集群持续消费，两边不互相等待。代价是训练用的样本来自几步之前的模型，离策略程度变大，所以上面的重要性采样修正变得更加重要。MiMo-V2.6-Pro（1.02T 总参数、42B 激活）是一个有完整数字的例子：全异步 GRPO，每步 1568 道题 × 16 条采样；算力分配是采样 43.8%、训练 43.5%、评分 12.7%；一次 RL 约 260 万美元（Flash 版约 90 万美元）；DeepSWE 从 58.4 提到 72.6。</p>
+
+<h2 id="mismatch">训练与推理不一致</h2>
+<p>为了快，采样用推理引擎（vLLM、SGLang），算梯度用训练引擎（Megatron、FSDP）。同一组权重，两边算出来的概率并不相同：BF16 的舍入误差随着层数和 token 数逐步累积，两边的矩阵乘法内核累加顺序不同，MoE 的路由在两边可能选到不同的专家。重要性比率 \(r_t\) 的分母本来应该是“采样时的概率”，实际却用训练引擎重算的概率代替，比率就带上了一个系统误差。在长回答上，这个误差足以让训练悄悄崩掉。2025 年下半年起，这成了 RL 工程里最受关注的问题之一。</p>
+<div data-demo="rl-mismatch" class="bleed"></div>
+<p>目前的几类对策：</p>
+<ul>
+  <li><b>截断重要性采样（TIS）</b>：显式乘上 \(\pi_{\text{训练}}/\pi_{\text{推理}}\) 的修正权重，并截断在上限 \(C\)，用一点偏差换取方差可控。IcePop 等方法（GLM-5 采用）直接屏蔽偏差过大的 token。</li>
+  <li><b>R3 路由回放</b>（2025-10）：训练时复用推理时选中的专家。论文指出，MoE 的不一致主要来自路由器。</li>
+  <li><b>全程用 FP16</b>（2025-10）：FP16 的尾数比 BF16 多 3 位，舍入误差小约 8 倍，不一致大幅下降，代价是要处理更小的数值范围。</li>
+  <li><b>逐比特一致的内核</b>：让两个引擎算出完全相同的数，代价是性能。</li>
+</ul>
+<p>2026 年还出现了一个视角转换：真正被部署的是推理引擎里的那个策略，RL 应该直接优化它，而不是训练引擎里的近似（“The Mirage of Optimizing Training Policies”）。数值精度（第 <a class="xref" data-ref="quantization"></a> 章）、MoE 路由（第 <a class="xref" data-ref="moe"></a> 章）和推理系统（第 <a class="xref" data-ref="serving"></a> 章）在这个问题上汇到了一起。</p>
+
+<details class="deep"><summary>为什么误差会随长度放大，以及有效样本量</summary><div class="in">
+<p>设第 \(t\) 个 token 在两个引擎里的对数概率差为 \(\delta_t = \log\pi_{\text{训练}}(y_t) - \log\pi_{\text{推理}}(y_t)\)，近似独立、均值 0、方差 \(\sigma^2\)。BF16 的相对舍入单位是 \(2^{-8}\approx 0.004\)，经过几十层累积，\(\sigma\) 可以到百分之几的量级；FP16 是 \(2^{-11}\)，小 8 倍。</p>
+<p>整条回答的对数比率 \(\sum_{t=1}^{L}\delta_t\) 的标准差是 \(\sigma\sqrt L\)。\(\sigma = 0.03\)、\(L = 10000\) 时约为 3，比率在 \(e^{\pm3}\) 也就是 0.05 到 20 倍之间波动。</p>
+<p>衡量一批重要性权重 \(w_1,\dots,w_n\) 还有多少用的指标是有效样本量：</p>
+\[ \text{ESS} = \frac{\big(\sum_i w_i\big)^2}{\sum_i w_i^2} \]
+<p>权重都相等时 ESS = n；少数几个权重特别大时 ESS 接近 1，相当于整批数据只有一两条在起作用。演示里把长度拉长、精度换成 BF16，可以看到 ESS 迅速下降。</p>
+<p><b>这个推导告诉我们：</b>逐 token 比率（PPO / GRPO）对单个 token 的误差敏感，整条相乘的比率对长度敏感；GSPO 的几何平均和 TIS 的截断，分别从这两个方向控制方差。</p>
+</div></details>
+
+<h2 id="debate">争论：RL 是在发现新能力，还是只在挑选？</h2>
+<p>R1 之后，一个很自然的问题是：RL 训练出的长思维链，是模型学会了新的推理方法，还是基座本来就会，RL 只是让它更常这样做？衡量方式是 <b>pass@k</b>：对每道题采样 k 次，至少一次答对就算解出。pass@1 衡量“一次就做对”，k 很大时的 pass@k 衡量“模型的能力边界在哪里”。</p>
+<div data-demo="rl-passk"></div>
+<aside class="dispute">
+  <h4>RL 是锐化还是发现</h4>
+  <dl>
+    <dt>主张</dt><dd>Yue 等（2025-04）：RLVR 训练后 pass@1 上升，但 k 取到几百时，pass@k 不升反降，低于基座。他们的结论是 RL 只是把基座会的答案排到了前面，没有扩展能力边界。</dd>
+    <dt>反方</dt><dd>2026 年的几项研究：标准 RLVR 的大部分更新是在“过度训练”、只锐化；如果只在从没做对过的题上更新，pass@256 能超过基座，训练中也确实有一部分原本做不出的题变得能做。Ring-Zero（万亿参数）观察到 pass@1024 在训练早期上升、之后进入平台期，pass@1 则一直上升。按能力边界安排课程，pass@256 平均比基座高 9.8 个百分点。在预训练阶段就插入 RL，得到的是扩展而不是锐化。</dd>
+    <dt>原理</dt><dd>GRPO 只能强化采样到的正确轨迹。一道题如果 G 次采样全错，优势全为 0，永远学不到。所以标准 RLVR 天生偏向“已经偶尔会做”的题；同时策略变尖，稀有的正确路径被剪掉，大 k 的 pass@k 就下降了。</dd>
+    <dt>现在怎么看</dt><dd>两种效应同时存在：标准做法以锐化为主，早期和专门的探索能带来真正的扩展。pass@k 在大 k 下降不等于“没有学到新东西”。</dd>
+  </dl>
+</aside>
+
+<aside class="dispute">
+  <h4>随机奖励也能提升成绩：怎么读 RL 论文</h4>
+  <dl>
+    <dt>现象</dt><dd>Spurious Rewards（2025-06）：用随机奖励甚至错误奖励训练 Qwen2.5-Math-7B，MATH-500 也能提升约 20 个百分点；换成 Llama、OLMo 就不行。作者解释为 RL 激发了 Qwen 预训练里“用代码推理”的习惯。</dd>
+    <dt>反方</dt><dd>2025-07 的研究用 Qwen 发布之后才构造的随机算术题测试：只有正确奖励有效，随机奖励毫无作用，因此认为主要原因是数据污染：Qwen 见过这些测试题，RL 只是把记住的答案调了出来。2026 年的机制研究支持这一点（训练后从错变对的题，与原答案的文字重合度激增）。也有 ICLR 2026 的论文在 Llama 和 QwQ 上看到类似现象，认为不能只归因于污染。</dd>
+    <dt>启示</dt><dd>Qwen 是 RL 研究最常用的基座，很多结论只在 Qwen 上成立。读论文时看三件事：是否只用了一个模型家族；有没有随机奖励的对照；有没有用发布日期之后的、无污染的测试集。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">RL 让模型学会了新知识。</b>知识几乎都来自预训练。RL 主要改变的是“怎么用”：更常检查、更愿意多想、少犯格式错误。它能不能扩展推理边界还在争论（见上）。</li>
+  <li><b class="m">GRPO 不需要参考模型。</b>原始 GRPO 有 KL 约束，需要参考模型。DAPO 等后来的做法在可验证奖励下去掉了 KL，因为规则奖励不容易被钻空子；有学习型奖励时通常还会保留。</li>
+  <li><b class="m">奖励越细越好。</b>越细的奖励越容易被钻空子，过程奖励就是例子。规则化的结果奖励之所以成为主力，正因为它粗而硬。细则奖励要配专门的反钻空子约束。</li>
+  <li><b class="m">RL 只能用在数学和代码上。</b>细则奖励、生成式奖励模型、智能体环境把 RL 扩展到了写作、问答、软件工程。但可验证性仍然决定进展速度：越容易自动判对错的领域，进步越快。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">1992</div>
+    <h4>REINFORCE：不可导的奖励也能求梯度</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>随机策略的输出是采样得到的，奖励对参数不可导，没法用梯度下降优化。</dd>
+      <dt>怎么解决</dt><dd>Williams 提出对数导数技巧：梯度 = 奖励 × 对数概率的梯度，用采样估计；减去基线降低方差。</dd>
+      <dt>代价</dt><dd>方差极大，样本效率极低；每批样本只能用一次。</dd>
+      <dt>引出</dt><dd>怎样稳定地、重复地利用样本更新。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">另一条路</span>基于价值的方法：Q-learning、DQN</summary><div>先学“每个动作值多少”，再选最值钱的动作。DQN（2013–15）在 Atari 游戏上大获成功。但它要对每个动作估值，词表有十几万个动作、回答有几千步，在语言模型上很难用。语言模型的 RL 基本都走策略梯度这条路。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2015–2017</div>
+    <h4>TRPO → PPO：限制每一步走多远</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>步子一大，策略就可能突然变差，而且再也采不到好样本，训练崩溃。</dd>
+      <dt>怎么解决</dt><dd>TRPO（2015）用 KL 散度给每步更新划一个信任域；PPO（2017）把它简化成对重要性比率的裁剪，只要一阶梯度。</dd>
+      <dt>代价</dt><dd>需要价值网络估计优势；有一堆需要调的超参数。</dd>
+      <dt>引出</dt><dd>语言的“好坏”没有现成的奖励函数，奖励从哪来？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被淘汰</span>TRPO</summary><div>理论更严谨，但要用共轭梯度求解带约束的二阶问题，实现复杂、难以和大模型训练框架结合。PPO 用一个裁剪近似达到了相近的效果，很快取代了它。它留下的是“信任域”这个思想：2026 年的 DPPO 仍在重新设计信任域。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2017–2022</div>
+    <h4>RLHF：用人类偏好训练奖励模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>对话、摘要这类任务的质量没有程序能判断。</dd>
+      <dt>怎么解决</dt><dd>Christiano 等（2017）让人比较两段行为，训练奖励模型，再用 PPO 优化；OpenAI 先用在摘要上（2020），再到 InstructGPT（2022）和 ChatGPT。</dd>
+      <dt>代价</dt><dd>4 个大模型同时在显存里；人工标注昂贵；奖励模型会被钻空子，导致啰嗦、讨好。</dd>
+      <dt>引出</dt><dd>能不能找到更便宜、更难被钻空子的信号，并去掉价值网络？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">分支</span>DPO：干脆不做 RL</summary><div>DPO（2023）证明 KL 约束下的 RLHF 最优解可以写成闭式，于是直接在偏好对上做监督学习，不需要奖励模型和采样。它简单稳定，成为开源模型的标配，但离线数据的上限较低。见第 <a class="xref" data-ref="sft"></a> 章。</div></details>
+    <details class="hist-branch"><summary><span class="bt alive">分支</span>RLAIF 与 Constitutional AI</summary><div>用 AI 按成文原则给出的反馈替代部分人类反馈（2022-12）。这条线后来发展成各家的模型规范文档与性格训练，见第 <a class="xref" data-ref="alignment"></a> 章。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-02</div>
+    <h4>GRPO：组内平均当基线</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>价值网络和策略一样大；奖励只在回答末尾给出时，逐 token 估计价值本来就很难。</dd>
+      <dt>怎么解决</dt><dd>DeepSeekMath 对每道题采样一组回答，用组内平均奖励当基线，去掉价值网络。</dd>
+      <dt>代价</dt><dd>每道题要采 G 个回答；全对或全错的组没有梯度；归一化方式带来长度和难度偏差。</dd>
+      <dt>引出</dt><dd>只用规则奖励的大规模 RL，能不能教会模型推理？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">同类</span>RLOO、REINFORCE++</summary><div>同一时期的几种“无价值网络”方法：RLOO 用留一法的组内均值当基线（严格无偏），REINFORCE++ 用全局批次统计量。它们说明 GRPO 的核心是“用多次采样代替价值网络”，具体基线怎么取是次要的。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-09 → 2025-01</div>
+    <h4>o1 与 R1：规则奖励训练出长思维链</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>用人写或模型写的思维链做 SFT，推理能力受限于示范的质量。</dd>
+      <dt>怎么解决</dt><dd>OpenAI o1 展示了“想得越久越准”。DeepSeek-R1-Zero 从基座直接做 RL，只用答案和格式两种规则奖励，思维链长度随训练持续增长，出现了自我反思（论文里的 “aha moment”）。R1 和 Kimi k1.5 公开了做法。</dd>
+      <dt>代价</dt><dd>纯 RL 的输出可读性差、会中英混杂，需要少量冷启动数据；长思维链 RL 不稳定。</dd>
+      <dt>引出</dt><dd>在更大的模型、更长的回答上，GRPO 本身的缺陷开始暴露。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">没成功</span>过程奖励模型与蒙特卡洛树搜索</summary><div>R1 报告列出了两条没走通的路：过程奖励（推理的“一步”难定义、标注贵、会被钻空子）和 MCTS（token 级搜索空间太大，价值模型难训）。这两条路都曾被认为是复现 o1 的关键。它们的失败让“简单的结果奖励 + 大量采样”成了主流。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>DAPO、Dr. GRPO、CISPO、GSPO：修稳定性</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>熵塌缩、错误回答越写越长、反思 token 被裁掉、MoE 模型的比率剧烈波动。</dd>
+      <dt>怎么解决</dt><dd>非对称裁剪与动态采样（DAPO）、去掉有偏的归一化（Dr. GRPO）、保留所有 token 的梯度（CISPO）、序列级比率（GSPO）。</dd>
+      <dt>代价</dt><dd>旋钮越来越多；不少结论只在特定基座上成立。</dd>
+      <dt>引出</dt><dd>算法之外，系统和奖励成了新的瓶颈。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>随机奖励与 Qwen 的数据污染</summary><div>随机奖励也能提升 Qwen 的数学成绩，引出了“这到底是 RL 在起作用，还是在调出记住的答案”的争论。它让社区开始要求跨模型家族验证、加随机奖励对照、使用无污染测试集。详见上面的争议框。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025 下半年</div>
+    <h4>智能体 RL、环境规模化与训练-推理不一致</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>真实任务需要多轮工具调用；采样引擎和训练引擎的数值不一致让长回答的 RL 不可靠。</dd>
+      <dt>怎么解决</dt><dd>大规模沙盒环境和异步 RL 系统；TIS、R3 路由回放、FP16、逐比特一致的内核。</dd>
+      <dt>代价</dt><dd>基础设施极其复杂，环境的构建本身成了主要成本。</dd>
+      <dt>引出</dt><dd>RL 的算力开始接近预训练的量级，怎样花得更值？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>RL 成为主要算力开销，并与蒸馏融合</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>RL 的信号稀疏（每条回答约 1 比特），成本高；不同领域的 RL 互相干扰（数学变好、代码变差）。</dd>
+      <dt>怎么解决</dt><dd>奖励和环境规模化（MiMo-V2.6 的组内评分、开源 7000+ 环境，一次 RL 约 260 万美元）；先用 RL 训练各领域的专家，再用在线蒸馏把它们合成一个模型（MOPD，DeepSeek V4 也采用类似做法）。</dd>
+      <dt>代价</dt><dd>流程更长、更难复现；“发现还是挑选”仍无定论。</dd>
+      <dt>引出</dt><dd>怎样获得更密的信号：这就是下一章的蒸馏。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">分支</span>价值网络的回归</summary><div>据报道，GLM-5.2 在长程智能体阶段放弃了组内比较、改用带价值网络的方法：几十轮的轨迹只在最后给分时，组内方差太大。“去掉价值网络”是短任务上的最优解，不一定适用于长任务。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 为什么一组 G 个回答全对或全错时，GRPO 学不到东西？有什么补救办法？</summary><div class="ans">优势是 \(R_i\) 减去组均值。全对或全错时每个 \(R_i\) 都等于均值，优势全为 0，梯度为 0。补救：动态采样（DAPO 丢弃这类组，换新题补足批次）；按模型当前能力挑选难度适中的题（课程学习）；增大 G，让难题也有机会采到正确回答。</div></details>
+<details class="quiz"><summary>2. 某个 token 的 \(A&gt;0\)、\(r_t = 1.5\)。在 PPO（\(\epsilon=0.2\)）和 CISPO（\(\epsilon_{\text{high}}=0.28\)）下，它的梯度分别是多少？</summary><div class="ans">PPO：\(r_t &gt; 1+\epsilon = 1.2\) 且 \(A&gt;0\)，取裁剪项，梯度为 0。CISPO：权重为 \(\operatorname{sg}(\min(1.5, 1.28)) = 1.28\)，梯度是 \(1.28\cdot A\cdot\nabla\log\pi\)，仍然往上推，只是力度被限制。</div></details>
+<details class="quiz"><summary>3. 为什么 MoE 模型做 RL 特别容易不稳定？说出两种解决办法。</summary><div class="ans">路由是离散选择：更新前后，或者推理引擎与训练引擎之间，同一个 token 可能选到不同的专家，它的概率会跳变，逐 token 的重要性比率因此剧烈波动。解决办法：路由回放（训练时复用采样时的专家选择，如 R3）；改用序列级比率（GSPO，几何平均把单个 token 的跳变平均掉）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1707.06347">Proximal Policy Optimization Algorithms</a>（2017）<span class="why">裁剪目标的出处，篇幅很短，读懂它就读懂了后面所有变体的出发点。</span></li>
+  <li><a href="https://arxiv.org/abs/2402.03300">DeepSeekMath</a>（2024）<span class="why">GRPO 的原始定义，以及它和 PPO、DPO 的统一视角。</span></li>
+  <li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a>（2025）<span class="why">纯 RL 训练出长思维链的完整过程；“没成功的尝试”一节尤其值得读。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.14476">DAPO</a>（2025）<span class="why">把大规模长思维链 RL 的工程问题逐个列出并给出修法，实践价值最高。</span></li>
+  <li><a href="https://qwenlm.github.io/blog/gspo/">GSPO</a>（2025）与 <a href="https://arxiv.org/abs/2506.13585">MiniMax-M1</a>（CISPO，2025）<span class="why">两种思路对比：改比率的单位，还是改裁剪的方式。</span></li>
+  <li><a href="https://arxiv.org/abs/2504.13837">Limit of RLVR</a>（2025）与 <a href="https://arxiv.org/abs/2606.15455">过度训练视角</a>（2026）<span class="why">“锐化还是发现”之争的正反两方。</span></li>
+  <li><a href="https://arxiv.org/html/2610.11959v1">MiMo-V2.6 技术报告</a>（2026）<span class="why">少有的把 RL 的规模、成本、算力分配全部公开的报告。</span></li>
+</ol>
+
+<div class="nextq">RL 每条回答只换来一个数字，信号太稀疏；不同领域的 RL 还会互相干扰。能不能让一个更强的模型逐 token 地告诉学生“这里该怎么写”，同时保留 RL “在自己的采样上学习”的优点？这就是下一章（第 <a class="xref" data-ref="distillation"></a> 章）的在线策略蒸馏。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1502.05477">TRPO</a> · <a href="https://arxiv.org/abs/1706.03741">Christiano et al. 2017</a> · <a href="https://arxiv.org/abs/2009.01325">Learning to summarize from human feedback</a> · <a href="https://arxiv.org/abs/2203.02155">InstructGPT</a> · <a href="https://arxiv.org/abs/2305.20050">Let's Verify Step by Step</a> · <a href="https://arxiv.org/abs/2402.14740">RLOO</a> · <a href="https://arxiv.org/abs/2501.12599">Kimi k1.5</a> · <a href="https://arxiv.org/abs/2503.20783">Dr. GRPO</a> · <a href="https://huggingface.co/blog/NormalUhr/grpo-to-dapo-and-gspo">从 GRPO 到 DAPO 与 GSPO</a> · <a href="https://arxiv.org/abs/2602.04879">DPPO</a> · <a href="https://jxzhangjhu.github.io/blog/2026/how-frontier-labs-train-llms/">前沿实验室怎么训练（2026）</a> · <a href="https://arxiv.org/abs/2507.17746">Rubrics as Rewards</a> · <a href="https://arxiv.org/abs/2507.20534">Kimi K2</a> · <a href="https://jxzhangjhu.github.io/blog/2026/environment-scaling-for-agentic-rl/">智能体 RL 的环境扩展</a> · <a href="https://huggingface.co/blog/sergiopaniego/rl-environments-2026">One sandbox per rollout</a> · <a href="https://arxiv.org/abs/2505.03335">Absolute Zero</a> · <a href="https://arxiv.org/abs/2510.11370">R3 路由回放</a> · <a href="https://arxiv.org/abs/2601.18150">FP8-RL（对策汇总）</a> · <a href="https://arxiv.org/abs/2606.29526">The Mirage of Optimizing Training Policies</a> · <a href="https://arxiv.org/abs/2607.12395">Ring-Zero</a> · <a href="https://arxiv.org/abs/2606.22317">课程 RL</a> · <a href="https://arxiv.org/abs/2606.04272">RL Excursions during Pre-Training</a> · <a href="https://arxiv.org/abs/2506.10947">Spurious Rewards</a> · <a href="https://arxiv.org/abs/2507.10532">Reasoning or Memorization</a> · <a href="https://arxiv.org/abs/2601.11061">Spurious Rewards Paradox</a> · <a href="https://arxiv.org/abs/2512.16912">Exploration vs Exploitation（ICLR 2026）</a> · <a href="https://thinkingmachines.ai/blog/lora/">LoRA Without Regret</a>。训练-推理不一致的演示是示意模拟，误差量级按数值格式的舍入单位设定。</p>
+
+<footer id="pager"></footer>
+</div></main>
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

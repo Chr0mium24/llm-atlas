@@ -1,34 +1,75 @@
-/* LLM Atlas — shared helpers: nav, theme, canvas, controls, math, plotting. */
+/* LLM Atlas — shared helpers: chapter registry, nav, page components, demo loader, theme, canvas, controls, math, plotting. */
 (function () {
+  /* ---------- chapter registry ----------
+     s: file slug (s + '.html'); t: title; st: 'new' (rewritten) | 'old' (pre-restructure text) | 'todo' (placeholder)
+     n: fixed label (序 / 附); otherwise chapters are numbered 1..N in order. */
   const CHAPTERS = [
-    { f: 'index.html', n: '', t: '总览与时间线' },
-    { part: '第一部分 · Transformer 基础' },
-    { f: 'ch01-tokens.html', n: '1', t: '分词与嵌入' },
-    { f: 'ch02-attention.html', n: '2', t: '注意力机制' },
-    { f: 'ch03-transformer.html', n: '3', t: 'Transformer 结构与位置编码' },
-    { f: 'ch04-generation.html', n: '4', t: '自回归生成与采样' },
-    { part: '第二部分 · 训练与能力' },
-    { f: 'ch05-training.html', n: '5', t: '规模定律与训练流水线' },
-    { f: 'ch06-reasoning.html', n: '6', t: '推理模型与强化学习' },
-    { f: 'ch07-moe.html', n: '7', t: '混合专家 MoE' },
-    { part: '第三部分 · 效率：上下文、量化、Infra' },
-    { f: 'ch08-long-context.html', n: '8', t: '长上下文与注意力变体' },
-    { f: 'ch09-quantization.html', n: '9', t: '量化：从 INT8 到 1-bit' },
-    { f: 'ch10-infra.html', n: '10', t: '推理与训练 Infra' },
-    { part: '第四部分 · 生成：图像与视频' },
-    { f: 'ch11-diffusion.html', n: '11', t: '扩散与流匹配原理' },
-    { f: 'ch12-image.html', n: '12', t: '文生图与图生图' },
-    { f: 'ch13-video.html', n: '13', t: '视频生成与世界模型' },
-    { part: '第五部分 · 前沿' },
-    { f: 'ch14-frontier.html', n: '14', t: '2026 前沿地图' },
-    { part: '第六部分 · 智能体与多模态' },
-    { f: 'ch15-agents.html', n: '15', t: '智能体：工具、上下文与检索' },
-    { f: 'ch16-vlm.html', n: '16', t: '多模态理解：视觉、视频与语音' },
+    { s: 'index', t: '总览', home: true },
+    { s: 'prologue', t: '九年简史', n: '序', st: 'todo' },
+    { part: '一 · Transformer 怎么工作' },
+    { s: 'tokens', t: '分词与嵌入', st: 'old' },
+    { s: 'attention', t: '注意力机制', st: 'old' },
+    { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'old' },
+    { s: 'generation', t: '自回归生成与采样', st: 'old' },
+    { part: '二 · 预训练' },
+    { s: 'data', t: '预训练数据', st: 'todo' },
+    { s: 'scaling', t: '规模定律与优化器', st: 'old' },
+    { part: '三 · 后训练' },
+    { s: 'sft', t: 'SFT 与偏好优化', st: 'todo' },
+    { s: 'rl', t: '强化学习', st: 'new' },
+    { s: 'distillation', t: '蒸馏与能力整合', st: 'todo' },
+    { s: 'reasoning', t: '推理模型与推理时算力', st: 'old' },
+    { s: 'agents', t: '智能体', st: 'old' },
+    { s: 'coding', t: 'AI 编程', st: 'todo' },
+    { part: '四 · 架构演进' },
+    { s: 'moe', t: '混合专家 MoE', st: 'old' },
+    { s: 'long-context', t: '长上下文与注意力变体', st: 'old' },
+    { part: '五 · 硬件与部署' },
+    { s: 'hardware', t: '芯片、内核与编译器', st: 'todo' },
+    { s: 'quantization', t: '量化', st: 'old' },
+    { s: 'serving', t: '推理系统', st: 'old' },
+    { s: 'training-systems', t: '训练系统', st: 'todo' },
+    { s: 'on-device', t: '本地与端侧部署', st: 'todo' },
+    { part: '六 · 多模态' },
+    { s: 'vlm', t: '多模态理解', st: 'old' },
+    { s: 'diffusion', t: '扩散与流匹配', st: 'old' },
+    { s: 'image', t: '文生图与图生图', st: 'old' },
+    { s: 'video', t: '视频生成', st: 'old' },
+    { s: 'audio', t: '语音、音频与音乐', st: 'todo' },
+    { s: 'spatial', t: '3D 与空间智能', st: 'todo' },
+    { s: 'world-models', t: '世界模型', st: 'todo' },
+    { s: 'embodied', t: '具身智能与 VLA', st: 'todo' },
+    { part: '七 · 理解与评判' },
+    { s: 'interpretability', t: '可解释性', st: 'todo' },
+    { s: 'evaluation', t: '评测', st: 'todo' },
+    { s: 'alignment', t: '对齐', st: 'todo' },
+    { s: 'jailbreak', t: '越狱与防御', st: 'todo' },
+    { part: '八 · 应用与社会' },
+    { s: 'science', t: 'AI for Science 与数学', st: 'todo' },
+    { s: 'industry', t: '产业、算力经济与治理', st: 'todo' },
+    { part: '收尾' },
+    { s: 'frontier', t: '前沿地图与开放问题', st: 'old' },
+    { part: '附录' },
+    { s: 'nn-basics', t: '神经网络速成', n: '附', st: 'todo' },
   ];
+  // assign numbers, part names, file names
+  {
+    let k = 0, part = null;
+    CHAPTERS.forEach((c) => {
+      if (c.part) { part = c.part; return; }
+      c.f = c.s + '.html';
+      c.partName = part;
+      if (!c.home && !c.n) c.n = String(++k);
+    });
+  }
 
   const A = {};
   window.A = A;
   A.CHAPTERS = CHAPTERS;
+  A.chapters = CHAPTERS.filter((c) => c.s);
+  A.ch = (slug) => CHAPTERS.find((c) => c.s === slug);
+  A.chLabel = (c) => (c.n === '序' ? '序章' : c.n === '附' ? '附录' : c.home ? '' : '第 ' + c.n + ' 章');
+  A.STATUS = { new: '新版', old: '旧版', todo: '待写' };
 
   /* ---------- DOM ---------- */
   A.$ = (s, r = document) => r.querySelector(s);
@@ -76,18 +117,24 @@
     b.textContent = t === 'auto' ? '主题：跟随系统' : t === 'dark' ? '主题：深色' : '主题：浅色';
   }
 
-  /* ---------- nav ---------- */
+  /* ---------- nav, kicker, pager ---------- */
+  function currentSlug() {
+    if (document.body.dataset.chapter) return document.body.dataset.chapter;
+    const f = location.pathname.split('/').pop() || 'index.html';
+    return f.replace(/\.html$/, '') || 'index';
+  }
   function buildNav() {
-    const here = location.pathname.split('/').pop() || 'index.html';
+    const here = currentSlug();
     const side = document.getElementById('side');
     if (!side) return;
     side.append(A.el('a', { class: 'brand', href: 'index.html' }, '大模型全景图谱', A.el('small', null, '从 Transformer 到 2026 前沿')));
+    const flat = A.chapters;
     let idx = -1;
-    const flat = CHAPTERS.filter((c) => c.f);
     CHAPTERS.forEach((c) => {
       if (c.part) { side.append(A.el('div', { class: 'part' }, c.part)); return; }
-      const on = c.f === here;
-      side.append(A.el('a', { class: 'ch' + (on ? ' on' : ''), href: c.f }, A.el('span', { class: 'n' }, c.n), A.el('span', null, c.t)));
+      const on = c.s === here;
+      const badge = c.st && c.st !== 'new' ? A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]) : null;
+      side.append(A.el('a', { class: 'ch' + (on ? ' on' : '') + (c.st === 'todo' ? ' todo' : ''), href: c.f }, A.el('span', { class: 'n' }, c.home ? '' : c.n), A.el('span', { class: 'tt' }, c.t), badge));
       if (on) {
         idx = flat.indexOf(c);
         const hs = A.$$('main h2[id]');
@@ -103,14 +150,94 @@
     updateThemeBtn();
     const mb = A.el('button', { id: 'menu-btn', onclick: () => side.classList.toggle('open') }, '☰ 目录');
     document.body.append(mb);
+    const cur = flat[idx];
+    // kicker: chapter label + part
+    const kick = A.$('main .kicker');
+    if (kick && cur && !kick.textContent.trim()) kick.textContent = [A.chLabel(cur), cur.partName].filter((x, i, a) => x && a.indexOf(x) === i).join(' · ');
+    // status banner for old / placeholder chapters
+    const hdr = A.$('main header');
+    if (hdr && cur && cur.st === 'old') hdr.after(A.el('div', { class: 'callout warn status-note', html: '<b>旧版内容。</b>这一章还是改版前的文字：正文较简略，历史只有列表。它会按新模板重写（推导折叠块、“主干 + 支线”的历史、争议与反直觉框）。演示是可用的。' }));
+    // pager
     const pager = document.getElementById('pager');
     if (pager && idx >= 0) {
       const prev = flat[idx - 1], next = flat[idx + 1];
-      pager.append(prev ? A.el('a', { href: prev.f }, A.el('small', null, '← 上一章'), prev.t) : A.el('span'));
-      pager.append(next ? A.el('a', { href: next.f, style: { textAlign: 'right' } }, A.el('small', null, '下一章 →'), next.t) : A.el('span'));
+      const lab = (c) => [A.chLabel(c), c.t].filter(Boolean).join(' · ');
+      pager.append(prev ? A.el('a', { href: prev.f }, A.el('small', null, '← 上一章'), lab(prev)) : A.el('span'));
+      pager.append(next ? A.el('a', { href: next.f, style: { textAlign: 'right' } }, A.el('small', null, '下一章 →'), lab(next)) : A.el('span'));
     }
   }
-  document.addEventListener('DOMContentLoaded', buildNav);
+
+  /* ---------- cross references: <a class="xref" data-ref="slug"></a> → chapter number ---------- */
+  function fillXrefs() {
+    A.$$('a.xref[data-ref]').forEach((a) => {
+      const c = A.ch(a.dataset.ref);
+      if (!c) return;
+      a.href = c.f + (a.dataset.hash ? '#' + a.dataset.hash : '');
+      if (!a.dataset.keep) a.textContent = a.dataset.full ? [A.chLabel(c), c.t].join(' · ') : c.n;
+      a.title = A.chLabel(c) + ' · ' + c.t;
+    });
+  }
+
+  /* ---------- history timelines: toggle side branches ---------- */
+  function initHistory() {
+    A.$$('.hist').forEach((h) => {
+      const br = A.$$('details.hist-branch', h);
+      if (!br.length) return;
+      const btn = A.el('button', { class: 'hist-toggle' }, '展开全部支线');
+      let open = false;
+      btn.onclick = () => { open = !open; br.forEach((d) => (d.open = open)); btn.textContent = open ? '只看主干' : '展开全部支线'; };
+      h.before(A.el('div', { class: 'hist-bar' }, A.el('span', { class: 'small muted' }, '主干是一条因果链；支线是被淘汰的路线和争论，默认折叠。'), btn));
+    });
+  }
+
+  /* ---------- math (KaTeX auto-render; delimiters \( \) and \[ \]) ---------- */
+  function renderMath() {
+    if (typeof renderMathInElement !== 'function') return;
+    renderMathInElement(document.querySelector('main') || document.body, {
+      delimiters: [{ left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }],
+      throwOnError: false,
+      ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'canvas'],
+    });
+  }
+  A.renderMath = renderMath;
+
+  /* ---------- demo loader: <div data-demo="name"></div> loads demos/name.js ---------- */
+  const DEMOS = {};
+  const pending = {};
+  A.defineDemo = function (name, fn) {
+    DEMOS[name] = fn;
+    (pending[name] || []).forEach((el) => mountDemo(name, el));
+    delete pending[name];
+  };
+  function mountDemo(name, el) {
+    if (el.dataset.mounted) return;
+    el.dataset.mounted = '1';
+    try { DEMOS[name](el); }
+    catch (e) { console.error('demo ' + name + ' failed', e); el.append(A.el('p', { class: 'small', style: { color: 'var(--bad)' } }, '演示加载失败：' + e.message)); }
+  }
+  function loadDemos() {
+    const ver = document.body.dataset.v ? '?v=' + document.body.dataset.v : '';
+    A.$$('[data-demo]').forEach((el) => {
+      const name = el.dataset.demo;
+      if (DEMOS[name]) { mountDemo(name, el); return; }
+      const first = !pending[name];
+      (pending[name] = pending[name] || []).push(el);
+      if (first) {
+        const s = document.createElement('script');
+        s.src = 'demos/' + name + '.js' + ver;
+        s.onerror = () => (pending[name] || []).forEach((m) => m.append(A.el('p', { class: 'small', style: { color: 'var(--bad)' } }, '找不到演示 ' + name)));
+        document.head.append(s);
+      }
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    buildNav();
+    fillXrefs();
+    initHistory();
+    renderMath();
+    loadDemos();
+  });
 
   /* ---------- tooltip ---------- */
   let tipEl = null;
@@ -371,6 +498,42 @@
     ctx.closePath(); ctx.fill();
     ctx.restore();
   };
+
+
+  /* ---------- number formats (FP32 … FP4, NF4) ---------- */
+  const FMT = {
+    fp32: { n: 'FP32', e: 8, m: 23, ieee: true },
+    bf16: { n: 'BF16', e: 8, m: 7, ieee: true },
+    fp16: { n: 'FP16', e: 5, m: 10, ieee: true },
+    e4m3: { n: 'FP8 E4M3', e: 4, m: 3, max: 448 },
+    e5m2: { n: 'FP8 E5M2', e: 5, m: 2, ieee: true },
+    e2m1: { n: 'FP4 E2M1', e: 2, m: 1, max: 6 },
+  };
+  function encFloat(x, f) {
+    const bias = (1 << (f.e - 1)) - 1;
+    const emin = 1 - bias;
+    const emax = f.ieee ? (1 << f.e) - 2 - bias : (1 << f.e) - 1 - bias;
+    const maxMant = f.max ? Math.round((f.max / Math.pow(2, emax) - 1) * (1 << f.m)) : (1 << f.m) - 1;
+    const maxVal = Math.pow(2, emax) * (1 + maxMant / (1 << f.m));
+    const sign = x < 0 || Object.is(x, -0) ? 1 : 0;
+    const a = Math.abs(x);
+    if (a === 0) return { v: 0, sign, ef: 0, mf: 0 };
+    if (a >= maxVal) return { v: (sign ? -1 : 1) * maxVal, sign, ef: emax + bias, mf: maxMant, sat: a > maxVal };
+    let ex = Math.floor(Math.log2(a));
+    if (ex < emin) {
+      const mf = Math.round(a / Math.pow(2, emin - f.m));
+      if (mf >= 1 << f.m) return { v: (sign ? -1 : 1) * Math.pow(2, emin), sign, ef: 1, mf: 0 };
+      return { v: (sign ? -1 : 1) * mf * Math.pow(2, emin - f.m), sign, ef: 0, mf };
+    }
+    let mf = Math.round((a / Math.pow(2, ex) - 1) * (1 << f.m));
+    if (mf >= 1 << f.m) { mf = 0; ex++; }
+    if (ex > emax || (ex === emax && mf > maxMant)) return { v: (sign ? -1 : 1) * maxVal, sign, ef: emax + bias, mf: maxMant, sat: true };
+    return { v: (sign ? -1 : 1) * Math.pow(2, ex) * (1 + mf / (1 << f.m)), sign, ef: ex + bias, mf };
+  }
+  const E2M1 = [0, 0.5, 1, 1.5, 2, 3, 4, 6];
+  function nearestE2M1(x) { const a = Math.abs(x); let best = 0, bd = Infinity; for (const g of E2M1) { const d = Math.abs(a - g); if (d < bd) { bd = d; best = g; } } return Math.sign(x) * best; }
+  const NF4 = [-1, -0.6961928009986877, -0.5250730514526367, -0.39491748809814453, -0.28444138169288635, -0.18477343022823334, -0.09105003625154495, 0, 0.07958029955625534, 0.16093020141124725, 0.24611230194568634, 0.33791524171829224, 0.44070982933044434, 0.5626170039176941, 0.7229568362236023, 1];
+  A.num = { FMT, encFloat, E2M1, nearestE2M1, NF4 };
 
   A.debounce = (fn, ms = 60) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
   // build a demo card: returns {root, bd}

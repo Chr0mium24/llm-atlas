@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推理系统 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="serving">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>Infra：模型怎么在成千上万张卡上训练，又怎么同时服务几百万人</h1>
+  <p class="lede">模型结构决定理论上的计算量，真正决定成本和速度的是系统：显存带宽、批处理、KV cache 管理、并行策略、通信。这一章从一个 token 的生成开始，一直讲到 2026 年的 P/D 分离、宽专家并行和超节点。</p>
+</header>
+
+<h2 id="roofline">两个阶段：Prefill 吃算力，Decode 吃带宽</h2>
+<p>一次请求分两段：</p>
+<ul>
+  <li><b>Prefill</b>：把整个 prompt（可能几万 token）一次性送进模型，算出所有位置的 KV cache 和第一个输出 token。这是大矩阵乘大矩阵，<b>算力受限（compute-bound）</b>，决定首 token 延迟（TTFT）。</li>
+  <li><b>Decode</b>：之后每步只生成 1 个 token，权重矩阵乘一个向量。每读 1 字节权重只做约 2 次运算，GPU 大部分时间在等显存，<b>带宽受限（memory-bound）</b>，决定每个 token 的间隔（TPOT）。</li>
+</ul>
+<p><b>Roofline 模型</b>：可达到的算力 = min(峰值算力, 带宽 × 算术强度)。算术强度 = 每字节数据对应的运算次数。decode 时把 B 个用户的请求合成一个 batch，读一次权重就能服务 B 个 token，算术强度乘以 B。这就是 <b>批处理</b> 能大幅降低成本的根本原因。</p>
+<div data-demo="roofline"></div>
+
+<h2 id="batching">连续批处理与 PagedAttention</h2>
+<p>请求的输出长度差异很大，短的几个 token，长的几万 token。<b>静态批处理</b> 要等一批里最长的请求结束，才能换下一批，其余槽位只能空转。<b>连续批处理</b>（continuous / in-flight batching，Orca 2022）在每个解码步都检查：有请求结束就立刻从队列补上新的请求。</p>
+<p>KV cache 的显存管理也是同样的问题。旧做法按最大长度给每个请求预留一整块连续显存，实际只用了一小部分。<b>PagedAttention</b>（vLLM, 2023）借鉴操作系统的分页：KV cache 切成固定大小的块（比如 16 token），按需分配，用块表映射。浪费从 60–80% 降到 4% 以下，同样的显存能多服务几倍的并发请求。</p>
+<div data-demo="batching"></div>
+<p>在这之上还有：<b>前缀缓存</b>（SGLang 的 RadixAttention，2024）：系统 prompt、多轮对话历史、智能体的工具定义都是共享前缀，算过一次的 KV 直接复用。Kimi、DeepSeek 等 API 对缓存命中的 token 收费低得多，原因就在这里。<b>分块 prefill</b>：把长 prompt 切块，和 decode 请求混在同一个 batch 里，避免长 prompt 卡住所有人。</p>
+
+<h2 id="spec">投机解码：小模型先猜，大模型一次验证</h2>
+<p>decode 受带宽限制，GPU 算力闲着。<b>投机解码</b>（2022）利用这些闲置算力：用一个便宜的草稿模型连续猜 γ 个 token，大模型 <b>一次前向</b> 并行验证这 γ 个位置。从第一个猜错的位置截断，并在那里用大模型自己的分布补一个 token。用特殊的接受/拒绝采样规则，可以证明输出分布和大模型单独生成 <b>完全一致</b>，不是近似。</p>
+<div class="eq">每轮期望产出 token 数 = (1 − α<sup>γ+1</sup>) / (1 − α)　　加速比 ≈ 上式 / (1 + γ·c)<span class="note">α：每个草稿 token 被接受的概率；γ：一次猜几个；c：草稿模型相对大模型的成本</span></div>
+<div data-demo="spec-decode"></div>
+<p>草稿从哪来：独立的小模型；<b>Medusa / EAGLE</b>：在大模型上挂几个轻量预测头，利用大模型自己的隐藏状态，接受率高，EAGLE-3 是 2025–26 年 vLLM/SGLang 的主力；<b>MTP</b>：DeepSeek-V3/V4 训练时就带多 token 预测头，推理时直接当草稿（社区给 Bonsai 2 27B 加的 MTP 头，实测 decode 提升约 24.5%）；<b>prompt lookup / n-gram</b>：直接从上下文里找重复片段，改代码、引用原文时特别有效。注意：batch 很大时 GPU 已经接近算力受限，投机解码的收益会下降。</p>
+
+<h2 id="parallel">训练：怎么把一个模型切到上万张卡上</h2>
+<ul>
+  <li><b>数据并行 DP</b>：每张卡一份完整模型，各吃不同的数据，梯度做 all-reduce。最简单，但每张卡要装下整个模型和优化器状态。</li>
+  <li><b>ZeRO / FSDP</b>（2019）：把优化器状态（stage 1）、梯度（stage 2）、参数本身（stage 3）切分到各数据并行卡上，用到时再收集。</li>
+  <li><b>张量并行 TP</b>（Megatron, 2019）：把每个矩阵乘按行/列切开，放到多张卡上，每层都要通信，通常只在一台机器的 8 张卡内（NVLink）使用。</li>
+  <li><b>流水线并行 PP</b>（GPipe, 2018）：按层切成几段，放到不同机器。有 <b>气泡</b>：流水线填满和排空时部分卡在空等，要靠足够多的微批次摊薄。</li>
+  <li><b>专家并行 EP</b>：MoE 的专家分布在不同卡上，token 通过 all-to-all 发送和收回（第 <a class="xref" data-ref="moe">7</a> 章）。</li>
+  <li><b>上下文并行 CP</b>：把一条超长序列切到多张卡上（Ring Attention），用来训练 1M 上下文。</li>
+</ul>
+<p>前沿训练通常是 <b>4D/5D 并行</b>：DP × TP × PP × EP × CP 组合使用。衡量效率的指标是 <b>MFU</b>（模型算力利用率）= 实际有效 FLOPs / 硬件峰值，大规模训练做到 40–50% 就算很好。</p>
+<div data-demo="train-memory"></div>
+
+<h2 id="serving2026">2026 年的推理系统</h2>
+<ul>
+  <li><b>P/D 分离</b>（DistServe、Mooncake，2024）：prefill 和 decode 放在不同的 GPU 池，KV cache 通过高速网络传输（NIXL、Mooncake Transfer Engine）。两类负载互不干扰，可以分别扩容。vLLM 2026 年 4 月的博客报告，在单台 8×MI300X 上做 P/D 分离，有效吞吐（goodput）提升 2.5 倍。NVIDIA Dynamo、SGLang、vLLM 都已支持。</li>
+  <li><b>宽专家并行</b>：DeepSeek 式的大规模 EP decode，几十到上百张卡共同服务一个 MoE，每张卡只放少数专家，靠 DeepEP 一类的通信库做 all-to-all。</li>
+  <li><b>KV cache 分层存储</b>：GPU 显存 → CPU 内存 → SSD / 分布式存储（Mooncake Store 等）。Kimi 用 KV-centric 的架构在高缓存命中率下提供“百万上下文统一定价”。</li>
+  <li><b>超节点</b>：GB200 NVL72（72 张 GPU 共享 NVLink 域）、华为 CloudMatrix 384 等，把 TP/EP 的通信域扩大到整柜。Kimi K3 官方建议的部署是不少于 64 张加速卡的超节点。</li>
+  <li><b>低精度推理</b>：Blackwell 原生 FP4（NVFP4 / MXFP4），Hopper 上用 Marlin/Machete 一类的内核做 W4A16 反量化。</li>
+  <li><b>本地推理</b>：llama.cpp（GGUF、各类 K/I-quants、CPU 卸载 MoE 专家）、MLX（Apple Silicon）、Ollama 封装。新架构（线性注意力、Hadamard 旋转、三值）往往要等运行时补上算子支持，否则理论上更快，实际反而更慢。</li>
+</ul>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2018</span>GPipe 流水线并行；混合精度训练（FP16 + loss scaling）</li>
+  <li><span class="d">2019</span>Megatron-LM 张量并行；ZeRO</li>
+  <li><span class="d">2020–21</span>3D 并行训练千亿模型；A100 与 BF16</li>
+  <li><span class="d">2022</span>Orca 连续批处理；FlashAttention；投机解码；H100 与 FP8</li>
+  <li><span class="d">2023</span>vLLM / PagedAttention；TensorRT-LLM；llama.cpp 爆发；Medusa</li>
+  <li><span class="d">2024</span>SGLang（RadixAttention）；DistServe / Mooncake P/D 分离；EAGLE-2；DeepSeek-V3 FP8 训练 + DualPipe + DeepEP；Blackwell 发布</li>
+  <li><span class="d">2025</span>GB200 NVL72 大规模部署；EAGLE-3；DeepSeek 开源推理系统组件；NVIDIA Dynamo；宽 EP</li>
+  <li><span class="d">2026</span>P/D 分离进入单机部署；FP4 推理普及；百万上下文服务；超节点成为大型 MoE 的默认部署单元</li>
+</ul>
+<p class="src">资料：<a href="https://vllm.ai/blog/2026-04-07-moriio-kv-connector">vLLM：P/D 分离与 MoRI-IO</a>；<a href="https://vllm.ai/blog/2026-07-22-kimi-k3-preview">vLLM：Kimi K3 支持预览</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 部署分析</a>。硬件参数为公开规格的近似值。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

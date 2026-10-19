@@ -1,0 +1,79 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>推理模型与推理时算力 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="reasoning">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>推理模型：让模型“想久一点”，并用强化学习教它怎么想</h1>
+  <p class="lede">2024 年 9 月的 OpenAI o1 和 2025 年 1 月的 DeepSeek-R1 带来一个新的规模化维度：<b>推理时算力（test-time compute）</b>。模型先生成很长的思维链，再给答案；思考得越久，准确率越高。教会它这样思考的方法是 <b>可验证奖励的强化学习（RLVR）</b>。</p>
+</header>
+
+<h2 id="cot">思维链：把计算展开到 token 上</h2>
+<p>Transformer 每生成一个 token，做的计算量是固定的（约 2N FLOPs）。难题需要的计算量超过一次前向能完成的，就得 <b>把中间步骤写出来</b>，让后面的 token 能读到前面的中间结果。这就是 <b>思维链（Chain-of-Thought, CoT）</b>。2022 年发现，只要在 prompt 里加一句“让我们一步步思考”，大模型的数学题准确率就会大幅上升。</p>
+<p>用更多推理算力换准确率，有两个方向：</p>
+<ul>
+  <li><b>并行</b>：同一个问题采样 N 次，然后 <b>多数投票</b>（self-consistency, 2022），或者用验证器 / 奖励模型挑最好的（best-of-N）。</li>
+  <li><b>串行</b>：一条思维链写得更长，中间自我检查、回溯、换思路。o1/R1 这类推理模型属于这一类。</li>
+</ul>
+<div data-demo="majority-vote"></div>
+
+<h2 id="rl">强化学习：从 RLHF 到 RLVR</h2>
+<p><b>RLHF</b>（2022 InstructGPT）：人类比较两个回答 → 训练奖励模型 → 用 PPO 优化策略。问题是奖励模型本身会被“钻空子”：策略学会写出奖励模型喜欢、但实际上并不更好的回答（reward hacking），比如更长、更讨好、格式更花哨。</p>
+<p><b>RLVR（可验证奖励的强化学习）</b>：只在答案能被程序自动判对错的任务上训练，比如数学题对答案、代码跑单元测试、智能体任务检查终态。奖励就是 0 或 1，很难被钻空子。DeepSeek-R1 证明了只靠这种稀疏奖励、不给示范的思考过程，模型就能 <b>自己</b> 学会长思维链、自我反思和验证（论文中的 “aha moment”），思考长度随训练稳定增长。</p>
+<h3>GRPO：用组内比较代替价值网络</h3>
+<p>PPO 需要一个和策略差不多大的价值网络来估计基线，很贵。DeepSeek 的 <b>GRPO</b>（Group Relative Policy Optimization）对同一道题采样一组 G 个回答，用组内平均奖励当基线：</p>
+<div class="eq">Â<sub>i</sub> = ( r<sub>i</sub> − mean(r<sub>1..G</sub>) ) / std(r<sub>1..G</sub>)<span class="note">答得比组内平均好的回答，其每个 token 的概率都被提高；差的被压低。另加 KL 项防止离参考模型太远</span></div>
+<p>下面是一个玩具版：模型可以选 6 种“解题策略”，每种的答对率不同，越认真的策略思维链越长。看 GRPO 怎么只凭“对/错”的信号把策略推向更好、更长的思考：</p>
+<div data-demo="grpo-toy"></div>
+<div class="callout"><b>题目太难或太简单都学不到东西。</b>如果一组 G 个回答全对或全错，组内方差为 0，优势全为 0，梯度为 0。所以实践中要筛选题目难度，例如 DAPO 的 dynamic sampling 会丢弃全对或全错的组。在上面的演示里把难度拉到最大试试。</div>
+
+<h3>2025–2026：RL 规模化与智能体</h3>
+<ul>
+  <li><b>RL 算力暴涨</b>：前沿模型投入后训练 RL 的算力已接近预训练的同一数量级，RL 也呈现规模定律。</li>
+  <li><b>智能体 RL</b>：奖励来自真实环境，比如在沙盒终端里把任务做完、在浏览器里找到答案、通过 MCP 工具完成操作。评测也随之转向 Terminal-Bench、SWE-bench、BrowseComp 这类任务。Kimi K3 的模型卡报告了 Terminal-Bench 2.1 88.3%、BrowseComp 91.2%。</li>
+  <li><b>思考与工具交织</b>：在思维链中途调用搜索、代码执行，再接着想（o3 起）。</li>
+  <li><b>并行思考</b>：同时展开多条思路再汇总（Gemini Deep Think 等），把“并行”和“串行”两种推理算力结合起来。</li>
+  <li><b>不可验证领域</b>：写作、开放问答没有标准答案，用细粒度评分细则（rubric）+ LLM 评审给奖励。</li>
+  <li><b>在线策略蒸馏</b>：学生模型自己采样，教师模型逐 token 给出概率作为密集信号。据报道 DeepSeek V4 的后训练用它替代了一部分 RL。</li>
+</ul>
+
+<h2 id="compare">几种对齐 / 强化方法对比</h2>
+<div class="tablewrap"><table>
+  <tr><th>方法</th><th>奖励从哪来</th><th>需要的模型</th><th>特点</th></tr>
+  <tr><td>RLHF + PPO</td><td>人类偏好训练的奖励模型</td><td>策略 + 参考 + 奖励 + 价值，共 4 个</td><td>通用但贵；容易被 reward hacking</td></tr>
+  <tr><td>DPO</td><td>偏好对（隐式奖励）</td><td>策略 + 参考</td><td>简单、离线；上限不如在线 RL</td></tr>
+  <tr><td>GRPO + RLVR</td><td>程序验证（对 / 错）</td><td>策略 + 参考</td><td>省掉价值网络；推理能力提升的主力</td></tr>
+  <tr><td>智能体 RL</td><td>环境的终态检查</td><td>策略 + 沙盒环境</td><td>轨迹长、需要大规模异步 rollout 系统</td></tr>
+  <tr><td>在线策略蒸馏</td><td>教师模型逐 token 的 log 概率</td><td>学生 + 教师</td><td>密集信号，样本效率高，但上限受限于教师</td></tr>
+</table></div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2017</span>PPO；Christiano 等用人类偏好训练 RL 智能体</li>
+  <li><span class="d">2022-01</span>Chain-of-Thought prompting；同年 self-consistency 多数投票</li>
+  <li><span class="d">2022-03</span>InstructGPT：SFT + RLHF 的完整流程</li>
+  <li><span class="d">2022-12</span>Constitutional AI：用 AI 反馈替代部分人类反馈（RLAIF）</li>
+  <li><span class="d">2023</span>DPO；“Let's Verify Step by Step”：过程奖励模型（PRM）</li>
+  <li><span class="d">2024-02</span>DeepSeekMath 提出 GRPO</li>
+  <li><span class="d">2024-09</span>OpenAI o1：推理时算力作为新的规模化维度</li>
+  <li><span class="d">2025-01</span>DeepSeek-R1：纯 RLVR 涌现长思维链，开源权重；蒸馏小模型</li>
+  <li><span class="d">2025</span>o3 / Claude / Gemini 等把工具调用融入思考；DAPO、GSPO 等 GRPO 改进；智能体 RL 兴起</li>
+  <li><span class="d">2026</span>RL 算力与预训练同一量级；智能体评测（Terminal-Bench 2.x、BrowseComp、MCPMark）成为主战场；在线策略蒸馏流行</li>
+</ul>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

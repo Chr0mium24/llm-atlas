@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>混合专家 MoE — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="moe">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>混合专家（MoE）：参数很多，但每次只用一小部分</h1>
+  <p class="lede">2026 年的前沿开源模型几乎都是 MoE：Kimi K3 总参数 2.8T，每个 token 只激活 104B；DeepSeek V4-Pro 是 1.6T 总参数、49B 激活。MoE 让 <b>模型容量（知识）</b> 和 <b>每个 token 的计算量</b> 不再绑在一起。</p>
+</header>
+
+<h2 id="idea">思路：把 MLP 拆成很多个专家</h2>
+<p>第 <a class="xref" data-ref="transformer">3</a> 章讲过，MLP 占了 Transformer 约 2/3 的参数，而且每个 token 独立计算。MoE 把一个大 MLP 换成 E 个小 MLP（<b>专家</b>），再加一个很小的 <b>路由器</b>（一个 d×E 的线性层）。每个 token 进来时，路由器给每个专家打分，只把它送给得分最高的 k 个专家，输出按门控权重加权求和：</p>
+<div class="eq">y = Σ<sub>i ∈ TopK(g(x))</sub> g<sub>i</sub>(x) · Expert<sub>i</sub>(x)&nbsp;&nbsp;&nbsp; g(x) = softmax(x · W<sub>router</sub>)<span class="note">E 个专家、每次选 k 个：参数量 ≈ E 份，计算量 ≈ k 份</span></div>
+<p>专家会自发出现一定程度的分工，比如某些专家更常处理代码、某些更常处理中文标点。但这种分工不像“数学专家”“历史专家”那样清晰，更多是 token 层面、句法层面的分工。</p>
+<div data-demo="moe-router"></div>
+
+<h2 id="problems">MoE 的几个难点</h2>
+<ul>
+  <li><b>负载均衡</b>：路由器容易“偏心”，少数专家被挤爆，其余专家闲置甚至从来没被训练（路由坍缩）。传统做法是加一个 <b>辅助损失</b>，惩罚负载不均；但辅助损失会干扰主任务。DeepSeek-V3 提出 <b>无辅助损失的均衡</b>：给每个专家一个只用于选择、不参与加权的偏置 b，负载过高就调低，过低就调高。上面的演示就是这个方法。Kimi K3 的 Stable LatentMoE 在潜空间里做路由，用 “Quantile Balancing” 做均衡，超出容量的 token 软丢弃而不是硬丢弃。</li>
+  <li><b>容量与丢 token</b>：分布式训练时每个专家在每个设备上有固定容量（capacity factor × 平均负载）。超出容量的 token 会被丢弃，直接走残差。</li>
+  <li><b>通信</b>：专家分布在不同 GPU 上（专家并行 EP），每层都要做两次 all-to-all，把 token 发给专家所在的卡，再收回来。这往往是 MoE 训练和推理的主要瓶颈（第 <a class="xref" data-ref="serving">10</a> 章）。</li>
+  <li><b>细粒度专家 + 共享专家</b>（DeepSeekMoE, 2024）：把专家切得更小更多，例如 256 个里选 8 个，组合方式更多，专业化更细；再加 1–2 个所有 token 都走的 <b>共享专家</b>，负责通用知识，避免每个路由专家都重复学一遍。</li>
+</ul>
+
+<h2 id="sizes">总参数 vs 激活参数</h2>
+<p>MoE 带来一个关键的不对称：<b>显存要装下全部参数，但每个 token 的计算只和激活参数有关</b>。所以 MoE 推理通常受显存和带宽限制，这也是第 <a class="xref" data-ref="quantization">9</a> 章量化的一个重要用武之地：Kimi K3 的专家权重用 MXFP4，就是因为专家占了绝大部分参数。</p>
+<div data-demo="moe-sizes"></div>
+<div class="callout"><b>本地部署的小技巧。</b>MoE 每个 token 只访问一小部分专家，所以可以把大部分专家权重放在 CPU 内存里，只把注意力和共享部分放进显存（llama.cpp 的 <code>--n-cpu-moe</code> 等参数）。Apple Silicon 的统一内存也适合 MoE：容量大，带宽够用。这也是 Meta 说 Muse Spark Open（816B）可以在两台 Mac Studio 上运行的原因。</div>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">1991</span>Jacobs、Jordan 等提出 Mixture of Experts</li>
+  <li><span class="d">2017-01</span>Shazeer 等：稀疏门控 MoE，137B 参数的 LSTM</li>
+  <li><span class="d">2020-06</span>GShard：MoE + Transformer，600B 翻译模型</li>
+  <li><span class="d">2021-01</span>Switch Transformer：top-1 路由，1.6T 参数</li>
+  <li><span class="d">2023-12</span>Mixtral 8×7B：开源 MoE 进入主流（8 选 2）</li>
+  <li><span class="d">2024-01</span>DeepSeekMoE：细粒度专家 + 共享专家</li>
+  <li><span class="d">2024-12</span>DeepSeek-V3：671B / 37B，256 选 8 + 1 共享，无辅助损失均衡</li>
+  <li><span class="d">2025</span>Qwen3 MoE、Kimi K2（1T / 32B，384 选 8）、gpt-oss（MXFP4 发布）、Qwen3-Next（512 选 10，激活约 3B）</li>
+  <li><span class="d">2026</span>DeepSeek V4（1.6T / 49B）、Kimi K3（2.8T / 104B，896 选 16 + 2 共享，Stable LatentMoE）、Reflection Beam（501B / 23B）、Meta Muse Spark Open（816B）</li>
+</ul>
+<p class="src">资料：<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a>；<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 报告</a>；<a href="https://aifront-page.com/open-weights-october-2026-ai-model-launches/">2026 年 10 月开源模型汇总</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>文生图与图生图 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="image">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>文生图与图生图：潜空间扩散、DiT 与原生多模态</h1>
+  <p class="lede">第 <a class="xref" data-ref="diffusion">11</a> 章讲了去噪的数学。一个真实的文生图系统还要解决三件事：<b>在哪个空间里去噪</b>（像素太贵，要压缩到潜空间）、<b>用什么网络去噪</b>（U-Net → DiT → MMDiT）、<b>怎么听懂提示词并接受各种控制</b>（文本编码器、引导、编辑、参考图）。2025–26 年，这条线又和语言大模型合流了。</p>
+</header>
+
+<h2 id="latent">潜空间：先压缩，再扩散</h2>
+<p>直接在 1024×1024×3 的像素上做扩散，每一步都要处理三百万个数，而且大部分算力花在人眼察觉不到的高频细节上。<b>潜空间扩散（Latent Diffusion, 2022，即 Stable Diffusion）</b> 先训练一个 VAE，把图像压缩 8 倍（每边）成一个小的“潜图”，扩散只在潜图上做，最后再用 VAE 解码器还原成像素。</p>
+<ul>
+  <li>SD 1.x / SDXL：8× 下采样，4 个通道（512² 图像 → 64×64×4）。</li>
+  <li>SD3 / FLUX.1：通道数增加到 16，细节和文字更好。</li>
+  <li>DC-AE（2024）等深度压缩编码器：32× 甚至更高，用于高分辨率和视频。</li>
+</ul>
+<p>Transformer 去噪器（DiT）还要把潜图再切成 2×2 的 patch，每个 patch 就是一个 token。分辨率和 token 数的关系决定了生成速度，因为注意力的代价随 token 数平方增长：</p>
+<div data-demo="latent-tokens"></div>
+
+<h2 id="backbone">去噪网络：U-Net → DiT → MMDiT</h2>
+<ul>
+  <li><b>U-Net</b>（SD 1.x、SDXL）：卷积编码-解码结构，中间插入自注意力层和 <b>交叉注意力</b> 层。图像特征做 Q，文本向量做 K/V（第 <a class="xref" data-ref="attention">2</a> 章），每个像素位置去“查”提示词里的词。</li>
+  <li><b>DiT</b>（Diffusion Transformer, 2022-12）：直接用 Transformer 处理 patch token，时间步 t 通过 adaLN（自适应层归一化）注入。扩展性和语言模型一样好，是 Sora 和之后所有大模型的基础。</li>
+  <li><b>MMDiT</b>（SD3, 2024）：文本 token 和图像 token 拼成一条序列做 <b>联合注意力</b>，两种模态各有自己的权重。FLUX、Qwen-Image（20B, 2025-08）等沿用这一设计。</li>
+  <li><b>文本编码器</b>：从 CLIP（2021）到 T5-XXL（Imagen, 2022），再到 2025 年后直接用多模态大模型（如 Qwen2.5-VL）编码提示词。模型能理解长而复杂的描述，也能把中文、英文文字准确“写”进图里。</li>
+</ul>
+
+<h2 id="toy">动手：一个能“听懂”提示词的玩具文生图模型</h2>
+<p>下面这个模型的“训练集”是 150 张 32×32 的小图：5 种形状 × 5 种颜色 × 白天/夜晚 × 3 种位置。和第 <a class="xref" data-ref="diffusion">11</a> 章一样，我们直接算出 <b>最优去噪器</b>（对训练集的后验加权平均），用流匹配 + CFG 采样。提示词通过关键词匹配变成条件。它没有真正的泛化能力，只会生成训练集附近的图，但采样过程、CFG、图生图的机制和真实模型完全一样。</p>
+<div data-demo="toy-t2i" class="bleed"></div>
+
+<h2 id="control">控制与编辑：图生图之后的十年</h2>
+<div class="tablewrap"><table>
+  <tr><th>技术</th><th>年份</th><th>做法</th></tr>
+  <tr><td>SDEdit（图生图）</td><td>2021</td><td>给输入图加噪到 t = 强度，再从这里开始去噪（就是上面演示的做法）</td></tr>
+  <tr><td>Inpainting 局部重绘</td><td>2022</td><td>掩码外的区域在每一步都替换成原图对应噪声水平的版本，只生成掩码内部</td></tr>
+  <tr><td>DreamBooth / LoRA</td><td>2022–23</td><td>用几张图片微调，让模型学会一个新的人物、画风、物体</td></tr>
+  <tr><td>ControlNet</td><td>2023-02</td><td>复制一份编码器接收边缘图、深度图、人体姿态，通过零初始化的卷积注入主网络</td></tr>
+  <tr><td>IP-Adapter</td><td>2023</td><td>把参考图像的特征当作额外的“提示词”注入交叉注意力</td></tr>
+  <tr><td>InstructPix2Pix</td><td>2022-11</td><td>用一句指令编辑图片（“把天空变成晚霞”）</td></tr>
+  <tr><td>FLUX.1 Kontext、Qwen-Image-Edit</td><td>2025</td><td>上下文内编辑：把参考图 token 和目标图 token 放在同一条序列里，人物一致性和文字编辑大幅提升</td></tr>
+  <tr><td>Nano Banana / Pro（Gemini 图像）</td><td>2025-08 / 11</td><td>对话式多轮编辑；Pro 版支持最多 14 张参考图融合、5 个人物保持一致、4K 输出和准确的多语言文字</td></tr>
+</table></div>
+
+<h2 id="unified">原生多模态：自回归回来了</h2>
+<p>扩散之外，另一条路线是 <b>把图像也变成 token，让语言模型直接生成</b>。早期的 DALL·E（2021）、Parti（2022）质量不如扩散；2024 年以后几项突破改变了局面：</p>
+<ul>
+  <li><b>VAR</b>（2024，NeurIPS 最佳论文）：不按像素顺序，而是“由粗到细”预测下一个分辨率尺度。Infinity 再把 token 换成按比特（bitwise）预测。</li>
+  <li><b>MAR / Transfusion</b>（2024）：自回归负责结构和语义，每个 token 用一个小扩散头生成连续值，避免离散化带来的损失。</li>
+  <li><b>GPT-4o 图像生成</b>（2025-03）：语言模型原生生成图像，提示词理解、文字渲染、多轮编辑明显领先，让“统一模型”路线成为主流方向之一。</li>
+  <li><b>统一理解与生成</b>：Janus、BAGEL、HunyuanImage 3.0（80B MoE，自回归框架）等，同一个模型既能看图又能画图。2026 年 GPT Image 2、Nano Banana 2 / Pro 处在榜首，开源的 FLUX.2、Qwen-Image-2.0、Seedream 5.0 紧随其后。</li>
+</ul>
+<p>为什么文本用自回归、图像用扩散？文本是离散、顺序性强的；图像是连续、空间上整体相关的，扩散擅长同时调整所有像素。统一模型通常把两者结合：语言模型负责“想清楚画什么”，扩散解码器负责“画得精细”。</p>
+
+<h2 id="history">脉络</h2>
+<ul class="history">
+  <li><span class="d">2014–19</span>GAN 时代：StyleGAN 生成以假乱真的人脸，但很难按文字控制</li>
+  <li><span class="d">2021-01</span>CLIP 与 DALL·E：图文对齐，文生图出现</li>
+  <li><span class="d">2021-12</span>GLIDE；潜空间扩散论文（LDM）</li>
+  <li><span class="d">2022</span>DALL·E 2（4 月）、Imagen（5 月）、Midjourney；8 月 Stable Diffusion 开源；DreamBooth</li>
+  <li><span class="d">2023</span>ControlNet、SDXL、LoRA 生态、LCM 少步生成</li>
+  <li><span class="d">2024</span>SD3（MMDiT + Rectified Flow）、FLUX.1（8 月）；VAR、MAR</li>
+  <li><span class="d">2025</span>GPT-4o 原生图像（3 月）；FLUX.1 Kontext；Qwen-Image（中文文字渲染）；Seedream 4.0；Nano Banana；HunyuanImage 3.0；FLUX.2（11 月）</li>
+  <li><span class="d">2026</span>Nano Banana 2、GPT Image 2、Seedream 5.0（6 月）、Qwen-Image-2.0；多参考图合成、4K、精确文字成为标配</li>
+</ul>
+<p class="src">资料：<a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench（18 个前沿模型对比）</a>；<a href="https://arxiv.org/abs/2605.10730">Qwen-Image-2.0 技术报告</a>；<a href="https://atlascloud.ai/blog/guides/best-ai-image-generation-models-2026">2026 图像模型对比</a>。</p>
+
+<footer id="pager"></footer>
+</div></main>
+
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>

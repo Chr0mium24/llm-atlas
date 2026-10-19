@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>训练系统 — 大模型全景图谱</title>
+<link rel="stylesheet" href="assets/vendor/katex/katex.min.css">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body data-chapter="training-systems">
+<nav id="side"></nav>
+<main><div class="wrap">
+<header>
+  <div class="kicker"></div>
+  <h1>训练系统</h1>
+  <p class="lede">一个万亿参数模型怎么切到上万张卡上训练：并行策略、显存账和通信。</p>
+</header>
+
+<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（旧版内容在「推理系统」一章）。</div>
+
+<h2 id="plan">计划内容</h2>
+<ul>
+  <li>数据并行与 ZeRO / FSDP 的显存推导</li>
+  <li>张量并行、流水线并行与气泡公式</li>
+  <li>专家并行与 all-to-all</li>
+  <li>上下文并行与 Ring Attention</li>
+  <li>混合精度：BF16 → FP8 → FP4 训练</li>
+  <li>MFU、容错与检查点</li>
+</ul>
+
+<h2 id="demos">已有的相关演示</h2>
+<p class="small muted">这些演示来自旧版章节，正文写好后会重新安排位置。</p>
+<div data-demo="train-memory"></div>
+
+<footer id="pager"></footer>
+</div></main>
+<script defer src="assets/vendor/katex/katex.min.js"></script>
+<script defer src="assets/vendor/katex/auto-render.min.js"></script>
+<script defer src="assets/common.js"></script>
+</body>
+</html>
