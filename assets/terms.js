@@ -80,4 +80,19 @@ window.ATLAS_TERMS = {
   'induction-head': { t: '归纳头', en: 'induction head', d: '一种两层配合的注意力电路：看到 A 时，找到上文中 A 之后出现过的 B，把它复制为预测。与上下文学习能力的出现同步形成。', at: 'attention#patterns' },
   icl: { t: '上下文学习', en: 'in-context learning (ICL)', d: '不更新参数，只在提示词里给几个示例，模型就能完成新任务。few-shot 提示依赖这种能力。', at: 'attention#patterns' },
   'attention-sink': { t: '注意力汇', en: 'attention sink', d: '很多注意力头把大量权重放在第一个 token 上。softmax 的权重和必须为 1，没什么要看时多余的权重要有个去处。', at: 'attention#patterns' },
+
+  // ---- transformer (transformer.html)
+  'decoder-only': { t: '只有解码器', en: 'decoder-only', d: '只用带因果掩码的自注意力、任务统一为“预测下一个 token”的 Transformer。GPT 系列及几乎所有当今大语言模型都是这种结构。', at: 'transformer#why' },
+  block: { t: 'Transformer 块', en: 'Transformer block', d: String.raw`模型重复堆叠的基本单元：\(\mathbf h = \mathbf x + \operatorname{Attn}(\operatorname{Norm}(\mathbf x))\)，\(\mathbf x' = \mathbf h + \operatorname{MLP}(\operatorname{Norm}(\mathbf h))\)。`, at: 'transformer#why' },
+  residual: { t: '残差连接', en: 'residual connection', d: String.raw`子层只输出一个修改量，加回输入：\(\mathbf x_{l+1} = \mathbf x_l + F(\mathbf x_l)\)。反向传播时梯度有一条不衰减的直通路径。`, at: 'transformer#residual' },
+  'residual-stream': { t: '残差流', en: 'residual stream', d: '每个位置上贯穿所有层的那条向量。注意力和 MLP 从中读取信息、把结果加回去，所有层共享这条“总线”。', at: 'transformer#residual' },
+  ffn: { t: '前馈网络（MLP）', en: 'feed-forward network', d: String.raw`每个块的第二个子层，对每个位置独立计算：\(\phi(\mathbf xW_1)W_2\)，先升维到约 \(4d\)、过激活函数、再降回 \(d\)。约占每层参数的三分之二。`, at: 'transformer#mlp' },
+  swiglu: { t: 'SwiGLU', en: 'SwiGLU', d: String.raw`带门控的 MLP：\((\operatorname{SiLU}(\mathbf xW_1)\odot \mathbf xW_3)\,W_2\)。三个矩阵，中间维度约 \(\tfrac83 d\)。2023 年起的标准。`, at: 'transformer#mlp' },
+  layernorm: { t: '层归一化', en: 'LayerNorm', d: String.raw`对每个位置的向量减去均值、除以标准差，再乘可学习的系数：\(\mathbf g\odot(\mathbf x-\mu)/\sigma + \mathbf b\)。`, at: 'transformer#norm' },
+  rmsnorm: { t: 'RMSNorm', en: 'RMSNorm', d: String.raw`只除以均方根的归一化：\(\mathbf g\odot\mathbf x/\sqrt{\tfrac1d\sum_i x_i^2}\)。比 LayerNorm 省，效果相当，是现在的标准。`, at: 'transformer#norm' },
+  'pre-norm': { t: 'Pre-Norm', en: 'pre-normalization', d: String.raw`只对子层的输入做归一化，残差路径不经过归一化：\(\mathbf x + F(\operatorname{Norm}(\mathbf x))\)。训练稳定，但残差流会随层数变长。`, at: 'transformer#norm' },
+  'perm-equiv': { t: '置换等变', en: 'permutation equivariance', d: '把输入的顺序打乱，输出只是同样地被打乱，数值不变。不带位置信息的注意力就是这样，因此分不清顺序。', at: 'transformer#position' },
+  'pos-enc': { t: '位置编码', en: 'positional encoding', d: '向模型注入 token 顺序信息的方法：正弦编码、可学习的位置向量、相对位置偏置、RoPE 等。', at: 'transformer#position' },
+  rope: { t: 'RoPE', en: 'rotary position embedding', d: String.raw`按位置旋转 query 和 key：第 \(i\) 个二维平面转 \(m\theta_i\)，\(\theta_i = b^{-2i/d}\)。旋转后点积只依赖相对位置 \(n-m\)。`, at: 'transformer#position' },
+  flops: { t: 'FLOPs', en: 'floating-point operations', d: String.raw`浮点运算次数，一次乘加记 2 次。稠密模型前向每 token 约 \(2N\)，训练约 \(6N\)（\(N\) 为参数量）。注意与表示“每秒运算次数”的 FLOPS 区分。`, at: 'transformer#params' },
 };

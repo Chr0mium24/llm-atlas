@@ -15,7 +15,7 @@ A.defineDemo('model-size', function (mount) {
       const gb = (P * 1e9 * b) / 8 / 1e9 * 1.15;
       h += `<tr><td>${n}</td><td class="num">${b}</td><td class="num">${gb >= 1000 ? (gb / 1000).toFixed(2) + ' TB' : gb.toFixed(1) + ' GB'}</td>` + DEV.map(([, cap]) => (gb <= cap ? `<td class="fit" style="color:var(--good-ink)">✓ 可以</td>` : gb <= cap * 1.6 ? `<td class="fit" style="color:var(--s4)">△ 需卸载</td>` : `<td class="fit muted">✗ 放不下</td>`)).join('') + '</tr>';
     });
-    out.innerHTML = h + '</table><p class="hint">“需卸载”= 超出不到 60%，可以把部分层或 MoE 专家放到 CPU 内存，速度会明显下降。这里只算权重；长上下文的 KV cache 要另算（第 8 章）。</p>';
+    out.innerHTML = h + '</table><p class="hint">“需卸载”= 超出不到 60%，可以把部分层或 MoE 专家放到 CPU 内存，速度会明显下降。这里只算权重；长上下文的 KV cache 要另算（' + A.cref('long-context') + '）。</p>';
   }
   draw();
 });

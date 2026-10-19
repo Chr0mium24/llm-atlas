@@ -9,7 +9,7 @@
     { part: '一 · Transformer 怎么工作' },
     { s: 'tokens', t: '分词与嵌入', st: 'new' },
     { s: 'attention', t: '注意力机制', st: 'new' },
-    { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'old' },
+    { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'new' },
     { s: 'generation', t: '自回归生成与采样', st: 'old' },
     { part: '二 · 预训练' },
     { s: 'data', t: '预训练数据', st: 'todo' },
@@ -69,6 +69,7 @@
   A.chapters = CHAPTERS.filter((c) => c.s);
   A.ch = (slug) => CHAPTERS.find((c) => c.s === slug);
   A.chLabel = (c) => (c.n === '序' ? '序章' : c.n === '附' ? '附录' : c.home ? '' : '第 ' + c.n + ' 章');
+  A.cref = (slug) => { const c = A.ch(slug); return c ? A.chLabel(c) : ''; };
   A.STATUS = { new: '新版', old: '旧版', todo: '待写' };
 
   /* ---------- DOM ---------- */

@@ -1,6 +1,6 @@
 /* param-calc — interactive demo (moved from ch03-transformer.html) */
 A.defineDemo('param-calc', function (mount) {
-  const { bd } = A.demo(mount, '参数量计算器', '稠密模型；MoE 见第 7 章');
+  const { bd } = A.demo(mount, '参数量计算器', '稠密模型；MoE 见' + A.cref('moe'));
   const PRESETS = {
     'GPT-2 small': { d: 768, L: 12, h: 12, kv: 12, ff: 3072, V: 50257, glu: false, tied: true },
     'GPT-3 175B': { d: 12288, L: 96, h: 96, kv: 96, ff: 49152, V: 50257, glu: false, tied: true },

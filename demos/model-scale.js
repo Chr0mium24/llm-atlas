@@ -9,7 +9,7 @@ A.defineDemo('model-scale', function (mount) {
   ];
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   bd.append(A.el('div', { class: 'legend', html: '<span><i style="background:var(--s1);border-radius:50%"></i>总参数（决定要多大显存）</span><span><i style="background:var(--s2);border-radius:50%"></i>激活参数（决定每 token 计算量）</span><span>竖线连接同一个模型；Muse Spark Open 未公布激活参数</span>' }));
-  bd.append(A.el('p', { class: 'hint' }, '2023 年的开源模型是 70B 级稠密模型，总参数等于激活参数。2026 年总参数涨到 1–3T，激活参数仍然维持在 10–100B：MoE 让知识容量和计算量脱钩（第 7 章），量化让这么多参数能放得下（第 9 章）。'));
+  bd.append(A.el('p', { class: 'hint' }, '2023 年的开源模型是 70B 级稠密模型，总参数等于激活参数。2026 年总参数涨到 1–3T，激活参数仍然维持在 10–100B：MoE 让知识容量和计算量脱钩（' + A.cref('moe') + '），量化让这么多参数能放得下（' + A.cref('quantization') + '）。'));
   let hov = -1, pts = [];
   const fmtDate = (d) => { const y = Math.floor(d), m = Math.min(12, Math.max(1, Math.round((d - y) * 12) + 1)); return y + '-' + String(m).padStart(2, '0'); };
   const view = A.canvas(cv, { aspect: 0.48 }, (ctx, W, H) => {

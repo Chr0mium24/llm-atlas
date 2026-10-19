@@ -2,7 +2,7 @@
 A.defineDemo('block-diagram', function (mount) {
   const { bd } = A.demo(mount, '现代 Transformer 块（点击组件）', 'Llama 风格');
   const INFO = {
-    emb: ['词嵌入', '把 token id 换成 d 维向量（第 1 章）。从这里开始，每个位置的向量就是一条“残差流”。'],
+    emb: ['词嵌入', '把 token id 换成 d 维向量（' + A.cref('tokens') + '）。从这里开始，每个位置的向量就是一条“残差流”。'],
     norm1: ['RMSNorm', '只按均方根缩放：x / sqrt(mean(x²)) · g。没有减均值和偏置，比 LayerNorm 更便宜。放在子层<b>之前</b>（Pre-Norm），残差路径上就没有归一化，梯度可以直接传过去。'],
     attn: ['多头自注意力（GQA + RoPE）', '先算 Q、K、V，对 Q、K 施加 RoPE 旋转，再做带因果掩码的缩放点积注意力。GQA 让多个 Q 头共享一组 K/V 头（比如 64 个 Q 头配 8 个 KV 头），KV cache 变成原来的 1/8。这是唯一在 token 之间交换信息的地方。'],
     add1: ['残差相加', 'x ← x + Attn(Norm(x))。注意力的输出是在原向量上“增量修改”，不是替换。'],
@@ -11,7 +11,7 @@ A.defineDemo('block-diagram', function (mount) {
     add2: ['残差相加', 'x ← x + MLP(Norm(x))。'],
     stack: ['× L 层', '同样的块重复 L 次（Llama 3 8B 是 32 层，70B 是 80 层，Kimi K3 是 93 层）。每层的参数不同，结构相同。'],
     normf: ['最终 RMSNorm', '所有层之后再归一化一次。'],
-    head: ['输出层（LM Head）', '乘以 d×V 的矩阵得到 V 个 logit，softmax 后得到下一个 token 的概率。训练时和真实的下一个 token 算交叉熵；推理时从这个分布里采样（第 4 章）。'],
+    head: ['输出层（LM Head）', '乘以 d×V 的矩阵得到 V 个 logit，softmax 后得到下一个 token 的概率。训练时和真实的下一个 token 算交叉熵；推理时从这个分布里采样（' + A.cref('generation') + '）。'],
   };
   const svgNS = 'http://www.w3.org/2000/svg';
   const W = 360, H = 560;
