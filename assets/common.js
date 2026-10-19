@@ -12,7 +12,7 @@
     { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'new' },
     { s: 'generation', t: '自回归生成与采样', st: 'new' },
     { part: '二 · 预训练' },
-    { s: 'data', t: '预训练数据', st: 'todo' },
+    { s: 'data', t: '预训练数据', st: 'new' },
     { s: 'scaling', t: '规模定律与优化器', st: 'old' },
     { part: '三 · 后训练' },
     { s: 'sft', t: 'SFT 与偏好优化', st: 'todo' },

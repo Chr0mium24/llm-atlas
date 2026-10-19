@@ -112,4 +112,17 @@ window.ATLAS_TERMS = {
   mtp: { t: '多 token 预测', en: 'multi-token prediction (MTP)', d: '训练时额外预测后面第 2、3 个 token，训练信号更密；推理时这些额外预测可作为投机解码的草稿。DeepSeek-V3 采用。', at: 'generation#beyond' },
   'diffusion-lm': { t: '扩散语言模型', en: 'diffusion language model', d: '从全部被遮住的序列出发，多轮并行地填写和修改各位置，而不是从左到右逐个生成。代表：LLaDA、Gemini Diffusion、Mercury。', at: 'generation#beyond' },
   calibration: { t: '校准', en: 'calibration', d: '模型给出的概率与实际正确率是否一致：说 70% 有把握的答案，是否大约 70% 是对的。后训练常使模型过度自信。', at: 'generation#myths' },
+
+  // ---- data (data.html)
+  'common-crawl': { t: 'Common Crawl', en: 'Common Crawl', d: '非营利组织自 2008 年起定期抓取全网并免费公开的网页存档，每次抓取数十亿网页，是绝大多数预训练语料的来源。', at: 'data#why' },
+  jaccard: { t: 'Jaccard 相似度', en: 'Jaccard similarity', d: String.raw`两个集合交集大小除以并集大小：\(J(A,B) = |A\cap B|/|A\cup B|\)，0 到 1。去重时 A、B 是两篇文档的片段集合。`, at: 'data#dedup' },
+  minhash: { t: 'MinHash', en: 'MinHash', d: String.raw`用随机哈希函数取集合的最小哈希值作为签名：两个集合最小值相等的概率恰好是它们的 Jaccard 相似度。配合 LSH 分桶，可在数十亿文档中快速找到近似重复。`, at: 'data#dedup' },
+  'quality-classifier': { t: '质量分类器', en: 'quality classifier', d: '给每篇文档打分、只保留高分文档的小模型。正例可以是“像维基百科”“像优质问答”，或由大模型按教育价值标注（FineWeb-Edu）。', at: 'data#quality' },
+  'data-mixture': { t: '数据配比', en: 'data mixture', d: '网页、代码、数学、论文、书籍、多语言等各类数据在训练中所占的比例。通常在小模型上搜索后外推到大模型。', at: 'data#mixture' },
+  'mid-training': { t: '中期训练（退火）', en: 'mid-training / annealing', d: '预训练末段学习率降到接近 0 时，换用质量最高的数据（数学、代码、合成推理和智能体数据）。对最终能力影响很大。', at: 'data#mixture' },
+  'synthetic-data': { t: '合成数据', en: 'synthetic data', d: '由模型生成的训练数据：改写网页、生成教科书和习题、蒸馏推理过程等。2024 年后成为预训练的重要组成部分。', at: 'data#synthetic' },
+  rephrasing: { t: '改写', en: 'rephrasing', d: '让模型把已有文本改写成问答、百科、要点等不同形式。不增加新信息，但让知识以多种形式出现，更容易被模型存成可检索的形式。', at: 'data#synthetic' },
+  'model-collapse': { t: '模型崩溃', en: 'model collapse', d: '递归地只用前代模型生成的数据训练，分布的长尾逐代消失，最终塌缩成少数模式。保留并累积真实数据可以避免。', at: 'data#synthetic' },
+  'data-wall': { t: '数据墙', en: 'data wall', d: '公开的高质量人类文本约 300 万亿 token，按现有趋势将在 2026–2032 年间用完（Epoch AI 估计）。', at: 'data#limits' },
+  memorization: { t: '记忆（训练数据）', en: 'memorization', d: '模型逐字背下并能复现部分训练数据。随模型规模、数据重复次数和提示长度增长，去重可显著缓解。', at: 'data#limits' },
 };

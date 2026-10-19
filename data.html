@@ -12,21 +12,246 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>预训练数据</h1>
-  <p class="lede">模型的知识几乎都来自预训练数据。数据怎么采、怎么洗、怎么配比，越来越多的数据为什么是模型自己写的。</p>
+  <h1>预训练数据：从几百 TB 网页到 30 万亿个 token</h1>
+  <p class="lede">同样的结构、同样的训练目标，模型能力的差别首先来自数据。这一章沿着一条数据流水线走一遍：网页怎样被抽取成文本、怎样去重、怎样判断质量，各类数据按什么比例混合、在哪个阶段使用；然后讲 2024 年后越来越重要的合成数据，它为什么有效、会不会让模型“崩溃”；最后是数据的边界：高质量文本快用完了吗，模型会背下训练数据吗，版权问题走到了哪一步。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（5.1）。</div>
+<div class="bridge">第一部分讲清了模型怎样从数据中学习：最小化下一个 token 的交叉熵。损失的下限是数据本身的熵，模型学到什么、学得多好，完全取决于喂给它的文本。Llama 2 到 Llama 3 的结构几乎没变，训练数据从 2 万亿 token 增加到 15 万亿、过滤也更严格，能力就上了一个台阶。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>token、分词：第 <a class="xref" data-ref="tokens"></a> 章</li>
+    <li>交叉熵、困惑度、n-gram：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>集合的交与并、概率、指数函数：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+  </ul>
+</div>
+
+<h2 id="why">数据规模：每两年涨一个数量级</h2>
+<div class="tablewrap"><table>
+  <tr><th>模型</th><th>时间</th><th>预训练 token 数</th><th>备注</th></tr>
+  <tr><td>GPT-2</td><td>2019</td><td>约 100 亿</td><td>WebText：Reddit 上获得 3 个以上赞的外链网页，40 GB</td></tr>
+  <tr><td>GPT-3</td><td>2020</td><td>3000 亿</td><td>过滤后的 Common Crawl + 书籍 + 维基百科</td></tr>
+  <tr><td>Chinchilla</td><td>2022</td><td>1.4 万亿</td><td>证明此前的模型“数据不够”（第 <a class="xref" data-ref="scaling"></a> 章）</td></tr>
+  <tr><td>Llama 3</td><td>2024</td><td>15 万亿</td><td>8B 模型也训练 15T，远超“算力最优”</td></tr>
+  <tr><td>Qwen3</td><td>2025</td><td>36 万亿</td><td>覆盖 119 种语言</td></tr>
+  <tr><td>DeepSeek V4</td><td>2026</td><td>32–33 万亿</td><td>过滤掉机器生成的网页文本；中期训练加入智能体数据</td></tr>
+</table></div>
+<p>这些 token 绝大部分来自<dfn data-t="common-crawl">Common Crawl</dfn>：一个非营利组织从 2008 年起定期抓取全网，每次抓取包含数十亿个网页，免费公开。其余来自代码仓库、学术论文、书籍、百科、数学网页，以及越来越多的合成数据。原始网页的绝大部分不能直接用：导航栏、广告、模板页、乱码、重复转载、垃圾内容。下面按流水线的顺序，看它们是怎样被一层层筛掉的。</p>
+
+<h2 id="pipeline">流水线：从网页到训练语料</h2>
+<ol>
+  <li><b>抽取正文。</b>从网页的 HTML 里去掉导航、广告、页脚，只留正文。抽取工具的选择影响很大：FineWeb（2024）发现，自己用 trafilatura 从原始 HTML 抽取，明显好于直接用 Common Crawl 提供的纯文本版本。</li>
+  <li><b>语言识别。</b>用一个小分类器（如 fastText）判断语言，按语种分流。</li>
+  <li><b>启发式过滤。</b>一组手写规则：太短或太长的文档、标点和符号比例异常、大量重复行、不以标点结尾的行占比过高、包含脏词表中的词等。C4（2019）和 Gopher（2021）的规则集是后来工作的起点。</li>
+  <li><b>去重。</b>完全相同和高度相似的文档只留一份（下一节）。</li>
+  <li><b>质量打分。</b>用一个模型给每篇文档打分，只保留高分的（再下一节）。</li>
+  <li><b>安全与清理。</b>去除个人信息（邮箱、电话、身份证号）、有害内容，并删除与评测基准重合的片段（去污染，第 <a class="xref" data-ref="evaluation"></a> 章）。</li>
+  <li><b>分词与配比。</b>按领域打标签、分词，按设定的比例混合成最终的训练流。</li>
+</ol>
+<p>每一步都会砍掉一大块。DCLM（2024）从 240 万亿 token 的原始网页池出发，经过规则过滤、去重和模型打分，最终的高质量子集约 3.8 万亿 token，只剩约 1.6%。</p>
+
+<h2 id="dedup">去重：为什么、怎么做</h2>
+<p>网上的内容大量重复：新闻被几十家网站转载并略作改写，商品页、法律声明、论坛签名是同一个模板换几个字。重复数据有三个害处：浪费算力（同样的内容学多遍），扭曲分布（被转载多的内容权重虚高），以及让模型<b>背下</b>原文。Lee 等（2021）在 C4 中发现一个 61 词的句子重复出现了 6 万多次；去重之后，模型逐字输出训练文本的频率降到原来的十分之一。</p>
+<p>完全相同的文档用哈希值就能找出来。难的是“几乎相同”的文档。先把每篇文档切成长度为 \(n\) 的连续片段（shingle），得到一个片段集合，再用两个集合的<dfn data-t="jaccard">Jaccard 相似度</dfn>衡量两篇文档有多像：交集的大小除以并集的大小。直接两两比较数十亿篇文档不可能（\(10^{18}\) 对），<dfn data-t="minhash">MinHash</dfn> 用一个巧妙的随机化技巧把每篇文档压成一个短签名：</p>
+<div class="fx">
+\[ \Pr\Big[\min_{a\in A} h(a) = \min_{b\in B} h(b)\Big] = \frac{|A\cap B|}{|A\cup B|} = \htmlClass{sym-J}{J(A, B)} \]
+  <div class="fx-read">取一个随机哈希函数 \(h\)，分别求两个集合里的最小哈希值。两者相等的概率，恰好等于两个集合的 Jaccard 相似度。用 \(k\) 个独立的哈希函数重复 \(k\) 次，相等的比例就是 \(J\) 的估计。</div>
+  <dl class="fx-syms">
+    <dt data-sym="J">\(J(A,B)\)</dt><dd>Jaccard 相似度，0（毫无重合）到 1（完全相同）</dd>
+  </dl>
+  <div class="fx-eg">A 有 100 个片段，B 有 100 个片段，共有 80 个。并集 120，\(J = 80/120 = 0.67\)。用 112 个哈希函数，期望约 75 个最小值相等。</div>
+  <div class="fx-step" data-tex="A\cup B = \{\,\dots\,\}\ \xrightarrow{\ h\ }\ \text{每个元素得到一个随机数}">第 1 步：把哈希函数看成给 \(A\cup B\) 中每个元素分配一个随机数。</div>
+  <div class="fx-step" data-tex="x^\ast = \arg\min_{x\in A\cup B} h(x)\quad\text{在 }A\cup B\text{ 中均匀随机}">第 2 步：哈希值最小的那个元素 \(x^\ast\)，等可能地是 \(A\cup B\) 中的任何一个。</div>
+  <div class="fx-step" data-tex="\min_A h = \min_B h \iff \htmlClass{c-new}{x^\ast \in A\cap B}">第 3 步：两个集合的最小值相等，当且仅当 \(x^\ast\) 同时属于 A 和 B。</div>
+  <div class="fx-step" data-tex="\Pr = \frac{|A\cap B|}{|A\cup B|} = J(A,B)">第 4 步：\(x^\ast\) 均匀分布，落在交集里的概率就是交集与并集的大小之比。</div>
+</div>
+<p>有了签名，还要避免两两比较。<b>局部敏感哈希（LSH）</b>把 \(k = b\times r\) 个签名值切成 \(b\) 段、每段 \(r\) 个，只要有一段完全相同，两篇文档就进同一个桶，成为候选对：</p>
+<div class="fx">
+\[ \Pr[\text{成为候选}] = 1 - \big(1 - \htmlClass{c-new}{s^{\,r}}\big)^{\,b} \]
+  <div class="fx-read">一段的 \(r\) 个值全部相同的概率是 \(s^r\)；\(b\) 段全都不同的概率是 \((1 - s^r)^b\)；用 1 减去它，就是至少一段相同的概率。这是一条 S 形曲线，在 \(s\approx (1/b)^{1/r}\) 附近陡峭上升。</div>
+  <div class="fx-eg">FineWeb 的设置：\(b = 14\)，\(r = 8\)，阈值约 0.72。\(s = 0.85\) 的一对，成为候选的概率 98.8%；\(s = 0.7\)，56%；\(s = 0.5\)，只有 5.3%。</div>
+</div>
+<div data-demo="minhash-lsh"></div>
+<aside class="dispute surprise">
+  <h4>意外：去重太彻底，模型反而变差</h4>
+  <dl>
+    <dt>原以为</dt><dd>重复越少越好，应该在全部数据上做一次全局去重。</dd>
+    <dt>实际发现</dt><dd>FineWeb 团队对 96 次 Common Crawl 抓取做全局 MinHash 去重后，训练出的模型并不比不去重更好。检查发现：在较早的抓取中，全局去重删掉了 90% 的数据，而被删掉的那部分质量反而高于留下的部分。改成每次抓取内部单独去重，效果明显更好。</dd>
+    <dt>为什么</dt><dd>高质量内容（好文章、经典教程）恰恰最常被转载和反复抓取，全局去重让它们只剩一份；而独一无二的往往是低质量的长尾垃圾。重复次数本身携带了“这篇值得一看”的信号。</dd>
+    <dt>现在怎么看</dt><dd>去重仍然必要，但要适度：去掉大规模的模板和近似副本，同时允许高质量内容保留适当的重复。去重的粒度和范围需要实验确定，而不是越狠越好。</dd>
+  </dl>
+</aside>
+
+<h2 id="quality">质量过滤：让模型来判断哪些文本值得学</h2>
+<p>启发式规则只能挡住明显的垃圾。2024 年以后，决定数据质量的主要是<dfn data-t="quality-classifier">质量分类器</dfn>：训练一个小模型给每篇文档打分，只保留高分的。几种代表性做法：</p>
 <ul>
-  <li>从 Common Crawl 到可用语料：去重、语言识别、质量分类器、毒性过滤</li>
-  <li>改写与合成：Nemotron-CC、BeyondWeb，为什么改写能提高每个 token 的信息密度</li>
-  <li>配比与课程：数据混合定律、退火阶段换高质量数据、中期训练</li>
-  <li>合成数据的陷阱：模仿评测格式、模型崩溃以及“累积而不替换”</li>
-  <li>数据墙：高质量人类文本还剩多少，视频与交互数据能否接替</li>
+  <li><b>参考困惑度</b>（CCNet, 2019）：用维基百科训练一个 n-gram 语言模型，只保留在它看来困惑度低（像维基百科）的网页。</li>
+  <li><b>“像好来源”分类器</b>：GPT-3 训练分类器区分“高质量来源（书籍、维基、WebText）”和普通网页；DCLM（2024）用指令数据和 Reddit ELI5 版块的高赞回答作为正例，训练一个 fastText 分类器，简单却在当时的同类方法中最好。</li>
+  <li><b>LLM 当标注员</b>：FineWeb-Edu（2024）让 Llama 3 70B 给 45 万篇网页按“教育价值”打 0–5 分，用这些标注训练一个小分类器，再给全部 15 万亿 token 打分。保留 3 分以上的只剩 1.3 万亿 token，但用它训练的模型在知识和推理基准上大幅领先。</li>
+</ul>
+<aside class="dispute">
+  <h4>“高质量”是不是在向基准靠拢</h4>
+  <dl>
+    <dt>主张</dt><dd>按教育价值或“像优质问答”过滤的数据，用更少的 token 训练出更强的模型，这是实打实的数据效率提升。</dd>
+    <dt>反方</dt><dd>这些分类器的正例本身就和 MMLU、ARC 这类考试题的风格接近，提升集中在这类基准上，常识、创作类任务的提升小得多，有时还下降；过滤还会削弱多样性，让小语种、口语、小众领域的数据被系统性地丢掉。2026 年的研究还发现，一些合成指令数据看似提升了分数，其实只是让模型熟悉了评测的格式。</dd>
+    <dt>现在怎么看</dt><dd>质量过滤确实有效，但“质量”的定义带着偏好。主流做法是多个分类器、多个阈值组合，并按领域分别控制保留比例，避免某一种口味主导整个语料。</dd>
+  </dl>
+</aside>
+
+<h2 id="mixture">配比、重复与训练阶段</h2>
+<p>清洗好的数据按来源和领域分成若干堆：网页、代码、数学、学术论文、书籍、多语言等。<dfn data-t="data-mixture">数据配比</dfn>决定每一堆占多少。配比很难靠直觉定：代码数据能提升非代码任务的推理（Aryabumi 等, 2024 的实验中相对提升约 8%），但占比过高又会损害自然语言能力。常用办法是在小模型上搜索配比再外推到大模型，例如 DoReMi（2023）用一个小代理模型自动调整各领域权重，RegMix（2024）训练几百个小模型拟合“配比 → 损失”的回归模型。</p>
+<p>高质量数据有限，就不得不重复使用。重复几遍还算“新数据”？Muennighoff 等（2023）训练了 400 多个模型，拟合出重复数据的“等效数据量”：</p>
+<div class="fx">
+\[ D' = \htmlClass{sym-U}{U} + U\,\htmlClass{sym-Rs}{R^\ast}\Big(1 - e^{-\htmlClass{sym-R}{R}/R^\ast}\Big),\qquad R^\ast\approx 15 \]
+  <div class="fx-read">\(U\) 份不重复的数据，额外重复 \(R\) 遍，相当于多少份新数据。重复几遍时几乎和新数据一样好；重复次数越多，每多一遍的价值指数衰减，最终最多相当于 \(U(1 + R^\ast)\)，即约 16 倍。</div>
+  <dl class="fx-syms">
+    <dt data-sym="U">\(U\)</dt><dd>不重复的数据量（token 数）</dd>
+    <dt data-sym="R">\(R\)</dt><dd>在第一遍之外又重复的遍数（共训练 \(1 + R\) 遍）</dd>
+    <dt data-sym="Rs">\(R^\ast\)</dt><dd>拟合得到的常数，约 15，表示重复的价值衰减到 \(1/e\) 所需的遍数</dd>
+  </dl>
+  <div class="fx-eg">训练 5 遍（\(R = 4\)）：\(D' = U(1 + 15\times(1 - e^{-4/15})) = 4.51U\)，相当于 5 份新数据的 90%。训练 16 遍（\(R = 15\)）：\(D' = 10.5U\)，只相当于 16 份新数据的 65%。训练 41 遍：\(D'\approx 15U\)，不到 37%。</div>
+</div>
+<p>结论是：重复 4 遍左右几乎不吃亏，这给“数据不够”留出了余地。另一个重要的手段是分阶段训练。现代预训练通常分三段：</p>
+<ol>
+  <li><b>主体阶段</b>：消耗 90% 以上的 token，以大规模过滤后的网页为主，学到广泛的知识和语言能力。</li>
+  <li><b><dfn data-t="mid-training">中期训练</dfn>（mid-training，或叫退火）</b>：学习率逐步降到接近 0 的最后一段，换上质量最高的数据：数学、代码、教科书、合成的问答和推理数据。Llama 3 报告，8B 模型在退火阶段换用高质量数据，GSM8K 提升 24%。DeepSeek V4 在这一阶段加入了智能体数据来提升编程能力。</li>
+  <li><b>长上下文扩展</b>：用长文档继续训练，把序列长度逐步拉长（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
+</ol>
+<p>为什么高质量数据要放在最后？学习率很小时，模型的参数只做小幅精调，最后见到的数据对最终状态影响最大；同时，学习率退火本身会让损失明显下降（第 <a class="xref" data-ref="scaling"></a> 章的 WSD 调度），两者叠加。Llama 3 甚至把“小规模退火实验”当作评估一批新数据价值的标准方法。</p>
+
+<h2 id="synthetic">合成数据：让模型改写、出题、写教科书</h2>
+<p>2023 年的 phi-1 用 GPT-3.5 生成的“教科书式”代码数据，以 1.3B 参数做到了当时远大于它的模型才有的代码能力，第一次让人认真对待<dfn data-t="synthetic-data">合成数据</dfn>。2024–26 年，合成数据从点缀变成了预训练的重要组成部分：</p>
+<ul>
+  <li><b><dfn data-t="rephrasing">改写</dfn>（rephrasing）</b>：让一个模型把网页改写成维基百科风格、问答对、知识要点等不同形式。WRAP（2024）报告预训练速度提升约 3 倍；Nemotron-CC（2024）的 6.3 万亿 token 中有 1.9 万亿是改写生成的；BeyondWeb（2025）发现三分之一改写数据加三分之二原始网页，收敛快 5–10 倍。Kimi K2 对知识类和数学类数据也做了大规模改写。</li>
+  <li><b>生成新内容</b>：按主题清单生成教科书、练习题和解答（Cosmopedia、Hunyuan 的合成管线）。</li>
+  <li><b>蒸馏式数据</b>：用更强的模型生成推理过程，放进中期训练（第 <a class="xref" data-ref="distillation"></a> 章）。</li>
+</ul>
+<p>为什么改写有用？同样的知识换一种说法，没有增加任何新信息。一个解释是改写提高了每个 token 的信息密度（去掉了网页里的噪声）；另一个更深的解释来自受控实验：</p>
+<details class="deep"><summary>知识要以多种形式出现，模型才能“取出来”：Physics of Language Models 的实验</summary><div class="in">
+<p>Allen-Zhu 与 Li（2023–24）构造了 10 万个虚构人物的传记（出生日期、城市、大学、专业、公司），用来预训练模型，再测试它能否回答“X 在哪所大学读书”。</p>
+<p><b>只有一种写法时</b>：每个人的传记在训练集中只出现一种措辞。模型能逐字背出传记，但对没在微调中见过的人，几乎答不出问题，准确率接近随机。探针分析显示，知识被存成了“依附于这段文字的前后文”，而不是挂在人名上。</p>
+<p><b>有多种写法时</b>：同一个人的传记有 5 种不同的措辞、句子顺序打乱。模型对新人物的问答准确率升到 90% 以上：知识被存成了“人名 → 属性”的形式，可以被任意问法取出。</p>
+<p>同一系列的另一个结果是知识容量：充分训练时（每条知识见过约 1000 次），模型大约能存储每个参数 2 比特的知识，与结构关系不大，量化到 8 比特也不变；只见过 100 次的罕见知识，容量减半。</p>
+\[ \text{可存储的知识量}\ \approx\ 2\ \text{bit} \times \text{参数量}\qquad(\text{7B 模型约 }1.4\times 10^{10}\text{ bit}) \]
+<p><b>这个推导告诉我们：</b>改写的价值不在于“增加信息”，而在于让同一条知识以多种形式出现，迫使模型把它存成可检索的形式。这也解释了一个奇怪的现象：只读过“A 是 B”的模型，常常答不出“B 是什么”（见下面的反转诅咒）。</p>
+</div></details>
+<p>用模型生成的数据训练模型，最大的担心是越训越差。用一个最简单的例子就能看清机制：</p>
+<div class="fx">
+\[ \mathbb E\big[\hat\sigma_k^2\big] = \Big(1 - \frac{1}{n}\Big)^{k}\sigma^2 \ \xrightarrow{\ k\to\infty\ }\ 0 \]
+  <div class="fx-read">真实数据服从方差为 \(\sigma^2\) 的正态分布。每一代用 \(n\) 个样本拟合一个正态分布（最大似然估计），再从拟合出的分布里采样，交给下一代。每一代的方差估计平均偏小一点，\(k\) 代之后方差趋于 0：分布越来越窄，尾部消失。</div>
+  <dl class="fx-syms">
+    <dt data-sym="sk">\(\hat\sigma_k^2\)</dt><dd>第 \(k\) 代模型估计出的方差</dd>
+  </dl>
+  <div class="fx-eg">\(n = 100\)，100 代之后期望方差只剩 \(0.99^{100}\approx 37\%\)。\(n = 10\)，20 代后只剩 \(0.9^{20}\approx 12\%\)。实际上随机波动会让它崩得更快：某一代偶然估得偏小，后面就在偏小的基础上继续。</div>
+</div>
+<p>这就是<dfn data-t="model-collapse">模型崩溃</dfn>（Shumailov 等, Nature 2024）：递归地用自己生成的数据训练，先丢掉分布的长尾，最后塌缩成少数几种模式。下面的演示用一个长尾的词频分布模拟这个过程，并比较两种训练方式：</p>
+<div data-demo="model-collapse"></div>
+<aside class="dispute">
+  <h4>合成数据会不会让模型崩溃</h4>
+  <dl>
+    <dt>主张</dt><dd>互联网上模型生成的文本越来越多，未来的模型不可避免地会在前代模型的输出上训练，模型崩溃是迫在眉睫的威胁。</dd>
+    <dt>反方</dt><dd>崩溃的实验条件是“每一代完全替换为合成数据”。Gerstgrasser 等（2024）证明，只要保留真实数据、把合成数据累积进去，误差有一个不随代数增长的上界。2026 年的研究进一步表明，经过筛选（例如用验证器挑出正确的、用多样性指标挑出不重复的）的合成数据不一定导致崩溃。</dd>
+    <dt>现在怎么看</dt><dd>不加筛选、大量替换真实数据确实有害，这是 DeepSeek V4 专门过滤掉网上机器生成文本的原因。但有控制地使用合成数据，以真实数据为锚、做好筛选和多样性控制，已经是各家的标准做法。也有实验室（据报道如 MiniMax）选择在预训练中不用合成数据，路线并未统一。</dd>
+  </dl>
+</aside>
+
+<h2 id="limits">边界：数据墙、记忆与版权</h2>
+<p><b><dfn data-t="data-wall">数据墙</dfn>。</b>Epoch AI（Villalobos 等, 2024）估计，公开的高质量人类文本总量约 300 万亿 token；按当前增长趋势，会在 2026 到 2032 年之间被用完。2026 年的前沿模型已经训练到 30 万亿 token 量级，距离这个上限只差一个数量级。应对的办法有几条：适度重复（上文的 \(D'\)）、合成数据、更多的多模态数据（视频、音频、图像包含的 token 远多于文本），以及把算力转向不依赖人类文本的强化学习环境（第 <a class="xref" data-ref="rl"></a> 章）。</p>
+<p><b><dfn data-t="memorization">记忆</dfn>。</b>模型会逐字背下部分训练数据。Carlini 等（2021）从 GPT-2 中提取出了训练集里的姓名、电话和邮箱；2023 年，研究者让 ChatGPT 不停重复一个词，它在“发散”之后开始大段输出训练数据。记忆量随模型规模、数据重复次数和提示长度呈对数线性增长，去重是最有效的缓解手段。这也直接牵涉版权：模型能复述出受版权保护的原文，是诉讼中的关键证据。</p>
+<aside class="dispute surprise">
+  <h4>意外：学了“A 是 B”，推不出“B 是 A”</h4>
+  <dl>
+    <dt>原以为</dt><dd>知道“汤姆·克鲁斯的母亲是玛丽·李·菲佛”的模型，自然也知道“玛丽·李·菲佛的儿子是汤姆·克鲁斯”。</dd>
+    <dt>实际发现</dt><dd>Berglund 等（2023）称之为“反转诅咒”：用“A 是 B”形式的虚构事实微调模型，问“B 是谁”时准确率接近 0。真实模型上也有体现：GPT-4 回答“汤姆·克鲁斯的母亲是谁”的正确率约 79%，反过来问只有 33%。</dd>
+    <dt>为什么</dt><dd>自回归训练只学“给定前文预测后文”。“玛丽·李·菲佛”在网上几乎只出现在“汤姆·克鲁斯的母亲”之后，反方向的关联从没被训练过。这和上面 Physics of LMs 的发现是同一件事：知识以什么形式出现，就以什么方向被存储。</dd>
+    <dt>现在怎么看</dt><dd>这是训练目标和数据形式的局限，不是模型规模能自动解决的。改写数据（包括把事实反过来表述）能缓解；推理模型可以通过先在思维链中回忆相关信息来绕开一部分。</dd>
+  </dl>
+</aside>
+<p><b>版权。</b>训练数据大量包含受版权保护的作品，2023 年起诉讼不断。截至 2026 年下半年的进展（据报道，以法院文件为准）：美国 Bartz 诉 Anthropic 案中，法官认定用合法购买的书籍训练属于合理使用，但下载和保存盗版书库不是，Anthropic 以 15 亿美元和解，2026 年获最终批准；Kadrey 诉 Meta 案也判训练属于合理使用，但提示原告若能证明市场损害，结果可能不同；纽约时报诉 OpenAI 案仍在审理，尚无合理使用的判决；与原产品直接竞争的训练（Thomson Reuters 诉 Ross）被判不属于合理使用。德国的 GEMA 诉 OpenAI 案认定模型记住并输出歌词构成侵权。欧盟《人工智能法》要求通用模型提供者从 2025 年 8 月起公开训练数据摘要并遵守版权方的退出声明。产业和治理层面的讨论见第 <a class="xref" data-ref="industry"></a> 章。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">数据越多越好，把能找到的都放进去。</b>未经过滤的网页会拖累模型。DCLM 的最终语料只保留了原始网页池的约 1.6%；FineWeb-Edu 只有完整 FineWeb 的十分之一，在知识和推理类基准上却明显更好。</li>
+  <li><b class="m">重复的数据完全没用。</b>重复 4 遍左右的价值接近新数据；高质量内容的适度重复甚至是有益的（见“去重太彻底”）。</li>
+  <li><b class="m">合成数据必然导致模型崩溃。</b>崩溃发生在“完全替换”的条件下。保留真实数据、筛选合成数据，是现在各家都在用的做法。</li>
+  <li><b class="m">模型读过的东西它都“知道”。</b>只以一种形式出现的知识常常取不出来，也不能反向使用（反转诅咒）。知识要以多种形式出现才能被可靠地存储。</li>
+  <li><b class="m">预训练只是“读网页”。</b>2025 年后的预训练末段大量使用数学、代码、合成推理数据和智能体轨迹，与后训练的界限越来越模糊。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2018–2019</div>
+    <h4>用“人类投票”挑网页：WebText 与 C4</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>Common Crawl 噪声太大，直接用效果很差；书籍和维基百科又太少。</dd>
+      <dt>怎么解决</dt><dd>GPT-2 只收 Reddit 上获得至少 3 个赞的外链（WebText）；T5 用一组启发式规则清洗 Common Crawl，得到 750 GB 的 C4。</dd>
+      <dt>代价</dt><dd>规模小；规则粗糙，误删误留都多。</dd>
+      <dt>引出</dt><dd>能不能系统地、大规模地清洗整个 Common Crawl？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2020–2022</div>
+    <h4>多来源混合与“数据不够”的发现</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>单一来源的数据覆盖面窄；模型越来越大，数据跟不上。</dd>
+      <dt>怎么解决</dt><dd>GPT-3 用分类器过滤网页并混合多个来源；The Pile（2020）整合了 22 个来源；Chinchilla（2022）证明当时的模型都“训练不足”，每个参数应配约 20 个 token。</dd>
+      <dt>代价</dt><dd>需要的数据量骤增，人工精选的来源远远不够。</dd>
+      <dt>引出</dt><dd>只用网页，能不能洗出足够好的数据？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>精选来源还是纯网页</summary><div>RefinedWeb（Falcon, 2023）证明，只要过滤和去重做得够好，纯网页数据可以媲美精心挑选的多来源语料。此后的趋势是：网页是主体，代码、数学、论文等作为高价值的补充，而不是反过来。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023</div>
+    <h4>数据受限与合成数据的起步</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>高质量数据有限；复现大模型需要开放的数据集。</dd>
+      <dt>怎么解决</dt><dd>数据受限的规模定律（重复约 4 遍不吃亏）；phi-1 用“教科书式”合成数据训练小模型；RedPajama、SlimPajama、Dolma 等开放数据集出现。</dd>
+      <dt>代价</dt><dd>合成数据的风险（模型崩溃、模仿评测）开始被讨论。</dd>
+      <dt>引出</dt><dd>怎样更精确地判断“哪些数据好”？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>模型打分取代手写规则</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>启发式规则的天花板。</dd>
+      <dt>怎么解决</dt><dd>FineWeb / FineWeb-Edu 用 LLM 标注训练质量分类器；DCLM 系统比较各种过滤方法；Llama 3 用 15T token 和退火阶段的高质量数据；Nemotron-CC 大规模改写网页。</dd>
+      <dt>代价</dt><dd>“质量”的定义偏向特定风格；多样性下降。</dd>
+      <dt>引出</dt><dd>高质量人类文本快用完了，接下来怎么办？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">仍在争论</span>代码数据对推理的作用</summary><div>“训练代码让模型更会推理”一度是流行说法。Cohere 的系统实验支持代码对非代码推理有帮助，但也有研究发现效果主要体现在结构化、格式化的任务上。现在的共识是代码有益，但并非推理能力的主要来源。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>合成与改写成为主力，预训练与后训练的界限变模糊</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>数据墙临近；网上机器生成的文本越来越多，污染原始语料。</dd>
+      <dt>怎么解决</dt><dd>大规模改写（Kimi K2、Nemotron-CC v2、BeyondWeb）；中期训练成为独立阶段，加入推理和智能体数据；主动过滤机器生成的网页（DeepSeek V4）；用强化学习环境产生新的训练信号。</dd>
+      <dt>代价</dt><dd>合成数据的配方高度保密，难以复现和比较；版权诉讼的结果影响数据来源。</dd>
+      <dt>引出</dt><dd>给定数据和算力，模型该做多大、训练多久？（第 <a class="xref" data-ref="scaling"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 用 \(b = 14\)、\(r = 8\) 的 LSH 去重，一对 Jaccard 相似度为 0.8 的文档被抓到的概率是多少？想让阈值降到约 0.6，可以怎么调？</summary><div class="ans">\(0.8^8\approx 0.168\)，\((1 - 0.168)^{14}\approx 0.076\)，概率约 92.4%。阈值约为 \((1/b)^{1/r}\)：减小 \(r\) 或增大 \(b\) 都能降低阈值，例如 \(b = 20, r = 6\)：\((1/20)^{1/6}\approx 0.61\)。</div></details>
+<details class="quiz"><summary>2. 你有 5 万亿 token 的高质量数据，计划训练 20 万亿 token。按 \(R^\ast = 15\) 的公式，这相当于多少不重复的新数据？</summary><div class="ans">共 4 遍，\(R = 3\)。\(D' = 5\times(1 + 15\times(1 - e^{-0.2})) = 5\times(1 + 15\times 0.181) = 5\times 3.72\approx 18.6\) 万亿，相当于 20 万亿新数据的 93%。</div></details>
+<details class="quiz"><summary>3. 按每参数 2 比特的知识容量，一个 7B 模型最多能存多少条“某人的出生日期”这样的事实？（一条日期在 100 年范围内约有 \(\log_2 36500\approx 15\) 比特信息，再加上把它和人名关联的开销，按每条 30 比特估算。）</summary><div class="ans">\(7\times 10^9\times 2 = 1.4\times 10^{10}\) 比特，\(1.4\times 10^{10}/30\approx 4.7\times 10^8\)，约 5 亿条。这远多于维基百科的条目数，但知识要被见过足够多次（约 1000 次）才能达到这个容量，罕见知识存得远没有这么多。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2406.17557">The FineWeb Datasets</a>（Penedo 等, 2024）<span class="why">一份完整、坦率的网页数据处理实验记录，包括“去重太狠反而变差”的发现。</span></li>
+  <li><a href="https://arxiv.org/abs/2406.11794">DataComp-LM</a>（Li 等, 2024）<span class="why">在受控条件下比较各种过滤方法，得出“模型打分最有效”。</span></li>
+  <li><a href="https://arxiv.org/abs/2107.06499">Deduplicating Training Data Makes Language Models Better</a>（Lee 等, 2021）<span class="why">去重为什么重要，以及精确子串去重的做法。</span></li>
+  <li><a href="https://arxiv.org/abs/2305.16264">Scaling Data-Constrained Language Models</a>（Muennighoff 等, 2023）<span class="why">重复数据值多少，本章公式的来源。</span></li>
+  <li><a href="https://arxiv.org/abs/2309.14316">Physics of Language Models: Part 3.1</a>（Allen-Zhu 与 Li, 2023）<span class="why">为什么知识要以多种形式出现，改写有效的机制解释。</span></li>
+  <li><a href="https://www.nature.com/articles/s41586-024-07566-y">AI models collapse when trained on recursively generated data</a>（Shumailov 等, Nature 2024）与 <a href="https://arxiv.org/abs/2404.01413">Is Model Collapse Inevitable?</a>（Gerstgrasser 等, 2024）<span class="why">一正一反，对照阅读。</span></li>
+</ol>
+
+<div class="nextq">数据准备好了。下一个问题是怎样分配算力：同样的预算，是训练一个更大的模型，还是用更多数据训练一个小模型？损失随规模怎样下降，能否提前预测？优化器从 Adam 到 Muon 又改变了什么？下一章（第 <a class="xref" data-ref="scaling"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://arxiv.org/abs/2412.02595">Nemotron-CC</a> · <a href="https://arxiv.org/abs/2401.16380">Rephrasing the Web（WRAP）</a> · <a href="https://arxiv.org/abs/2306.11644">Textbooks Are All You Need（phi-1）</a> · <a href="https://arxiv.org/abs/2305.10429">DoReMi</a> · <a href="https://arxiv.org/abs/2407.01492">RegMix</a> · <a href="https://arxiv.org/abs/2408.10914">To Code, or Not To Code</a> · <a href="https://arxiv.org/abs/2407.21783">Llama 3（退火）</a> · <a href="https://arxiv.org/abs/2404.05405">Physics of LMs 3.3（知识容量）</a> · <a href="https://arxiv.org/abs/2309.12288">反转诅咒</a> · <a href="https://arxiv.org/abs/2012.07805">从 GPT-2 提取训练数据</a> · <a href="https://arxiv.org/abs/2311.17035">从 ChatGPT 提取训练数据</a> · <a href="https://arxiv.org/abs/2202.07646">Quantifying Memorization</a> · <a href="https://arxiv.org/abs/2211.04325">Will we run out of data?</a> · <a href="https://arxiv.org/abs/2601.22146">FineInstructions</a> · <a href="https://arxiv.org/abs/2605.07724">筛选过的合成数据不一定崩溃</a> · <a href="https://www.nortonrosefulbright.com/en/knowledge/publications/ce8eaa5f/ai-in-litigation-series-an-update-on-ai-copyright-cases-in-2026">2026 年 AI 版权诉讼综述</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
