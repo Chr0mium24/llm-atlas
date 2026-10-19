@@ -18,7 +18,7 @@ A.defineDemo('residual-depth', function (mount) {
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   const hint = A.el('p', { class: 'hint' }); bd.append(hint);
   const cols = A.series();
-  const MODES = { plain: { n: '直接堆叠', c: 3 }, res: { n: '加残差', c: 1 }, 'res-scaled': { n: '残差 + 分支缩小', c: 0 } };
+  const MODES = { plain: { n: '直接堆叠', c: 6 }, res: { n: '加残差', c: 1 }, 'res-scaled': { n: '残差 + 分支缩小', c: 0 } };
 
   // backward pass: g_{l} = (a·I + b·J_l)^T g_{l+1}; returns |g| at every layer (index 0 = first layer)
   function grads(m, L, sig) {

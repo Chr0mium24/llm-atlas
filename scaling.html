@@ -12,53 +12,252 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>规模定律与训练流水线</h1>
-  <p class="lede">2020 年以后，大模型进展的主线可以用一句话概括：<b>损失随算力、参数量、数据量按幂律平滑下降</b>。这条规律让“砸算力”变成可以预先算账的工程问题。拿到一个预训练好的“基座模型”之后，还要经过几轮后训练，它才会对话、推理和使用工具。</p>
+  <h1>规模定律与优化器：怎样把算力花在刀刃上</h1>
+  <p class="lede">2020 年以后，大模型进展的主线可以用一句话概括：损失随算力、参数量、数据量按幂律平滑下降。这条经验规律把“砸算力”变成了可以提前算账的工程问题：先用小模型做实验，拟合出曲线，再决定大模型做多大、训练多久。这一章讲规模定律是什么、怎样用、哪里会失灵；后半部分讲把算力转化为损失下降的另一个关键：优化器，从 Adam 到 2025 年开始取代它的 Muon。</p>
 </header>
 
-<h2 id="scaling">规模定律</h2>
-<p>Kaplan 等（OpenAI, 2020）发现，测试损失和参数量 N、数据量 D、算力 C 之间都是幂律关系，跨好几个数量级都成立。训练算力约为 <span class="math">C ≈ 6ND</span>（每个 token 前向 2N、反向 4N）。</p>
-<p>问题是：<b>给定算力预算，模型该做多大、喂多少数据？</b>Kaplan 当时的结论是优先把模型做大，GPT-3（175B 参数，只训练了 3000 亿 token）就是这个思路。2022 年 DeepMind 的 <b>Chinchilla</b> 重新做了实验，拟合出：</p>
-<div class="eq">L(N, D) = E + A / N<sup>α</sup> + B / D<sup>β</sup>&nbsp;&nbsp;&nbsp;(E=1.69, A=406.4, B=410.7, α=0.34, β=0.28)<span class="note">E 是数据本身的熵（不可约损失）；后两项分别是“模型太小”和“数据太少”带来的额外损失</span></div>
-<p>结论是 N 和 D 应该同比例增长，大约 <b>每个参数 20 个 token</b>。按这个标准，GPT-3 严重欠训练；70B 参数、训练 1.4T token 的 Chinchilla 比 280B 的 Gopher 更好。</p>
+<div class="bridge">上一章准备好了数据，第 <a class="xref" data-ref="transformer"></a> 章给出了算力的估算公式 \(C\approx 6ND\)。这一章回答：给定一笔算力预算，参数量 \(N\) 和数据量 \(D\) 该怎样分配？以及，用什么算法更新参数，才能让每一份算力换来尽可能多的损失下降？</div>
+
+<div class="prereq">
+  <ul>
+    <li>训练算力 \(6ND\)、参数量估算：第 <a class="xref" data-ref="transformer"></a> 章</li>
+    <li>交叉熵损失、数据的熵是损失的下限：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>数据重复与数据墙：第 <a class="xref" data-ref="data"></a> 章</li>
+    <li>梯度下降、学习率、对数坐标、矩阵与特征值：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+  </ul>
+</div>
+
+<h2 id="powerlaw">幂律：双对数坐标里的一条直线</h2>
+<p>如果一个量 \(y\) 与 \(x\) 满足 \(y = K x^{-\alpha}\)，两边取对数得 \(\log y = \log K - \alpha\log x\)：在双对数坐标里是一条斜率为 \(-\alpha\) 的直线。这种关系叫<dfn data-t="power-law">幂律</dfn>。Kaplan 等（OpenAI, 2020）发现，语言模型的测试损失与参数量、数据量、算力之间都近似是幂律，跨越六七个数量级都成立。这类经验关系统称<dfn data-t="scaling-law">规模定律</dfn>。更准确的写法要加上一个下限：</p>
+<div class="fx">
+\[ L(C) = \htmlClass{c-dir}{\htmlClass{sym-E}{E}} + \htmlClass{c-adv}{\Big(\frac{\htmlClass{sym-C0}{C_0}}{\htmlClass{sym-C}{C}}\Big)^{\htmlClass{sym-al}{\alpha}}} \]
+  <div class="fx-read">损失 = <span style="color:var(--s1)">不可约的部分</span>（数据本身的熵，任何模型都消不掉）+ <span style="color:var(--s2)">可约的部分</span>（随算力按幂律下降）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="E">\(E\)</dt><dd><dfn data-t="irreducible-loss">不可约损失</dfn>：第 <a class="xref" data-ref="generation"></a> 章的“数据的熵”</dd>
+    <dt data-sym="C">\(C\)</dt><dd>训练算力（FLOPs）</dd>
+    <dt data-sym="C0">\(C_0\)</dt><dd>拟合出的常数，决定曲线的左右位置</dd>
+    <dt data-sym="al">\(\alpha\)</dt><dd>幂律指数。Kaplan 测得对算力约 0.05、对参数量约 0.076、对数据量约 0.095</dd>
+  </dl>
+  <div class="fx-eg">\(\alpha = 0.05\)：算力增加 10 倍，可约损失变为 \(10^{-0.05}\approx 0.89\) 倍，只下降 11%。想让可约损失减半，算力要乘 \(2^{1/0.05} = 2^{20}\approx 100\) 万倍。规模定律既是“可以预测”的好消息，也是“越来越贵”的坏消息。</div>
+</div>
+<p>规模定律最大的用处是<b>外推</b>：在可以负担的小规模上做十几次实验，拟合曲线，预测几个数量级之外的大模型能达到什么损失。GPT-4 的技术报告称，它用不到最终算力万分之一的小模型，准确预测了最终的损失。下面的演示模拟了这个过程，并展示一个常见的陷阱：</p>
+<div data-demo="scaling-fit"></div>
+
+<h2 id="chinchilla">给定算力，模型该多大：Chinchilla</h2>
+<p>算力 \(C\approx 6ND\) 固定时，参数量和数据量此消彼长：模型大了，每个参数分到的数据就少。Kaplan 当时的结论是优先把模型做大，GPT-3（175B 参数，只训练 3000 亿 token）就是这个思路。2022 年 DeepMind 的 Chinchilla 重新做了更仔细的实验，把损失写成参数量和数据量的函数：</p>
+<div class="fx">
+\[ L(N, D) = E + \frac{\htmlClass{sym-A}{A}}{N^{\alpha}} + \frac{\htmlClass{sym-B}{B}}{D^{\beta}} \]
+  <div class="fx-read">三项分别是：不可约损失；“模型太小”带来的额外损失（随 \(N\) 下降）；“数据太少”带来的额外损失（随 \(D\) 下降）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="A">\(A,\ \alpha\)</dt><dd>模型容量项的系数和指数</dd>
+    <dt data-sym="B">\(B,\ \beta\)</dt><dd>数据项的系数和指数</dd>
+  </dl>
+  <div class="fx-eg">2024 年复现研究修正后的常数：\(E = 1.82\)，\(A = 482\)，\(B = 2085\)，\(\alpha = 0.348\)，\(\beta = 0.366\)。以 Chinchilla 本身的算力 \(5.76\times 10^{23}\) FLOPs 求最优，得到约 72B 参数、1.3 万亿 token，每个参数约 18 个 token，与 DeepMind 实际训练的 70B / 1.4T 一致。</div>
+</div>
+<details class="deep"><summary>推导：算力固定时的最优分配</summary><div class="in">
+<p>在约束 \(6ND = C\) 下最小化 \(L(N, D)\)。把 \(D = C/(6N)\) 代入：</p>
+\[ L(N) = E + A N^{-\alpha} + B\Big(\frac{C}{6}\Big)^{-\beta} N^{\beta} \]
+<p>对 \(N\) 求导并令其为零：</p>
+\[ -\alpha A N^{-\alpha-1} + \beta B\Big(\frac{C}{6}\Big)^{-\beta}N^{\beta-1} = 0 \quad\Longrightarrow\quad N_{\text{opt}} = \Big(\frac{\alpha A}{\beta B}\Big)^{\frac{1}{\alpha+\beta}}\Big(\frac{C}{6}\Big)^{\frac{\beta}{\alpha+\beta}} \]
+<p>同理 \(D_{\text{opt}}\propto C^{\alpha/(\alpha+\beta)}\)。当 \(\alpha\approx\beta\) 时，两个指数都约等于 0.5：算力增加 100 倍，参数量和数据量各增加约 10 倍，<b>同比例增长</b>，于是“每个参数多少 token”大致是一个常数，约 20。</p>
+<p>直觉上：两种“不足”的边际收益相等时达到最优。如果模型容量项下降得更快（\(\alpha\) 大），就该多给参数；反之多给数据。Kaplan 当年得出“优先做大模型”，主要是因为实验设置偏差：没有为每个规模调好学习率衰减的长度，并且只统计了非嵌入参数，小模型被系统性地低估（2024 年的两篇分析给出了这一解释）。</p>
+<p><b>这个推导告诉我们：</b>最优配比由两个指数的相对大小决定，而不是由常数 \(A\)、\(B\) 决定。这也是为什么不同数据、不同结构下拟合出的最优配比会变：数据越好、结构越高效，指数和常数都会变化。</p>
+</div></details>
+<p>在下面的计算器里拖动算力，看最优点怎样移动；切换拟合常数，可以看到原论文一种方法的问题：</p>
 <div data-demo="chinchilla"></div>
-<p>为什么现在的模型远远超过 20 token/参数？Llama 3 8B 训练了 15T token，约 1900 token/参数。原因是 <b>Chinchilla 只优化训练算力，没算推理成本</b>。模型上线后要服务海量请求，推理成本 ∝ N。把推理也算进去，更划算的做法是用小一点的模型多训练很多数据（在上面演示里拉高“预期推理 token 数”）。这也是端侧小模型、蒸馏小模型越来越强的原因。</p>
-<div class="callout warn"><b>拟合常数不通用。</b>上面的 E、A、B、α、β 是 Chinchilla 在它的数据和架构上拟合的。换了数据质量（比如 FineWeb-Edu 这类精选数据）、换了架构（MoE）、换了优化器，曲线都会平移。各家实验室的做法是在小规模上反复拟合自己的规模定律，再外推出大模型的配置。</div>
+<aside class="dispute">
+  <h4>Chinchilla 的拟合可信吗</h4>
+  <dl>
+    <dt>原结论</dt><dd>Hoffmann 等（2022）用三种方法得出“参数和数据同比例增长、每参数约 20 token”，其中第三种方法给出了上面公式的参数化拟合，被大量论文直接引用。</dd>
+    <dt>复现发现</dt><dd>Epoch AI 的 Besiroglu 等（2024）从论文图中重建数据，发现第三种方法的拟合有误：原常数与数据不符，给出的置信区间窄得不合理，而且推出的最优配比与另外两种方法矛盾（约每参数近百 token）。重新拟合后，三种方法一致。</dd>
+    <dt>现在怎么看</dt><dd>“每参数约 20 token”这一结论站得住，但原论文的参数化常数不应再被直接使用。更重要的教训是：这些常数依赖具体的数据、结构和训练设置，各家实验室都要在自己的配置上重新拟合。</dd>
+  </dl>
+</aside>
+<p><b>为什么现在的模型远超每参数 20 token？</b>Llama 3 8B 训练了 15 万亿 token，约每参数 1900 个。原因是 Chinchilla 只优化<b>训练</b>算力，没有算<b>推理</b>成本。模型上线后要服务海量请求，每生成一个 token 都要 \(2N\) FLOPs：</p>
+<div class="fx">
+\[ C_{\text{总}} = \underbrace{6ND}_{\text{训练}} + \underbrace{2N\,D_{\text{推理}}}_{\text{推理}} \]
+  <div class="fx-read">如果预计要生成的 token 总量 \(D_{\text{推理}}\) 很大，推理成本会超过训练成本。这时更划算的是用小一些的模型、多训练很多数据，达到同样的损失，以后每次推理都更便宜。</div>
+  <div class="fx-eg">一个服务每天生成 1000 亿 token、运行一年，\(D_{\text{推理}}\approx 3.7\times 10^{13}\)，已经超过训练数据量。把模型从 70B 缩到 8B，推理成本降为约九分之一，代价是训练时多花一些算力。在上面的计算器里调高“预期推理 token 数”，最优点会向左移。</div>
+</div>
+<p>这种远超训练最优数据量的做法叫<dfn data-t="overtraining">过度训练</dfn>（overtraining）。它也是端侧小模型和蒸馏小模型越来越强的原因（第 <a class="xref" data-ref="on-device"></a> 章）。MoE 模型要分开看总参数和激活参数：总参数决定知识容量，激活参数决定每个 token 的计算量（第 <a class="xref" data-ref="moe"></a> 章）。</p>
 
-<h3>规模定律在 2024–2026 年的变化</h3>
+<h2 id="emergence">能力是平滑增长，还是突然涌现</h2>
+<p>损失随规模平滑下降，但下游任务的表现常常看起来是“突变”的：小模型在某个任务上一直接近零分，到了某个规模突然大幅提升。这被称为<dfn data-t="emergence">涌现</dfn>（Wei 等, 2022）。</p>
+<aside class="dispute">
+  <h4>涌现是真实的，还是度量方式造成的错觉</h4>
+  <dl>
+    <dt>主张</dt><dd>多步算术、多选知识问答等能力在某个规模阈值处突然出现，无法从小模型的表现外推，这让“更大的模型会有什么能力”难以预测，也带来安全上的担忧。</dd>
+    <dt>反方</dt><dd>Schaeffer 等（2023，NeurIPS 杰出论文）指出，突变常常来自不连续的评分方式。例如“精确匹配”：一道 5 位数加法，每一位的正确率从 80% 平滑升到 95%，全对的概率 \(p^5\) 却从 33% 跳到 77%。换成按位计分或对数概率这样的连续指标，同样的数据就是平滑曲线。</dd>
+    <dt>现在怎么看</dt><dd>大部分“涌现”可以用度量方式解释，能力在底层是平滑提升的；但一些研究发现，某些能力确实在预训练损失低于特定阈值后才出现（Du 等, 2024），从损失到具体任务准确率的映射可以很陡。实用的结论是：预测下游能力时，用连续指标、并拟合“损失 → 任务表现”的关系，比直接外推任务分数可靠。</dd>
+  </dl>
+</aside>
+
+<h2 id="wall">规模化撞墙了吗</h2>
+<p>2024 年底，Ilya Sutskever 在 NeurIPS 上说“我们所知的预训练将会结束”：数据像化石燃料一样有限（第 <a class="xref" data-ref="data"></a> 章的数据墙）。2025 年 2 月的 GPT-4.5 是当时规模最大的预训练之一，提升却远不如成本的增长显眼。与此同时，两个新的“规模化维度”出现了，都表现出类似的幂律：</p>
 <ul>
-  <li><b>数据墙</b>：高质量的公开人类文本大约几十 T token，前沿模型已经接近用完（DeepSeek V4 预训练超过 32T token）。应对办法有：多轮重复训练、合成数据、多模态数据（视频、图像），以及代码和数学的可验证数据。</li>
-  <li><b>MoE 的规模定律</b>：总参数和激活参数要分开看（第 <a class="xref" data-ref="moe">7</a> 章）。Kimi K3 声称其 Stable LatentMoE 比 K2 的“缩放效率”高约 2.5 倍，意思是达到同样损失所需的算力约为原来的 1/2.5。</li>
-  <li><b>新的规模化维度</b>：强化学习的算力（第 <a class="xref" data-ref="reasoning">6</a> 章）、推理时的思考长度（test-time compute）都表现出类似的幂律，算力开始从预训练往后训练和推理转移。</li>
-  <li><b>优化器</b>：AdamW 用了近十年，2025 年起 <b>Muon</b>（对更新矩阵做正交化）在大规模训练中被验证：Kimi K2 用 MuonClip 训练 1T 参数模型、全程无 loss spike，DeepSeek V4 也换成了 Muon。</li>
+  <li><b>强化学习的算力</b>：在可验证的任务上做 RL，能力随 RL 算力稳步提升（第 <a class="xref" data-ref="rl"></a> 章）。据报道，部分 2025–26 年的前沿模型投入 RL 的算力已与预训练同一量级。</li>
+  <li><b>推理时的算力</b>：让模型思考更久、采样更多次再挑选，准确率随推理 token 数的对数上升（第 <a class="xref" data-ref="reasoning"></a> 章）。</li>
+</ul>
+<aside class="dispute">
+  <h4>预训练规模化是否已经见顶</h4>
+  <dl>
+    <dt>一种看法</dt><dd>高质量数据快用完了，单纯扩大预训练的边际收益在下降，算力应该转向后训练和推理。</dd>
+    <dt>另一种看法</dt><dd>损失曲线本身并没有弯折，变的是“同样的损失下降值多少钱”。2026 年的模型仍在扩大预训练：DeepSeek V4 用了 32–33 万亿 token，并通过更好的数据、结构（混合注意力、mHC）和优化器（Muon）提高每份算力的效率。预训练质量也决定了 RL 能达到的上限。</dd>
+    <dt>现在怎么看</dt><dd>“预训练 + RL + 推理时计算”三者都在规模化，算力在它们之间重新分配。预训练没有停，但已经不是唯一的主线；提高单位算力的效率（数据、结构、优化器）的重要性上升了。</dd>
+  </dl>
+</aside>
+
+<h2 id="optim">优化器：从梯度下降到 Adam</h2>
+<p>规模定律中的损失，是在给定算力下“训练得足够好”时达到的。实际能否达到，取决于<b>优化器</b>：每一步怎样根据梯度更新参数。最基本的是梯度下降：\(\theta \leftarrow \theta - \eta\,\mathbf g\)，\(\eta\) 是学习率，\(\mathbf g\) 是损失对参数的梯度（每次用一小批数据估计，所以叫随机梯度下降，SGD）。</p>
+<p>它在“狭长山谷”里很慢：如果损失在一个方向上很陡、另一个方向上很平，学习率必须小到不让陡方向发散，平方向就走得极慢。两个改进分别解决两个问题：<b>动量</b>把历史梯度累加起来，振荡的分量相互抵消、一致的分量越积越大；<b>自适应学习率</b>给每个参数配一个自己的步长。两者合起来就是 <dfn data-t="adam">Adam</dfn>（Kingma 与 Ba, 2014），之后近十年大模型训练的默认选择：</p>
+<div class="fx">
+\[ \begin{aligned} \htmlClass{sym-m}{\mathbf m_t} &= \beta_1\mathbf m_{t-1} + (1-\beta_1)\,\mathbf g_t &&\text{（梯度的滑动平均：动量）}\\ \htmlClass{sym-v}{\mathbf v_t} &= \beta_2\mathbf v_{t-1} + (1-\beta_2)\,\mathbf g_t^2 &&\text{（梯度平方的滑动平均）}\\ \theta_t &= \theta_{t-1} - \eta\,\frac{\hat{\mathbf m}_t}{\htmlClass{c-new}{\sqrt{\hat{\mathbf v}_t}} + \epsilon} \htmlClass{c-adv}{\ -\ \eta\lambda\,\theta_{t-1}} \end{aligned} \]
+  <div class="fx-read">每个参数各自维护两个滑动平均：梯度的方向（\(\mathbf m\)）和梯度的典型大小（\(\mathbf v\)）。更新量是方向除以<span style="color:var(--s4)">典型大小</span>，所以每个参数每步大约移动 \(\eta\)，与它的梯度绝对大小无关。最后一项是 AdamW 的<span style="color:var(--s2)">解耦权重衰减</span>。</div>
+  <dl class="fx-syms">
+    <dt data-sym="m">\(\mathbf m_t\)</dt><dd>一阶矩（动量），\(\beta_1\) 通常 0.9</dd>
+    <dt data-sym="v">\(\mathbf v_t\)</dt><dd>二阶矩，\(\beta_2\) 通常 0.95–0.999；\(\hat{\mathbf m}, \hat{\mathbf v}\) 是除以 \(1-\beta^t\) 修正初始偏差后的值</dd>
+  </dl>
+  <div class="fx-eg">两个参数，梯度分别恒为 100 和 0.01。SGD：第一个参数的步长是第二个的 1 万倍。Adam：两者的 \(\hat m/\sqrt{\hat v}\) 都等于 1，每步都移动 \(\eta\)。代价是显存：每个参数多存两个 FP32 数（8 字节），这是训练比推理费显存的重要原因（第 <a class="xref" data-ref="training-systems"></a> 章）。</div>
+</div>
+<p><dfn data-t="adamw">AdamW</dfn>（Loshchilov 与 Hutter, 2017）只改了一处：把权重衰减（每步把参数往 0 拉一点，防止参数无限增长）从梯度里拿出来，直接作用于参数。在原版 Adam 中，衰减项被加进梯度后也会被 \(\sqrt{\hat v}\) 除掉，梯度大的参数几乎得不到衰减；解耦之后，所有参数按同样的比例衰减。下面的演示比较三种优化器，注意旋转山谷时 Adam 的变化：</p>
+<div data-demo="opt-path"></div>
+<p>优化器之外，<b>学习率调度</b>同样关键。标准做法是先用几千步把学习率从 0 线性升到峰值（预热，原因见第 <a class="xref" data-ref="transformer"></a> 章的 Post-Norm 推导），然后按余弦曲线降到接近 0。余弦调度有个麻烦：必须事先定好总步数，中途无法延长。2024 年起流行的 <dfn data-t="wsd">WSD 调度</dfn>（预热-稳定-衰减）把学习率在大部分时间保持恒定，只在最后 10–20% 快速衰减：可以从稳定阶段的任意检查点分叉出一次衰减，得到“训练到这里为止”的模型，用一次训练就拿到规模定律的多个点；也方便在衰减阶段换上高质量数据（第 <a class="xref" data-ref="data"></a> 章的中期训练）。</p>
+<details class="deep"><summary>μP：为什么小模型上调好的学习率，换到大模型就不对了</summary><div class="in">
+<p>在标准的参数化下，把模型变宽，最优学习率会变：宽度翻倍，隐藏层的每个输出是两倍多个项之和，同样的学习率造成的输出变化更大，最优学习率要相应缩小。于是每个规模都得重新调超参数，大模型上调参又极其昂贵。</p>
+<p>Yang 等（2022）的 μP（最大更新参数化）按宽度给每一层的初始化方差和学习率配上特定的缩放因子（例如对 Adam，隐藏层的学习率按 \(1/\text{宽度}\) 缩放），使得每层输出的变化量与宽度无关。这样，在小模型上找到的最优学习率可以直接迁移到大模型。论文用 4000 万参数的模型调好超参数，直接用于 67 亿参数的 GPT-3 规模模型，效果优于原版。</p>
+<p><b>这个推导告诉我们：</b>超参数的“正确值”依赖参数化方式。μP 让规模定律的实验更可靠（每个点都是调好的），这和下面 Muon 的思路相通：两者都在问“一次更新应该让这一层的输出改变多少”。</p>
+</div></details>
+
+<h2 id="muon">Muon：按矩阵整体更新</h2>
+<p>Adam 把每个参数当作独立的数来处理。但神经网络的大部分参数是矩阵，矩阵有它自己的结构。动量矩阵往往是“病态”的：用<dfn data-t="svd">奇异值分解</dfn>（SVD）把它写成 \(M = U\Sigma V^\top\)（先旋转、再沿各轴按奇异值缩放、再旋转），会发现少数几个奇异值特别大，其余很小：更新几乎只沿少数几个方向进行，其它方向学得很慢。<dfn data-t="muon">Muon</dfn>（Keller Jordan 等, 2024）的做法是把奇异值全部换成 1：</p>
+<div class="fx">
+\[ W \leftarrow W - \eta\cdot\htmlClass{c-new}{\operatorname{Orth}(M_t)},\qquad \operatorname{Orth}(U\Sigma V^\top) = UV^\top \]
+  <div class="fx-read">先像动量 SGD 一样维护动量矩阵 \(M_t\)，然后把它“正交化”：保留所有方向，但让每个方向的更新幅度都相同。精确的 SVD 太慢，Muon 用 5 次牛顿-舒尔茨迭代（只有矩阵乘法）近似完成。</div>
+  <dl class="fx-syms">
+    <dt data-sym="M">\(M_t\)</dt><dd>这一层权重矩阵的动量（梯度的滑动平均）</dd>
+    <dt data-sym="UV">\(UV^\top\)</dt><dd>与 \(M_t\) 方向相同、但所有奇异值都是 1 的矩阵</dd>
+  </dl>
+  <div class="fx-eg">动量的奇异值为 \((4,\ 1,\ 0.25)\)。动量 SGD 沿三个方向的更新幅度之比是 16 : 4 : 1；Muon 是 1 : 1 : 1。原本几乎被忽略的第三个方向，相对更新幅度提高了 16 倍。另一个好处：只需要存一份动量，比 Adam 省一半优化器显存。</div>
+</div>
+<div data-demo="muon-ns" class="bleed"></div>
+<details class="deep"><summary>为什么是 \(UV^\top\)：在谱范数下最陡的下降方向</summary><div class="in">
+<p>“最陡下降”取决于怎样度量步长。问题是：在步长不超过 \(\eta\) 的约束下，选哪个更新 \(\Delta W\) 能让损失的一阶近似下降最多：</p>
+\[ \min_{\Delta W}\ \langle G, \Delta W\rangle \quad \text{s.t.}\ \ \|\Delta W\| \le \eta \]
+<p>（\(G\) 是梯度，\(\langle G,\Delta W\rangle = \operatorname{tr}(G^\top\Delta W)\)。）答案随范数而变：</p>
+<ul>
+  <li>欧氏范数（Frobenius 范数）：\(\Delta W = -\eta\,G/\|G\|_F\)，就是普通梯度下降。</li>
+  <li>逐元素的最大值范数：\(\Delta W = -\eta\operatorname{sign}(G)\)，每个元素都走满步长。Adam 在 \(\beta\) 趋于 0 时正是这个，所以 Adam 可以看成“按坐标”的最陡下降。</li>
+  <li>谱范数（矩阵的最大奇异值，衡量它最多能把一个向量放大多少）：写 \(G = U\Sigma V^\top\)，有 \(\langle G,\Delta W\rangle = \sum_i \sigma_i\, \mathbf u_i^\top\Delta W\mathbf v_i \ge -\eta\sum_i\sigma_i\)，等号在 \(\Delta W = -\eta\,UV^\top\) 时成立。这就是 Muon。</li>
+</ul>
+<p>为什么谱范数适合神经网络的线性层？对 \(\mathbf y = W\mathbf x\)，有 \(\|\Delta W\mathbf x\|\le\|\Delta W\|_2\|\mathbf x\|\)：限制更新的谱范数，等于限制“对任何输入，这一层的输出最多变化多少”。这正是我们关心的量：每一步训练不应该让某一层的输出剧烈改变。</p>
+<p><b>这个推导告诉我们：</b>SGD、Adam、Muon 是同一个问题在不同度量下的答案。Adam 的度量依赖坐标轴（演示中旋转山谷后优势变小），Muon 的度量只依赖矩阵本身的几何，不随坐标旋转而变。</p>
+</div></details>
+<p>Muon 最早在 NanoGPT 的训练速度竞赛中显示出优势，2025 年开始进入大规模训练：Moonshot 的 Moonlight（2025-02）报告在计算最优的设置下约为 AdamW 的 2 倍效率，关键是加上权重衰减并调整每层更新的尺度；Kimi K2 用 MuonClip（Muon 加上第 <a class="xref" data-ref="attention"></a> 章提到的 QK-Clip，防止注意力分数失控）训练了 1 万亿参数的模型，15.5 万亿 token 全程没有<dfn data-t="loss-spike">损失尖峰</dfn>（训练中损失突然暴涨，严重时需要回滚重来）；GLM-4.5 和 DeepSeek V4 也改用 Muon。注意，Muon 只用于隐藏层的二维权重矩阵，嵌入层、输出层和归一化参数仍用 AdamW。</p>
+<aside class="dispute">
+  <h4>新优化器到底快多少</h4>
+  <dl>
+    <dt>主张</dt><dd>过去几年不断有新优化器宣称比 AdamW 快 1.4–2 倍：Lion、Sophia、SOAP、Muon 等。</dd>
+    <dt>反方</dt><dd>斯坦福的 Wen 等（2025）在 0.1B–1.2B 的模型上，对 10 种优化器分别认真调参后比较：很多“加速”来自基线没调好，光调好 AdamW 的学习率就能在小模型上换来最多 2 倍的差别。调好之后，逐元素类的优化器与 AdamW 相差不到 1.2 倍；按矩阵处理的（Muon、SOAP）稳定领先，但优势随规模缩小，从 0.1B 的 1.4 倍降到 1.2B 的约 1.1 倍。此外，训练中途比较会误导，学习率衰减可能让排名反转。</dd>
+    <dt>现在怎么看</dt><dd>Muon 一类的矩阵优化器确实更好，但在大规模上的收益更接近 10–30%，而不是翻倍。它被前沿实验室采用，还因为训练更稳定、优化器显存更小。评价优化器必须在调好基线、跑完整个学习率调度之后比较。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">规模定律说明模型越大越好。</b>它说的是在<b>最优分配</b>下损失随算力怎样下降。给定算力，模型太大反而更差；考虑推理成本时，最优模型还要更小。</li>
+  <li><b class="m">“每参数 20 token”是普适常数。</b>它是 Chinchilla 在特定数据和结构上的训练最优值。数据更好、结构不同、算上推理成本，最优配比都会变；现在的模型普遍远超这个数字。</li>
+  <li><b class="m">损失降一点点无所谓。</b>损失的小差异对应能力的大差异：可约损失接近零时，每降低 0.01 都可能需要成倍的算力，同时对应下游任务的明显提升。</li>
+  <li><b class="m">能力会在某个规模神秘地突然出现。</b>多数“涌现”来自不连续的评分方式；用连续指标看，能力通常是平滑增长的。</li>
+  <li><b class="m">Adam 是自适应的，所以不用调学习率。</b>Adam 只是让不同参数的相对步长自动平衡，全局学习率仍然是最重要的超参数，而且最优值随模型规模变化（见 μP）。</li>
 </ul>
 
-<h2 id="pipeline">训练流水线：从基座到助手</h2>
-<p>点击各阶段查看细节：</p>
-<div data-demo="training-pipeline"></div>
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2014–2017</div>
+    <h4>Adam 与 AdamW</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>SGD 对学习率敏感，在不同尺度的参数上表现差异大。</dd>
+      <dt>怎么解决</dt><dd>Adam 结合动量与逐参数的自适应步长；AdamW 解耦权重衰减。</dd>
+      <dt>代价</dt><dd>每个参数多两份状态，显存翻倍；对坐标轴的依赖。</dd>
+      <dt>引出</dt><dd>有了稳定的优化器，能否系统地研究“规模”本身？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2017–2020</div>
+    <h4>发现规模定律</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型训练很贵，事先不知道值不值得。</dd>
+      <dt>怎么解决</dt><dd>百度的 Hestness 等（2017）首先在多个任务上观察到幂律；Kaplan 等（2020）系统测量了语言模型损失与参数、数据、算力的关系，并据此规划了 GPT-3。</dd>
+      <dt>代价</dt><dd>“优先做大模型”的结论有偏差，GPT-3 一代模型普遍训练不足。</dd>
+      <dt>引出</dt><dd>参数和数据到底该怎样分配？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022</div>
+    <h4>Chinchilla：同比例扩大</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>Kaplan 的配比让模型过大、数据过少。</dd>
+      <dt>怎么解决</dt><dd>更仔细的实验得出参数和数据同比例增长；70B 的 Chinchilla 胜过 280B 的 Gopher。同年 μP 让超参数可以从小模型迁移。</dd>
+      <dt>代价</dt><dd>需要的数据量大增；只考虑训练成本。</dd>
+      <dt>引出</dt><dd>推理成本怎么算？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">后续澄清</span>Kaplan 与 Chinchilla 为什么不一致（2024）</summary><div>两篇 2024 年的分析指出，差异主要来自 Kaplan 的实验设置：学习率衰减长度没有随数据量调整、只统计非嵌入参数、规模较小。同年 Epoch AI 的复现又发现 Chinchilla 自己的参数化拟合有误。规模定律的“常数”远没有看起来那么确定。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>过度训练、可预测的扩展与新的调度</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>开放模型要在消费级硬件上跑，推理成本主导。</dd>
+      <dt>怎么解决</dt><dd>LLaMA 系列大幅过度训练小模型（Llama 3 8B 用 15T token）；GPT-4 用小模型准确预测大模型损失；WSD 调度让一次训练得到多个规模点；数据受限的规模定律给出重复数据的价值。</dd>
+      <dt>代价</dt><dd>数据消耗更快，逼近数据墙。</dd>
+      <dt>引出</dt><dd>除了加数据和参数，还有哪些规模化的方向？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">没能取代 AdamW</span>Lion、Sophia 等（2023）</summary><div>Lion（用符号函数更新）由程序搜索发现，Sophia 使用二阶曲率信息，都宣称显著快于 AdamW。在调好基线的独立比较中，优势大多不复存在，没有成为大模型训练的主流。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-12 – 2025</div>
+    <h4>预训练“撞墙”之争与新的规模化维度</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>数据有限，超大规模预训练的边际收益显得不划算。</dd>
+      <dt>怎么解决</dt><dd>RL 算力和推理时算力成为新的规模化维度（第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="reasoning"></a> 章）；Muon 从速度竞赛走进大规模训练（Moonlight、Kimi K2 的 MuonClip）。</dd>
+      <dt>代价</dt><dd>多个维度之间怎样分配算力，没有成熟的理论。</dd>
+      <dt>引出</dt><dd>怎样让每一份预训练算力更值钱？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>效率成为主题</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>算力和数据都昂贵，单纯扩大规模不再是唯一答案。</dd>
+      <dt>怎么解决</dt><dd>DeepSeek V4 改用 Muon、32T+ token；结构上的混合注意力、mHC、Attention Residuals 都以“等效算力倍数”衡量收益（第 <a class="xref" data-ref="transformer"></a> 章）；低精度训练（FP8、FP4）降低每 FLOP 的成本（第 <a class="xref" data-ref="training-systems"></a> 章）。</dd>
+      <dt>代价</dt><dd>各种效率改进的收益需要在大规模上验证，小规模结论常常不能外推。</dd>
+      <dt>引出</dt><dd>预训练得到的基座模型还不会对话，下一部分讲后训练（第 <a class="xref" data-ref="sft"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
 
-<h2 id="finetune">微调的平民版本：LoRA 与 QLoRA</h2>
-<p>全参数微调要为每个参数存权重、梯度和两份 Adam 状态，混合精度下约 16 字节/参数，8B 模型就要 128GB 以上。<b>LoRA</b>（2021）观察到微调带来的权重变化是 <b>低秩</b> 的：冻结原权重 W，只训练两个小矩阵，<span class="math">W′ = W + BA</span>，其中 <span class="math">B ∈ ℝ<sup>d×r</sup>, A ∈ ℝ<sup>r×k</sup></span>，r 通常只有 8–64。<b>QLoRA</b>（2023）再把冻结的 W 量化成 4-bit NF4，单张消费级显卡就能微调几十 B 的模型。</p>
-<div data-demo="lora"></div>
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 按“每参数 20 token”和 \(C = 6ND\)，\(10^{24}\) FLOPs 的训练最优模型有多大，训练多少 token？</summary><div class="ans">\(C = 6N\cdot 20N = 120N^2\)，\(N = \sqrt{10^{24}/120}\approx 9.1\times 10^{10}\)，约 91B 参数；\(D = 20N\approx 1.8\) 万亿 token。</div></details>
+<details class="quiz"><summary>2. 某任务的可约损失对算力的指数 \(\alpha = 0.1\)。想把可约损失降到原来的一半，算力要增加多少倍？如果 \(\alpha = 0.05\) 呢？</summary><div class="ans">\((C'/C)^{-\alpha} = 1/2\)，\(C'/C = 2^{1/\alpha}\)。\(\alpha = 0.1\)：\(2^{10} = 1024\) 倍。\(\alpha = 0.05\)：\(2^{20}\approx 10^6\) 倍。指数的微小差别，意味着成本相差上千倍，这就是为什么提高指数（更好的数据、结构）比单纯加算力更有价值。</div></details>
+<details class="quiz"><summary>3. 一层权重的动量矩阵奇异值为 \((10,\ 1,\ 0.1)\)。动量 SGD 和 Muon 沿这三个奇异方向的更新幅度之比分别是多少？Adam 能做到同样的事吗？</summary><div class="ans">动量 SGD：100 : 10 : 1；Muon：1 : 1 : 1。Adam 只能按坐标（单个矩阵元素）归一化，而奇异方向通常是许多坐标的组合，所以一般做不到；只有当奇异方向恰好与坐标轴对齐时，Adam 才有类似效果（对应演示中旋转 0° 的山谷）。</div></details>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2018–19</span>BERT / GPT-2：大规模无监督预训练 + 下游微调</li>
-  <li><span class="d">2020-01</span>Kaplan 规模定律</li>
-  <li><span class="d">2020-05</span>GPT-3：175B，展示 in-context learning</li>
-  <li><span class="d">2021-06</span>LoRA</li>
-  <li><span class="d">2022-03</span>Chinchilla：每参数约 20 token；InstructGPT：SFT + RLHF</li>
-  <li><span class="d">2022-11</span>ChatGPT</li>
-  <li><span class="d">2023</span>LLaMA 系列开源；QLoRA；DPO 不再需要单独的奖励模型</li>
-  <li><span class="d">2024</span>Llama 3 用 15T token 大幅“过训练”；FineWeb 等精选开源数据集；DeepSeek-V3 用 FP8 训练 671B MoE，花费约 280 万 H800 GPU 小时</li>
-  <li><span class="d">2025</span>RLVR 成为后训练主轴（第 <a class="xref" data-ref="reasoning">6</a> 章）；Kimi K2 用 MuonClip 训练 1T MoE</li>
-  <li><span class="d">2026</span>DeepSeek V4：32T+ token、Muon、据报道后训练改用在线策略蒸馏（on-policy distillation）；Kimi K3 从 SFT 阶段起做 MXFP4 量化感知训练（第 <a class="xref" data-ref="quantization">9</a> 章）；NVIDIA 展示用 NVFP4 精度完成 10T token 预训练</li>
-</ul>
-<p class="src">资料：Hoffmann et al. 2022（Chinchilla）；Sardana et al. 2023（Beyond Chinchilla-Optimal）；<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a>；<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a>。</p>
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2001.08361">Scaling Laws for Neural Language Models</a>（Kaplan 等, 2020）<span class="why">规模定律的系统起点，图 1 值得反复看。</span></li>
+  <li><a href="https://arxiv.org/abs/2203.15556">Training Compute-Optimal Large Language Models</a>（Hoffmann 等, 2022）<span class="why">Chinchilla，参数和数据同比例扩大。</span></li>
+  <li><a href="https://arxiv.org/abs/2404.10102">Chinchilla Scaling: A Replication Attempt</a>（Besiroglu 等, 2024）<span class="why">一次干净的复现，说明经验常数有多脆弱。</span></li>
+  <li><a href="https://arxiv.org/abs/2304.15004">Are Emergent Abilities of Large Language Models a Mirage?</a>（Schaeffer 等, 2023）<span class="why">涌现与度量方式的关系。</span></li>
+  <li><a href="https://kellerjordan.github.io/posts/muon/">Muon: An optimizer for hidden layers in neural networks</a>（Keller Jordan, 2024）与 <a href="https://arxiv.org/abs/2502.16982">Muon is Scalable for LLM Training</a>（Moonshot, 2025）<span class="why">Muon 的原始介绍与大规模化的关键改动。</span></li>
+  <li><a href="https://arxiv.org/abs/2509.02046">Fantastic Pretraining Optimizers and Where to Find Them</a>（Wen 等, 2025）<span class="why">怎样公平地比较优化器。</span></li>
+</ol>
+
+<div class="nextq">预训练得到的是一个“基座模型”：它能续写任何文本，但不会按指令回答，也不知道什么该说、什么不该说。第三部分讲后训练：先用示范数据教会它对话的格式和风格，再用偏好数据让它更符合人的期望。下一章（第 <a class="xref" data-ref="sft"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1712.00409">Hestness 等 2017</a> · <a href="https://arxiv.org/abs/2401.00448">Beyond Chinchilla-Optimal</a> · <a href="https://arxiv.org/abs/2406.19146">Resolving Discrepancies in Compute-Optimal Scaling</a> · <a href="https://arxiv.org/abs/2406.12907">Reconciling Kaplan and Chinchilla</a> · <a href="https://arxiv.org/abs/2206.07682">Emergent Abilities of LLMs</a> · <a href="https://arxiv.org/abs/2403.15796">Understanding Emergent Abilities from the Loss Perspective</a> · <a href="https://arxiv.org/abs/2303.08774">GPT-4 技术报告</a> · <a href="https://arxiv.org/abs/1412.6980">Adam</a> · <a href="https://arxiv.org/abs/1711.05101">AdamW</a> · <a href="https://arxiv.org/abs/2203.03466">μP（Tensor Programs V）</a> · <a href="https://arxiv.org/abs/2404.06395">MiniCPM（WSD）</a> · <a href="https://arxiv.org/abs/2409.20325">Old Optimizer, New Norm</a> · <a href="https://arxiv.org/abs/2507.20534">Kimi K2</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4</a> · <a href="https://arxiv.org/abs/2606.16899">Fantastic Optimizers II</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

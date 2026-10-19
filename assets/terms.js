@@ -125,4 +125,17 @@ window.ATLAS_TERMS = {
   'model-collapse': { t: '模型崩溃', en: 'model collapse', d: '递归地只用前代模型生成的数据训练，分布的长尾逐代消失，最终塌缩成少数模式。保留并累积真实数据可以避免。', at: 'data#synthetic' },
   'data-wall': { t: '数据墙', en: 'data wall', d: '公开的高质量人类文本约 300 万亿 token，按现有趋势将在 2026–2032 年间用完（Epoch AI 估计）。', at: 'data#limits' },
   memorization: { t: '记忆（训练数据）', en: 'memorization', d: '模型逐字背下并能复现部分训练数据。随模型规模、数据重复次数和提示长度增长，去重可显著缓解。', at: 'data#limits' },
+
+  // ---- scaling (scaling.html)
+  'power-law': { t: '幂律', en: 'power law', d: String.raw`\(y = Kx^{-\alpha}\)：在双对数坐标里是斜率为 \(-\alpha\) 的直线。\(x\) 增加 10 倍，\(y\) 变为 \(10^{-\alpha}\) 倍。`, at: 'scaling#powerlaw' },
+  'scaling-law': { t: '规模定律', en: 'scaling law', d: String.raw`损失随参数量、数据量、算力按幂律下降的经验规律，例如 \(L(N,D) = E + A/N^\alpha + B/D^\beta\)。用于从小规模实验外推大模型的表现。`, at: 'scaling#powerlaw' },
+  'irreducible-loss': { t: '不可约损失', en: 'irreducible loss', d: String.raw`规模定律中的常数项 \(E\)：数据本身的熵，无论模型多大、数据多多都消不掉。`, at: 'scaling#powerlaw' },
+  overtraining: { t: '过度训练', en: 'overtraining', d: '用远超训练算力最优值的数据训练较小的模型（如 Llama 3 8B 用 15T token，约每参数 1900 个）。训练多花算力，换来推理更便宜。', at: 'scaling#chinchilla' },
+  emergence: { t: '涌现', en: 'emergent abilities', d: '某些任务的表现在模型达到一定规模后看似突然出现。很大程度上可由不连续的评分方式解释（如精确匹配）。', at: 'scaling#emergence' },
+  adam: { t: 'Adam', en: 'Adam optimizer', d: String.raw`维护梯度的滑动平均 \(\mathbf m\) 和梯度平方的滑动平均 \(\mathbf v\)，按 \(\hat{\mathbf m}/\sqrt{\hat{\mathbf v}}\) 更新：动量 + 逐参数自适应步长。每个参数多存两份状态。`, at: 'scaling#optim' },
+  adamw: { t: 'AdamW', en: 'AdamW', d: '把权重衰减从梯度中解耦、直接作用于参数的 Adam。2017 年起大模型训练的默认优化器。', at: 'scaling#optim' },
+  wsd: { t: 'WSD 调度', en: 'warmup-stable-decay schedule', d: '学习率先预热、再长时间保持恒定、最后 10–20% 快速衰减。可从稳定阶段任意分叉出衰减，便于测规模定律、延长训练和在衰减段换数据。', at: 'scaling#optim' },
+  svd: { t: '奇异值分解', en: 'singular value decomposition (SVD)', d: String.raw`任意矩阵 \(M = U\Sigma V^\top\)：先旋转（\(V^\top\)），再沿各轴按奇异值 \(\sigma_i\ge 0\) 缩放（\(\Sigma\)），再旋转（\(U\)）。最大奇异值即谱范数。`, at: 'scaling#muon' },
+  muon: { t: 'Muon', en: 'Muon optimizer', d: String.raw`对隐藏层权重的动量矩阵做正交化后更新：\(W\leftarrow W - \eta\,UV^\top\)，所有奇异方向等幅更新；用牛顿-舒尔茨迭代近似。2025–26 年被 Kimi K2、GLM-4.5、DeepSeek V4 采用。`, at: 'scaling#muon' },
+  'loss-spike': { t: '损失尖峰', en: 'loss spike', d: '训练中损失突然暴涨的现象，常与注意力分数或激活值失控有关；严重时需回滚到之前的检查点重来。', at: 'scaling#muon' },
 };
