@@ -65,4 +65,19 @@ window.ATLAS_TERMS = {
   rlvr: { t: 'RLVR', en: 'RL with verifiable rewards', d: '只在能自动判断对错的任务上做 RL：数学比对答案、代码跑测试、智能体检查终态。', at: 'rl#reward' },
   'reward-hacking': { t: '钻奖励空子', en: 'reward hacking', d: '模型找到了提高奖励、却不真正完成任务的办法，比如写得更长讨好评分模型、修改单元测试。', at: 'rl#reward' },
   passk: { t: 'pass@k', en: 'pass@k', d: String.raw`每道题采样 \(k\) 次，至少一次答对就算解出。\(k = 1\) 看“一次做对”，\(k\) 很大时看能力的边界。`, at: 'rl#debate' },
+
+  // ---- attention (attention.html)
+  rnn: { t: '循环神经网络', en: 'recurrent neural network (RNN)', d: String.raw`从左到右逐个读 token，每一步用当前 token 更新一个固定大小的隐藏状态：\(\mathbf h_t = \tanh(W\mathbf h_{t-1} + U\mathbf x_t)\)。LSTM、GRU 是加了门控的改进版。`, at: 'attention#before' },
+  'vanishing-grad': { t: '梯度消失', en: 'vanishing gradient', d: '梯度要经过很多次连乘才能传到前面的层或前面的时间步；每次乘的因子小于 1 时，梯度指数级衰减，前面的部分几乎学不到东西。', at: 'attention#before' },
+  'attention-mech': { t: '注意力', en: 'attention', d: '对每个位置算一个相关度，按相关度把各位置的信息加权平均。2014 年用于机器翻译，2017 年成为 Transformer 的核心。', at: 'attention#before' },
+  'self-attention': { t: '自注意力', en: 'self-attention', d: '序列内部的注意力：query、key、value 都来自同一个序列，每个位置去看同一序列中的其它位置。', at: 'attention#before' },
+  'attn-query': { t: 'query（查询）', en: 'query', d: String.raw`\(\mathbf q = \mathbf x W_Q\)：一个位置“在找什么样的信息”。和每个 key 做点积，得到相关度分数。`, at: 'attention#qkv' },
+  'attn-key': { t: 'key（键）', en: 'key', d: String.raw`\(\mathbf k = \mathbf x W_K\)：一个位置“有什么样的信息”，供 query 匹配。`, at: 'attention#qkv' },
+  'attn-value': { t: 'value（值）', en: 'value', d: String.raw`\(\mathbf v = \mathbf x W_V\)：一个位置被关注时“交出去的内容”。注意力输出是 value 的加权平均。`, at: 'attention#qkv' },
+  'multi-head': { t: '多头注意力', en: 'multi-head attention', d: String.raw`把 \(d\) 维切成 \(h\) 个 \(d/h\) 维的头，各自独立做注意力，结果拼接后乘 \(W_O\)。参数量和单个 \(d\) 维的头相同。`, at: 'attention#multihead' },
+  'causal-mask': { t: '因果掩码', en: 'causal mask', d: String.raw`softmax 之前把“后面位置”的分数设为 \(-\infty\)，使每个位置只能看到自己和前面的 token。生成模型必须用它。`, at: 'attention#causal' },
+  'cross-attention': { t: '交叉注意力', en: 'cross-attention', d: 'query 来自一个序列，key 和 value 来自另一个序列。翻译模型的解码器用它读原句，文生图模型用它读提示词。', at: 'attention#causal' },
+  'induction-head': { t: '归纳头', en: 'induction head', d: '一种两层配合的注意力电路：看到 A 时，找到上文中 A 之后出现过的 B，把它复制为预测。与上下文学习能力的出现同步形成。', at: 'attention#patterns' },
+  icl: { t: '上下文学习', en: 'in-context learning (ICL)', d: '不更新参数，只在提示词里给几个示例，模型就能完成新任务。few-shot 提示依赖这种能力。', at: 'attention#patterns' },
+  'attention-sink': { t: '注意力汇', en: 'attention sink', d: '很多注意力头把大量权重放在第一个 token 上。softmax 的权重和必须为 1，没什么要看时多余的权重要有个去处。', at: 'attention#patterns' },
 };

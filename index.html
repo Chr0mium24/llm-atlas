@@ -49,7 +49,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const INFO = {
     prologue: '把各章的主干连成一条故事线：每个时代卡在哪个瓶颈，又怎么突破',
     tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
-    attention: 'Q/K/V 软查询、多头、因果掩码、归纳头与注意力汇聚',
+    attention: '从 RNN 的瓶颈到 Q/K/V 软查询，代入数字算一遍；多头、因果掩码、归纳头、注意力汇与平方代价',
     transformer: '残差流、RMSNorm、SwiGLU、RoPE；从 2017 到 2026 改了什么',
     generation: '自回归、交叉熵、温度 / top-p / min-p；为什么需要神经网络',
     data: '去重、质量过滤、改写与合成、配比；合成数据的陷阱与模型崩溃',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 51]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 52]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>
