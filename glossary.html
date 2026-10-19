@@ -44,15 +44,17 @@ document.addEventListener('atlas-terms', () => {
       if (s && !(d.t + d.en + d.d).toLowerCase().includes(s)) return;
       const slug = d.at.split('#')[0], c = A.ch(slug);
       if (slug !== cur) { cur = slug; box.append(A.el('h2', { style: { marginTop: '34px' } }, c ? [A.chLabel(c), c.t].filter(Boolean).join(' · ') : slug)); }
-      box.append(A.el('div', { class: 'gl-item' },
-        A.el('div', { class: 'h' }, A.el('b', null, d.t), A.el('span', { class: 'en' }, d.en), A.el('a', { class: 'go', href: A.termHref(id) }, '→ 去看定义')),
+      box.append(A.el('div', { class: 'gl-item', id: 't-' + id },
+        A.el('div', { class: 'h' }, A.el('b', null, d.t), A.el('span', { class: 'en' }, d.en), A.el('a', { class: 'go', href: A.termHref(id), 'data-jump': '1' }, A.termHref(id).startsWith('#') ? '' : '→ 去看定义')),
         A.el('p', null, d.d)));
       k++;
     });
     n.textContent = `共 ${ids.length} 个概念${s ? '，匹配 ' + k + ' 个' : ''}。随着各章重写会陆续补充。`;
+    A.renderMath(box);
   }
   q.addEventListener('input', render);
   render();
+  if (location.hash.startsWith('#t-')) { const tg = document.getElementById(location.hash.slice(1)); if (tg) setTimeout(() => tg.scrollIntoView({ block: 'center' }), 50); }
 });
 </script>
 </body>

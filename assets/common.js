@@ -197,31 +197,48 @@
       const T = window.ATLAS_TERMS || {};
       A.terms = T;
       const here = currentSlug();
-      // rewritten chapters carry <dfn id="t-…">; older pages only have section anchors
-      const href = (id) => { const at = (T[id] && T[id].at) || ''; const [slug, sec] = at.split('#'); const c = A.ch(slug); const hash = c && c.st === 'new' ? 't-' + id : sec || ''; return (slug === here ? '' : slug + '.html') + (hash ? '#' + hash : ''); };
-      A.termHref = href;
+      // where a term is defined: rewritten chapters carry <dfn id="t-…">; older pages don't, so those fall back to the glossary
+      const defHref = (id) => {
+        const slug = ((T[id] && T[id].at) || '').split('#')[0], c = A.ch(slug);
+        if (slug === here && document.getElementById('t-' + id)) return '#t-' + id;
+        if (c && c.st === 'new' && slug !== here) return c.f + '#t-' + id;
+        return null;
+      };
+      const glossHref = (id) => (here === 'glossary' ? '' : 'glossary.html') + '#t-' + id;
+      A.termHref = (id) => defHref(id) || glossHref(id);
       A.$$('dfn[data-t]').forEach((d) => { if (!d.id) d.id = 't-' + d.dataset.t; d.classList.add('dfn'); });
+      const head = (def) => `<div class="tp-h"><b>${def.t}</b> <span class="tp-en">${def.en}</span></div><div class="tp-d">${def.d}</div>`;
+      const whereLabel = (def) => { const c = A.ch(def.at.split('#')[0]); return c ? [A.chLabel(c), c.t].filter(Boolean).join(' · ') : ''; };
       A.$$('.term[data-t]').forEach((el) => {
         const id = el.dataset.t, def = T[id];
         if (!def) { el.classList.add('term-missing'); return; }
         el.tabIndex = 0;
-        const c = A.ch(def.at.split('#')[0]);
-        const html = `<b>${def.t}</b> <span style="color:var(--muted)">${def.en}</span><br>${def.d}<br><span style="color:var(--muted);font-size:12px">定义在${c ? ' ' + (A.chLabel(c) || '') + ' · ' + c.t : '本页'}，点击跳转</span>`;
-        const show = (e) => { const r = el.getBoundingClientRect(); A.tip.show(html, e && e.clientX ? e.clientX : r.left, e && e.clientY ? e.clientY : r.bottom); };
-        el.addEventListener('mouseenter', show); el.addEventListener('focus', show);
-        el.addEventListener('mouseleave', () => A.tip.hide()); el.addEventListener('blur', () => A.tip.hide());
-        el.addEventListener('click', () => { A.tip.hide(); location.href = href(id); });
-        el.addEventListener('keydown', (e) => { if (e.key === 'Enter') location.href = href(id); });
+        el.setAttribute('role', 'button');
+        const hover = head(def) + '<div class="tp-f">点击固定这张卡片</div>';
+        const show = (e) => { if (pinnedFor === el) return; const r = el.getBoundingClientRect(); A.tip.show(hover, e && e.clientX ? e.clientX : r.left, e && e.clientY ? e.clientY : r.bottom); };
+        el.addEventListener('mouseenter', show);
+        el.addEventListener('mouseleave', () => A.tip.hide());
+        const open = () => {
+          A.tip.hide();
+          const where = defHref(id), lab = whereLabel(def);
+          const links = (where
+            ? `<a href="${where}" data-jump="1">跳到定义处${lab && where[0] !== '#' ? '（' + lab + '）' : ''} →</a>`
+            : `<span class="tp-note">它所在的「${lab}」还没按新格式重写，原文里没有正式定义。</span>`) +
+            (here === 'glossary' ? '' : `<a href="${glossHref(id)}" data-jump="1">在术语表中查看</a>`);
+          pin(el, head(def) + `<div class="tp-links">${links}</div>`);
+        };
+        el.addEventListener('click', (e) => { e.preventDefault(); pinnedFor === el ? unpin() : open(); });
+        el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } });
       });
       A.$$('.prereq').forEach((box) => {
         const ds = A.$$('dfn[data-t]');
         if (!ds.length) return;
         const seen = new Set();
         const list = A.el('div', { class: 'prereq-new' }, A.el('span', { class: 'lab' }, '本章会从零定义：'));
-        ds.forEach((d) => { if (seen.has(d.dataset.t)) return; seen.add(d.dataset.t); list.append(A.el('a', { href: '#t-' + d.dataset.t }, (T[d.dataset.t] || {}).t || d.textContent)); });
+        ds.forEach((d) => { if (seen.has(d.dataset.t)) return; seen.add(d.dataset.t); list.append(A.el('a', { href: '#t-' + d.dataset.t, 'data-jump': '1' }, (T[d.dataset.t] || {}).t || d.textContent)); });
         box.append(list);
       });
-      if (location.hash.startsWith('#t-')) { const tg = document.getElementById(location.hash.slice(1)); if (tg) tg.scrollIntoView({ block: 'center' }); }
+      if (location.hash.startsWith('#t-')) { const tg = document.getElementById(location.hash.slice(1)); if (tg) setTimeout(() => tg.scrollIntoView({ block: 'center' }), 50); }
       document.dispatchEvent(new Event('atlas-terms'));
     };
     if (window.ATLAS_TERMS) { go(); return; }
@@ -231,10 +248,78 @@
     document.head.append(s);
   }
 
+  /* ---------- pinned term card ---------- */
+  let popEl = null, pinnedFor = null;
+  function pin(anchor, html) {
+    if (!popEl) {
+      popEl = A.el('div', { class: 'term-pop', role: 'dialog' });
+      document.body.append(popEl);
+      document.addEventListener('mousedown', (e) => { if (pinnedFor && !popEl.contains(e.target) && !pinnedFor.contains(e.target)) unpin(); });
+      document.addEventListener('keydown', (e) => { if (e.key === 'Escape') unpin(); });
+      addEventListener('scroll', () => pinnedFor && place(), { passive: true });
+      addEventListener('resize', () => pinnedFor && place());
+    }
+    pinnedFor = anchor;
+    popEl.innerHTML = html;
+    popEl.prepend(A.el('button', { class: 'tp-x', 'aria-label': '关闭', onclick: unpin }, '×'));
+    A.renderMath(popEl);
+    popEl.style.display = 'block';
+    place();
+  }
+  function place() {
+    const r = pinnedFor.getBoundingClientRect(), p = popEl.getBoundingClientRect();
+    let left = Math.min(Math.max(8, r.left), innerWidth - p.width - 8);
+    let top = r.bottom + 8;
+    if (top + p.height > innerHeight - 8) top = Math.max(8, r.top - p.height - 8);
+    popEl.style.left = left + 'px'; popEl.style.top = top + 'px';
+  }
+  function unpin() { if (popEl) popEl.style.display = 'none'; pinnedFor = null; }
+
+  /* ---------- "back" button after in-site jumps (terms, cross-references, prerequisite links) ---------- */
+  const BACK_KEY = 'atlas-back', RESTORE_KEY = 'atlas-restore';
+  const pageFile = () => location.pathname.split('/').pop() || 'index.html';
+  function initBack() {
+    document.addEventListener('click', (e) => {
+      const a = e.target.closest && e.target.closest('a[href]');
+      if (!a || !(a.matches('a.xref, a[data-jump]'))) return;
+      const cur = A.ch(currentSlug());
+      sessionStorage.setItem(BACK_KEY, JSON.stringify({ url: pageFile(), y: scrollY, title: cur ? [A.chLabel(cur), cur.t].filter(Boolean).join(' · ') : document.title, t: Date.now() }));
+      unpin();
+    }, true);
+    addEventListener('hashchange', showBack);
+    let r = null;
+    try { r = JSON.parse(sessionStorage.getItem(RESTORE_KEY) || 'null'); } catch (e) {}
+    if (r && r.url === pageFile()) { sessionStorage.removeItem(RESTORE_KEY); setTimeout(() => scrollTo(0, r.y), 400); }
+    showBack();
+  }
+  function showBack() {
+    let m = null;
+    try { m = JSON.parse(sessionStorage.getItem(BACK_KEY) || 'null'); } catch (e) {}
+    const old = document.getElementById('back-btn');
+    if (!m || Date.now() - m.t > 30 * 60 * 1000) { if (old) old.remove(); return; }
+    const same = m.url === pageFile();
+    if (same && !location.hash) { if (old) old.remove(); return; }
+    const b = old || A.el('div', { id: 'back-btn' });
+    b.innerHTML = '';
+    const go = A.el('button', { class: 'bb-go' }, '← 返回' + (same ? '刚才读到的位置' : '：' + m.title));
+    const x = A.el('button', { class: 'bb-x', 'aria-label': '关闭' }, '×');
+    go.onclick = () => {
+      sessionStorage.removeItem(BACK_KEY); b.remove();
+      if (same) { history.replaceState(null, '', location.pathname + location.search); scrollTo({ top: m.y, behavior: 'instant' }); return; }
+      const ref = document.referrer ? document.referrer.split('#')[0].split('/').pop() : '';
+      if (ref === m.url && history.length > 1) { history.back(); return; }
+      sessionStorage.setItem(RESTORE_KEY, JSON.stringify({ url: m.url, y: m.y }));
+      location.href = m.url;
+    };
+    x.onclick = () => { sessionStorage.removeItem(BACK_KEY); b.remove(); };
+    b.append(go, x);
+    if (!old) document.body.append(b);
+  }
+
   /* ---------- math (KaTeX auto-render; delimiters \( \) and \[ \]) ---------- */
-  function renderMath() {
+  function renderMath(el) {
     if (typeof renderMathInElement !== 'function') return;
-    renderMathInElement(document.querySelector('main') || document.body, {
+    renderMathInElement(el || document.querySelector('main') || document.body, {
       delimiters: [{ left: '\\[', right: '\\]', display: true }, { left: '\\(', right: '\\)', display: false }],
       throwOnError: false,
       ignoredTags: ['script', 'noscript', 'style', 'textarea', 'pre', 'code', 'canvas'],
@@ -279,6 +364,7 @@
     initTerms();
     renderMath();
     loadDemos();
+    initBack();
   });
 
   /* ---------- tooltip ---------- */
@@ -287,6 +373,7 @@
     show(html, x, y) {
       if (!tipEl) { tipEl = A.el('div', { class: 'tooltip' }); document.body.append(tipEl); }
       tipEl.innerHTML = html; tipEl.style.display = 'block';
+      if (html.indexOf('\\(') >= 0) A.renderMath(tipEl);
       const r = tipEl.getBoundingClientRect();
       let left = x + 14, top = y + 14;
       if (left + r.width > innerWidth - 8) left = x - r.width - 14;
