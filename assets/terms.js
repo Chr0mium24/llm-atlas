@@ -444,4 +444,20 @@ window.ATLAS_TERMS = {
   sdc: { t: "静默数据错误", en: "silent data corruption (SDC)", d: "芯片算错了却不报错，只表现为损失曲线异常。Gemini 的规模上每一两周就会影响一次训练，要靠确定性重放和主动扫描找出坏机器。", at: "training-systems#faults" },
   'colocated-rl': { t: "训练与推理共置", en: "colocated RL", d: "同一批卡轮流运行推理引擎（采样）和训练引擎（更新），每步切换并同步权重。省卡、简单，但要等一批里最长的回答写完。", at: "training-systems#rl-infra" },
   'async-rl': { t: "异步 RL", en: "asynchronous RL", d: "采样和训练放在两组卡上同时运行，训练使用几步之前的策略生成的数据；吞吐更高，但要用重要性采样修正、限制样本陈旧度。", at: "training-systems#rl-infra" },
+
+  // ---- moe (upgrade 2026-10-20)
+  'token-choice': { t: "top-k 路由（token 选专家）", en: "top-k routing / token choice", d: "每个 token 按路由分数挑出最高的 k 个专家，再把这几个的概率重新归一化成门控权重。与“专家挑 token”的 expert choice 相对。", at: "moe#toy-gate" },
+  'capacity-factor': { t: "容量因子", en: "capacity factor", d: "每个专家每批最多处理的分配数是平均负载 \\(kT/E\\) 的几倍：\\(C = \\lfloor c\\,kT/E\\rfloor\\)。训练常用 1.0–1.25，超出容量的分配被丢弃。", at: "moe#toy-cap" },
+  'token-dropping': { t: "丢 token", en: "token dropping", d: "专家超出容量时，多出来的分配不经过该专家，只靠残差连接把输入传下去。即使路由完全均匀，随机波动也会造成约 0.4/√λ 的丢弃（容量因子为 1 时）。", at: "moe#toy-cap" },
+  'active-params': { t: "激活参数", en: "activated parameters", d: "每个 token 实际参与计算的参数量，决定每 token 的计算量（前向约 2 倍）；总参数决定显存。DeepSeek-V3 总参数 671B、激活 37B。", at: "moe#toy-params" },
+  'aux-loss': { t: "负载均衡辅助损失", en: "auxiliary load-balancing loss", d: "\\(\\alpha E\\sum_i f_iP_i\\)：\\(f_i\\) 是实际分给专家 \\(i\\) 的比例（不可导），\\(P_i\\) 是平均路由概率（可导）。均匀时取最小值 \\(\\alpha\\)；系数太大会扭曲路由。", at: "moe#balance" },
+  'aux-free-balance': { t: "无辅助损失均衡", en: "auxiliary-loss-free load balancing", d: "给每个专家一个偏置 \\(b_i\\)，只在选 top-k 时加到分数上，不进门控权重和梯度；每步按负载调整：超载减、空闲加。相当于给专家定“价格”（DeepSeek-V3）。", at: "moe#auxfree" },
+  'router-z-loss': { t: "路由 z-loss", en: "router z-loss", d: "\\(\\frac{c_z}{T}\\sum_t(\\log\\sum_j e^{z_{t,j}})^2\\)：惩罚路由 logit 的整体大小，消除 softmax 的平移自由度，避免低精度下的舍入误差放大（ST-MoE, 2022）。", at: "moe#stability" },
+  'fine-grained-experts': { t: "细粒度专家", en: "fine-grained experts", d: "把每个专家切成几份更小的专家，专家数和每个 token 选的个数同比例增加；总参数和计算量不变，组合数暴增（DeepSeekMoE, 2024）。", at: "moe#fine" },
+  'shared-expert': { t: "共享专家", en: "shared expert", d: "所有 token 都经过、不参与路由的专家，负责通用知识，让路由专家更专注。DeepSeek-V3 每层 1 个，Kimi K3 每层 2 个；Qwen3 的 MoE 不用。", at: "moe#fine" },
+  'expert-granularity': { t: "粒度（专家粒度）", en: "expert granularity", d: "\\(G = d_{\\text{ff}}/d_{\\text{expert}}\\)：标准 MLP 中间维度与单个专家中间维度之比。激活参数不变时，\\(G\\) 越大专家越小、每 token 选得越多（Krajewski 等, 2024）。", at: "moe#laws" },
+  'efficiency-leverage': { t: "效率杠杆", en: "efficiency leverage (EL)", d: "稠密模型达到同样效果所需的算力除以 MoE 所需的算力。主要由激活比例和训练总算力决定（蚂蚁 Ling 团队, 2025）。", at: "moe#laws" },
+  'all-to-all': { t: "全对全通信", en: "all-to-all", d: "每张卡都向每张卡发送各不相同的数据。MoE 每层两次：分发（dispatch）与收回（combine），每 token 约 k·d·(发+收字节数)。", at: "moe#parallel" },
+  'conditional-memory': { t: "条件记忆", en: "conditional memory", d: "按前面几个 token 直接查一张巨大的 n-gram 嵌入表、再与隐藏状态融合；与 MoE 的“条件计算”并列的另一种稀疏（DeepSeek Engram, 2026）。", at: "moe#memory" },
+  upcycling: { t: "升级改造", en: "sparse upcycling", d: "把训练好的稠密模型的 MLP 复制成多个专家作为初始值，再加路由器继续训练，复用已花的预训练算力（Komatsuzaki 等, 2022）。", at: "moe#history" },
 };

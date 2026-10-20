@@ -60,7 +60,7 @@ document.addEventListener('DOMContentLoaded', () => {
     reasoning: '思维链为什么有用（串行深度与复杂性）、并行 vs 串行的预算分配、过度思考与反向规模化、思维链忠实性、不用文字的推理',
     agents: '循环与平方级成本、工具调用与 MCP、上下文工程、RAG 与智能体搜索、harness、多智能体之争、错误累积、提示注入',
     coding: 'FIM、仓库级训练与沙盒 RL、pass@k 无偏估计、SWE-bench 怎样出题判分与污染之争、针对测试取巧、METR 生产力试验与阿姆达尔定律、代码安全',
-    moe: '路由与 top-k、辅助损失与无辅助损失均衡、细粒度与共享专家、专家分工之争（2026 新证据）、批越大用到的专家越多、Engram 条件记忆',
+    moe: '从零开始：6 个 token、4 个专家手算路由；负载均衡的三种做法（辅助损失、无辅助损失偏置控制器、router z-loss）及推导、细粒度与共享专家、MoE 规模定律与效率杠杆、专家并行的全对全通信、每一代在修什么、条件记忆',
     'long-context': 'KV 缓存公式、GQA 与 MLA（矩阵吸收推导）、FlashAttention 与在线 softmax、线性注意力的结合律与 Delta 规则（梯度下降视角）、混合之争、稀疏注意力、迷失在中间',
     hardware: '跟着一次矩阵乘法走进 H100：SM、存储层次与三种瓶颈；roofline 与分块的推导、低精度为什么翻倍、脉动阵列与全片上存储、互连与扩展域、从 V100 到 Rubin 每一代在修什么、软件栈与 2026 芯片格局',
     quantization: '带宽上限、Δ²/12 误差推导与离群值、分组与微缩放（bpw）、Hadamard 旋转与 GPTQ 推导、量化实验室、STE 与 QAT、过度训练更难量化、三值模型之争',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 96], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 99], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
