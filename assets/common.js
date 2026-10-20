@@ -22,7 +22,7 @@
     { s: 'agents', t: '智能体', st: 'new' },
     { s: 'coding', t: 'AI 编程', st: 'new' },
     { part: '四 · 架构演进' },
-    { s: 'moe', t: '混合专家 MoE', st: 'old' },
+    { s: 'moe', t: '混合专家 MoE', st: 'new' },
     { s: 'long-context', t: '长上下文与注意力变体', st: 'old' },
     { part: '五 · 硬件与部署' },
     { s: 'hardware', t: '芯片、内核与编译器', st: 'todo' },

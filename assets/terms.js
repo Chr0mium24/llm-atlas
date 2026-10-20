@@ -181,4 +181,10 @@ window.ATLAS_TERMS = {
   fim: { t: '中间填空（FIM）', en: 'fill-in-the-middle', d: '训练时把文档重排为“前缀、后缀、中间”并用特殊 token 标记，模型从左到右预测中间段时已看过前后文。编辑器补全依赖它。', at: 'coding#train' },
   'swe-bench': { t: 'SWE-bench', en: 'SWE-bench', d: '用真实 GitHub 仓库的 issue 出题：给出 issue 和修复前的仓库，以 PR 中的测试（FAIL_TO_PASS 与 PASS_TO_PASS）判分。Verified 为人工筛选的 500 题，Pro 更难、更难污染。', at: 'coding#eval' },
   'vibe-coding': { t: 'vibe coding', en: 'vibe coding', d: '用自然语言描述需求、接受 AI 的全部修改而不读代码的编程方式（Karpathy, 2025-02）。适合原型，不适合需长期维护的软件。', at: 'coding#forms' },
+
+  // ---- moe (moe.html)
+  moe: { t: '混合专家（MoE）', en: 'mixture of experts', d: String.raw`把 MLP 换成 \(E\) 个专家加一个路由器，每个 token 只送给得分最高的 \(k\) 个专家。参数量约为 \(E\) 个专家，计算量约为 \(k\) 个。`, at: 'moe#idea' },
+  expert: { t: '专家', en: 'expert', d: 'MoE 层中的一个小 MLP。细粒度 MoE 有几百个专家，外加所有 token 都经过的共享专家。', at: 'moe#idea' },
+  router: { t: '路由器', en: 'router / gate', d: String.raw`一个 \(d\times E\) 的线性层，给每个专家打分，选出 top-k 并给出门控权重。与模型一起训练。`, at: 'moe#idea' },
+  'routing-collapse': { t: '路由坍缩', en: 'routing collapse', d: '路由器把大部分 token 送给少数专家，其余专家得不到训练。需要辅助损失或无辅助损失的偏置调节来均衡负载。', at: 'moe#balance' },
 };
