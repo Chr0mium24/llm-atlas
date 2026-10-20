@@ -265,7 +265,7 @@ window.ATLAS_TERMS = {
   'diffusion-forcing': { t: 'Diffusion Forcing', en: 'Diffusion Forcing', d: '训练时给每一帧独立的噪声水平，使模型能以“不完美的前帧”为条件逐帧生成，缓解自回归视频的误差累积（2024）。', at: 'video#consistency' },
 
   // ---- audio (audio.html)
-  mel: { t: '梅尔频谱', en: 'mel spectrogram', d: String.raw`每隔约 10 毫秒做一次短时傅里叶变换，把频率按梅尔刻度 \(m = 2595\log_{10}(1 + f/700)\) 分成几十个频带并取对数能量。声音的“图像”表示。`, at: 'audio#features' },
+  mel: { t: '梅尔频谱', en: 'mel spectrogram', d: String.raw`每隔约 10 毫秒做一次短时傅里叶变换，把频率按梅尔刻度 \(m = 2595\log_{10}(1 + f/700)\) 分成几十个频带并取对数能量。声音的“图像”表示。`, at: 'audio#zero-mel' },
   asr: { t: '语音识别（ASR）', en: 'automatic speech recognition', d: '把语音转写成文字。Whisper 用编码器读梅尔频谱、解码器像语言模型一样生成文字，68 万小时弱监督数据带来鲁棒性。', at: 'audio#features' },
   'neural-codec': { t: '神经音频编解码器', en: 'neural audio codec', d: '把波形压成每秒几十帧、每帧几个码本编号的网络（SoundStream、EnCodec、Mimi），并能解码还原。让语言模型可以“预测声音 token”。', at: 'audio#codec' },
   rvq: { t: '残差向量量化（RVQ）', en: 'residual vector quantization', d: '第 1 级码本量化原始向量，第 k 级量化前 k−1 级留下的残差；码率 = 帧率 × 级数 × log₂(码本大小)。', at: 'audio#codec' },
@@ -500,4 +500,28 @@ window.ATLAS_TERMS = {
   amdahl: { t: "阿姆达尔定律", en: "Amdahl's law", d: "只加速一部分工作时，整体加速的上限由没被加速的部分决定：只加速占比 \\(f\\) 的部分，整体最多快 \\(1/(1-f)\\) 倍。", at: "coding#productivity" },
   slopsquatting: { t: "slopsquatting", en: "slopsquatting", d: "攻击者抢先注册模型常“幻觉”出的、并不存在的软件包名，放入恶意代码，等用户照着 AI 的建议安装。", at: "coding#quality" },
   aci: { t: '智能体-计算机接口（ACI）', en: 'agent-computer interface', d: '为模型量身设计的工具与反馈格式（如带行号的文件查看、带语法检查的编辑命令）。SWE-agent（2024）只改接口就把 SWE-bench Lite 从 11.0% 提到 18.0%。', at: 'agents#harness' },
+
+  // ---- audio (upgrade 2026-10-20)
+  'sample-rate': { t: "采样率", en: "sample rate", d: "每秒对波形测量多少次（\\(f_s\\)）。能无失真记录的最高频率是 \\(f_s/2\\)（奈奎斯特频率）。识别常用 16 kHz，合成 24 kHz，音乐 44.1/48 kHz。", at: "audio#zero-wave" },
+  f0: { t: "基频（F0）", en: "fundamental frequency", d: "周期性声音（如元音）每秒重复的次数，听起来就是音高；男声约 85–155 Hz，女声约 165–255 Hz。波形可拆成基频及其整数倍的谐波。", at: "audio#zero-freq" },
+  stft: { t: "短时傅里叶变换（STFT）", en: "short-time Fourier transform", d: "每隔一个步长取一段短窗口做傅里叶变换，按时间排成“时间 × 频率”的频谱图。语音常用 25 毫秒窗、10 毫秒步长，每秒 100 帧。", at: "audio#zero-mel" },
+  'tf-resolution': { t: "时间–频率分辨率的取舍", en: "time–frequency resolution trade-off", d: "窗长 \\(T_w\\) 越长，频率分得越细（约 \\(1/T_w\\)），时间分得越粗（约 \\(T_w\\)）；两者的乘积有下限（Gabor 极限）。", at: "audio#zero-mel" },
+  vocoder: { t: "声码器", en: "vocoder", d: "从频谱或其它中间表示重建波形的模型。梅尔频谱丢掉了相位，生成语音时必须靠它把相位找回来（WaveNet、HiFi-GAN）。", at: "audio#zero-mel" },
+  'speech-ssl': { t: "自监督语音表示", en: "self-supervised speech representation", d: "不用文字标注、只靠“遮住一部分音频再猜”学到的表示（wav2vec 2.0、HuBERT）。学到的特征接近音素，少量标注即可微调出识别器。", at: "audio#features" },
+  'semantic-token': { t: "语义 token", en: "semantic token", d: "对自监督语音特征做聚类或量化得到的离散编号，主要记录“发的是什么音”，几乎不记录说话人。AudioLM、Mimi 的第 1 级码本都属于这一类。", at: "audio#features" },
+  'weak-supervision': { t: "弱监督", en: "weak supervision", d: "用大量质量不完美的标注（如网上视频的字幕）代替少量精确标注。Whisper 用 68 万小时这样的数据训练语音识别。", at: "audio#features" },
+  vq: { t: "向量量化（VQ）", en: "vector quantization", d: "把连续向量换成码本中离它最近的码字的编号；一个编号占 \\(\\log_2 K\\) 比特。让连续信号变成语言模型能预测的离散 token。", at: "audio#codec" },
+  codebook: { t: "码本", en: "codebook", d: "向量量化用的一张向量表，表中每个向量叫码字；编码时取最近码字的编号，解码时查表换回码字。", at: "audio#codec" },
+  'acoustic-token': { t: "声学 token", en: "acoustic token", d: "编解码器里补充音色、韵律、录音环境等细节的码本编号（RVQ 的后几级），与只记录内容的语义 token 相对。", at: "audio#codec" },
+  'delay-pattern': { t: "延迟模式", en: "delay pattern", d: "多码本 token 的一种排法：第 \\(k\\) 级整体推后 \\(k-1\\) 步，每步并行生成各级。共 \\(T+K-1\\) 步，保留了“同一帧先粗后细”的依赖（MusicGen、Moshi）。", at: "audio#arrange" },
+  'depth-transformer': { t: "深度 Transformer", en: "depth transformer (RQ-Transformer)", d: "大模型沿时间每帧走一步给出上下文向量，小模型在帧内逐级生成多个码本编号。精确符合链式法则，大模型步数只有帧数（Moshi；Qwen3-Omni 的 MTP 模块同理）。", at: "audio#arrange" },
+  'zero-shot-tts': { t: "零样本语音合成", en: "zero-shot TTS", d: "不为新说话人训练，只用几秒钟的录音作提示，就用这个声音读出任意文字（VALL-E）。也是声音克隆滥用的来源。", at: "audio#tts" },
+  'cascade-voice': { t: "级联语音系统（三段式）", en: "cascaded voice pipeline", d: "语音识别 → 语言模型 → 语音合成串起来的语音助手。各段可独立替换，但延迟串行相加，语气等非文字信息会丢失。", at: "audio#latency" },
+  'first-packet': { t: "首包延迟", en: "first-packet latency", d: "语音模型从输入结束到第一段可播放音频出来的时间，相当于语音模型的首 token 延迟。Qwen3-Omni 报告的理论值为 234 毫秒。", at: "audio#latency" },
+  'semantic-vad': { t: "语义判停", en: "semantic VAD / turn detection", d: "按内容和语调判断用户是否说完，而不只看静音多久。等价于贝叶斯更新 \\(P(\\text{说完}\\mid s) = p_0/(p_0 + (1-p_0)S(s))\\)：先验 \\(p_0\\) 越高，需要等的越短。", at: "audio#latency" },
+  'turn-taking': { t: "话轮转换", en: "turn-taking", d: "对话中决定什么时候接过话头。人与人之间的间隔平均约 200 毫秒，靠的是提前预测对方何时说完。", at: "audio#duplex" },
+  backchannel: { t: "附和语", en: "backchannel", d: "听话人发出的“嗯”“对”等不打算接过话头的短反馈。全双工模型既要会说，也要能分辨它不是打断。", at: "audio#duplex" },
+  'inner-monologue': { t: "内心独白", en: "inner monologue", d: "Moshi 的做法：说话的同时生成与语音时间对齐的文字 token，先“想”出字再生成声音，把文本语言模型的知识带进语音模型。", at: "audio#duplex" },
+  rtf: { t: "实时率（RTF）", en: "real-time factor", d: "处理一段声音所需的计算时间除以这段声音的时长。流式模型必须小于 1，否则延迟会随时间累积。", at: "audio#duplex" },
+  'thinker-talker': { t: "Thinker–Talker", en: "Thinker–Talker architecture", d: "Qwen-Omni 系列的结构：Thinker（多模态语言模型）负责理解与思考并输出文字，Talker 读取它的输出和隐藏状态流式生成语音编码。", at: "audio#duplex" },
 };

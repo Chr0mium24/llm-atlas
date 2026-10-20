@@ -55,9 +55,10 @@ A.defineDemo('rvq-demo', function (mount) {
     const e = encode(X[sel], levels);
     stats.innerHTML = '';
     const items = [['这个点的编码', '[' + e.codes.join(', ') + ']'], ['这个点的重建误差', Math.sqrt(d2(X[sel], e.rec)).toFixed(3)]];
-    for (let l = 1; l <= LMAX; l++) items.push([`${l} 级时的平均误差²`, mse(l).toFixed(4)]);
+    const m0 = A.sum(X.map((p) => d2(p, [A.sum(X.map((q) => q[0])) / X.length, A.sum(X.map((q) => q[1])) / X.length]))) / X.length;
+    for (let l = 1; l <= LMAX; l++) { const prevM = l === 1 ? m0 : mse(l - 1); items.push([`${l} 级时的平均误差²`, mse(l).toFixed(4) + '（−' + (10 * Math.log10(prevM / mse(l))).toFixed(1) + ' dB）']); }
     items.forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px', opacity: k.includes(levels + ' 级') || !k.includes('级时') ? 1 : 0.5 } }, v))));
-    hint.innerHTML = '第 1 级码本只能把每个向量粗略地归到 8 个类中心之一；第 2 级码本不去量化原始向量，而是量化“第 1 级没表示好的那部分”（残差），依此类推。每多一级，误差大约缩小到原来的几分之一，而比特数只是线性增加。神经音频编解码器（EnCodec、Mimi、DAC）就是这样把每一帧声音压成几个码本编号：第一个码本记录大致的内容，后面的码本一级级补上音色和细节。生成时，语言模型像预测文字一样预测这些编号。';
+    hint.innerHTML = '第 1 级码本只能把每个向量粗略地归到 8 个类中心之一；第 2 级码本不去量化原始向量，而是量化“第 1 级没表示好的那部分”（残差），依此类推。每多一级，误差大约缩小到原来的几分之一（括号里是比上一级下降的分贝数；第 1 级是相对“全用平均值表示”），而比特数只是线性增加。神经音频编解码器（EnCodec、Mimi、DAC）就是这样把每一帧声音压成几个码本编号：第一个码本记录大致的内容，后面的码本一级级补上音色和细节。生成时，语言模型像预测文字一样预测这些编号。';
     view.redraw();
   }
   draw();
