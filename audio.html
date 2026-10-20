@@ -12,22 +12,171 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>语音、音频与音乐</h1>
-  <p class="lede">声音也能变成 token。语音识别、语音合成、全双工对话和音乐生成，走的是同一条技术路线。</p>
+  <h1>语音、音频与音乐：让模型听、说、唱</h1>
+  <p class="lede">声音是一条随时间变化的波形，一秒钟就有一万六千到四万八千个采样点。要让大模型处理声音，同样要先把它变成 token：理解时用连续的频谱特征，生成时用神经编解码器压出的离散编号。这一章讲声音怎样表示（梅尔频谱、残差向量量化），语音识别和语音合成怎样变成“语言模型的任务”，能随时打断、插话的全双工对话是怎样做到的，再到能同时生成人声和伴奏的音乐模型，以及音乐行业与 AI 公司之间的诉讼与和解。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.5）。</div>
+<div class="bridge">第 <a class="xref" data-ref="vlm"></a> 章把图像变成 patch token，上一章的视频模型开始原生生成声音。声音的特殊之处在于两点：它是一维的、极长的时间序列；人类对它的延迟极其敏感：对话中一方说完，另一方通常在约 200 毫秒内就开口。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>语音识别：Whisper</li>
-  <li>神经音频编解码器（EnCodec、Mimi）与编解码器语言模型做 TTS</li>
-  <li>全双工语音：同时听和说</li>
-  <li>全模态 Thinker–Talker 架构</li>
-  <li>音乐生成：Suno、Udio、Lyria；人声与配乐一起生成</li>
-  <li>版权与授权</li>
+<div class="prereq">
+  <ul>
+    <li>token、嵌入、自回归生成：第 <a class="xref" data-ref="tokens"></a>、<a class="xref" data-ref="generation"></a> 章</li>
+    <li>编码器-解码器与交叉注意力：第 <a class="xref" data-ref="attention"></a> 章；多模态的投影层：第 <a class="xref" data-ref="vlm"></a> 章</li>
+    <li>流匹配：第 <a class="xref" data-ref="diffusion"></a> 章；首 token 延迟：第 <a class="xref" data-ref="serving"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="features">声音的表示：频谱</h2>
+<p>直接处理原始波形太长：一段 30 秒、16 kHz 的录音有 48 万个采样点。经典做法是先做短时傅里叶变换：每隔 10 毫秒取一段 25 毫秒的窗口，算出其中各个频率的能量，得到一张“时间 × 频率”的图。人耳对频率的感知近似对数（低音区分辨细、高音区分辨粗），所以再把频率轴按<dfn data-t="mel">梅尔刻度</dfn>重新划分、对能量取对数：</p>
+<div class="fx">
+\[ m = 2595\,\log_{10}\Big(1 + \frac{\htmlClass{sym-f}{f}}{700}\Big),\qquad \text{帧数 / 秒} = \frac{1}{\htmlClass{sym-hop}{\text{步长}}} \]
+  <div class="fx-read">梅尔刻度在 1000 Hz 以下接近线性、以上接近对数，模仿人耳的分辨率。每 10 毫秒一帧，一秒 100 帧，每帧是 80 个梅尔频带上的对数能量：一张“声音的图像”。</div>
+  <dl class="fx-syms">
+    <dt data-sym="f">\(f\)</dt><dd>频率（Hz）</dd>
+    <dt data-sym="hop">步长</dt><dd>相邻两帧的时间间隔，常为 10 毫秒</dd>
+  </dl>
+  <div class="fx-eg">1000 Hz 对应约 1000 梅尔，8000 Hz 只对应约 2840 梅尔：高频的 7000 Hz 被压缩到不到 2000 梅尔。Whisper 把 30 秒音频变成 \(3000\times 80\) 的梅尔频谱，经两层卷积降采样一半，得到 1500 个编码器位置，每个约对应 20 毫秒。</div>
+</div>
+<p><b>语音识别</b>（<dfn data-t="asr">ASR</dfn>）的代表是 OpenAI 的 Whisper（2022）：一个编码器-解码器 Transformer，编码器读梅尔频谱，解码器像语言模型一样逐个生成文字 token，并用特殊 token 指定语言、任务（转写或翻译）和时间戳。它的突破在数据：68 万小时从网上收集的、带字幕但并不完美的“弱监督”音频，覆盖近百种语言，因而对口音、噪声、专业术语都很鲁棒，不需要针对每个场景微调。多模态大模型理解声音的方式也类似：一个音频编码器把频谱变成一串向量，投影后送进语言模型（第 <a class="xref" data-ref="vlm"></a> 章的投影层），Gemini 每秒音频约 25 个 token。</p>
+<aside class="dispute surprise">
+  <h4>意外：语音识别模型会“编”出没人说过的话</h4>
+  <dl>
+    <dt>原以为</dt><dd>语音识别的错误是听错字、漏字，不会凭空生成内容。</dd>
+    <dt>实际发现</dt><dd>Koenecke 等（2024）检查了 Whisper 转写的上万段录音，约 1% 的转写中出现了音频里根本不存在的整句话，其中近四成带有暴力、虚构的医疗信息等有害内容，在停顿较长、说话人有语言障碍时更常见。美联社报道，一些医院的病历转写工具就建立在 Whisper 之上。</dd>
+    <dt>为什么</dt><dd>Whisper 的解码器本质上是一个语言模型（第 <a class="xref" data-ref="generation"></a> 章）：遇到长时间的静音或难以辨认的片段，它会按语言的统计规律“续写”出看似通顺的句子；训练数据中视频字幕里的套话（“感谢观看”）也会被生成出来。</dd>
+    <dt>现在怎么看</dt><dd>用语言模型做识别，同时带来了上下文理解的优势和幻觉的风险。高风险场景要配合语音活动检测（去掉静音段）、置信度标注和人工复核。</dd>
+  </dl>
+</aside>
+
+<h2 id="codec">神经编解码器：把声音压成编号</h2>
+<p>理解声音可以用连续特征，但要让语言模型<b>生成</b>声音，最方便的是把声音也变成离散 token，然后像预测文字一样预测它们。<dfn data-t="neural-codec">神经音频编解码器</dfn>（SoundStream 2021、EnCodec 2022、Mimi 2024）做的就是这件事：编码器把波形压成每秒几十帧的向量，每帧再用<dfn data-t="rvq">残差向量量化</dfn>（RVQ）变成几个码本编号，解码器从编号还原波形。</p>
+<div class="fx">
+\[ \mathbf z\approx \htmlClass{c-dir}{\mathbf c^{(1)}_{i_1}} + \htmlClass{c-adv}{\mathbf c^{(2)}_{i_2}} + \cdots + \mathbf c^{(N_q)}_{i_{N_q}},\qquad \text{码率} = \htmlClass{sym-fr}{f_{\text{帧}}}\times \htmlClass{sym-nq}{N_q}\times\log_2\htmlClass{sym-K}{K} \]
+  <div class="fx-read">第 1 级码本选一个最接近的码字表示<span style="color:var(--s1)">大致内容</span>；第 2 级码本表示第 1 级<span style="color:var(--s2)">没表示好的残差</span>；依此类推，每一级补上更细的细节。每帧最终存 \(N_q\) 个编号。</div>
+  <dl class="fx-syms">
+    <dt data-sym="fr">\(f_{\text{帧}}\)</dt><dd>每秒的帧数</dd>
+    <dt data-sym="nq">\(N_q\)</dt><dd>码本的级数</dd>
+    <dt data-sym="K">\(K\)</dt><dd>每个码本的码字数，每个编号占 \(\log_2 K\) 比特</dd>
+  </dl>
+  <div class="fx-eg">EnCodec（24 kHz）：每秒 75 帧 × 8 级 × 10 比特 = 6 kbps，而 CD 音质约 1411 kbps，压缩了两百多倍。Kyutai 的 Mimi：每秒 12.5 帧 × 8 级 × 11 比特 ≈ 1.1 kbps，每秒只有 100 个编号；它的第 1 级码本还被训练成与自监督语音模型的特征对齐，偏重“说了什么”（语义），后面几级偏重“怎么说的”（音色、韵律）。</div>
+</div>
+<div data-demo="rvq-demo"></div>
+
+<h2 id="tts">语音合成：一个“续写声音”的语言模型</h2>
+<p>有了声音 token，语音合成（TTS）就可以变成语言模型的任务。Google 的 AudioLM（2022）先生成语义 token、再生成声学 token；微软的 VALL-E（2023）把“文字 + 一段 3 秒的说话人录音的 codec token”作为提示，让模型续写出用这个人的声音朗读这段文字的 token，实现零样本的声音克隆。多级码本带来一个麻烦：每帧有 \(N_q\) 个编号，逐个生成太慢。MusicGen（2023）的“延迟排布”把第 \(k\) 级码本的序列整体推后 \(k\) 步，每一步并行生成所有级各一个编号，既保留了“粗到细”的依赖，又不增加步数。</p>
+<p>另一条路线是第 <a class="xref" data-ref="diffusion"></a> 章的流匹配：直接生成连续的梅尔频谱或编解码器特征，再用声码器变成波形（Voicebox、F5-TTS）。2025–26 年的主流 TTS 常把两者结合：语言模型负责内容和韵律的规划，流匹配负责高保真的声学细节（如 CosyVoice 2/3），这与第 <a class="xref" data-ref="image"></a> 章“语言模型规划 + 扩散解码”的统一模型如出一辙。</p>
+<aside class="dispute">
+  <h4>几秒钟就能克隆一个人的声音，该怎么办</h4>
+  <dl>
+    <dt>风险</dt><dd>零样本声音克隆让冒充变得极其容易：电话诈骗冒充家人和上司、伪造名人的言论。2024 年香港一家公司的员工在一次“全员都是深度伪造”的视频会议后转账约 2500 万美元；美国联邦通信委员会同年宣布在自动拨号电话中使用 AI 克隆声音违法。</dd>
+    <dt>应对</dt><dd>声音水印（如 Meta 的 AudioSeal 能定位到具体的被生成片段）、检测模型、要求被克隆者本人授权的服务条款、对公众人物声音的限制。</dd>
+    <dt>现在怎么看</dt><dd>与图像水印（第 <a class="xref" data-ref="image"></a> 章）一样，开源模型不带水印，检测也不完全可靠。更实际的防护在社会层面：转账等敏感操作不依赖“听起来像本人”，而是用事先约定的验证方式。</dd>
+  </dl>
+</aside>
+
+<h2 id="duplex">实时对话：从三段式到全双工</h2>
+<p>早期的语音助手是三段式：语音识别 → 语言模型 → 语音合成。每一段都有延迟：</p>
+<div class="fx">
+\[ T_{\text{开口}} = \htmlClass{sym-te}{T_{\text{判断说完}}} + \htmlClass{sym-tl}{T_{\text{LLM 首 token}}} + \htmlClass{sym-tt}{T_{\text{TTS 首段}}} \]
+  <div class="fx-read">用户停下后，系统先要判断他是不是真的说完了（语音活动检测通常要等几百毫秒的静音），再等语言模型给出第一个 token，再等语音合成生成第一段可以播放的音频。三者串行相加。</div>
+  <dl class="fx-syms">
+    <dt data-sym="te">\(T_{\text{判断说完}}\)</dt><dd>端点检测的等待，常为 300–800 毫秒</dd>
+    <dt data-sym="tl">\(T_{\text{LLM 首 token}}\)</dt><dd>第 <a class="xref" data-ref="serving"></a> 章的首 token 延迟</dd>
+    <dt data-sym="tt">\(T_{\text{TTS 首段}}\)</dt><dd>流式合成第一段音频所需的时间</dd>
+  </dl>
+  <div class="fx-eg">GPT-4 时期 ChatGPT 的语音模式平均要 5.4 秒才开口；GPT-4o（2024-05）用一个模型端到端处理音频，平均约 320 毫秒，接近人与人对话中约 200 毫秒的换话间隙。三段式还会丢失信息：语气、笑声、迟疑、背景声在转成文字时就消失了。</div>
+</div>
+<p>端到端之后，下一步是<dfn data-t="full-duplex">全双工</dfn>：像人一样同时听和说，可以随时被打断，也能在对方说话时“嗯”一声表示在听。Kyutai 的 Moshi（2024-09）同时建模两路音频流（用户的和自己的），并让模型在说话的同时生成对应的文字 token 作为“内心独白”，理论延迟约 160 毫秒。阿里 Qwen 的 Thinker–Talker 结构（Qwen2.5-Omni → Qwen3-Omni → Qwen3.5-Omni）把职责分开：Thinker 是一个多模态语言模型，负责听、看、思考并输出文字；Talker 读取 Thinker 的输出和隐藏状态，流式地生成语音编码，做到边想边说。OpenAI 在 2026 年 7 月发布的 GPT-Live 也是全双工模型，遇到需要搜索或深入推理的问题时，在后台交给一个更强的推理模型处理，再把结果自然地接回对话中。</p>
+<aside class="dispute">
+  <h4>语音助手：三段式还是端到端</h4>
+  <dl>
+    <dt>三段式</dt><dd>每一段都能独立替换成最好的模型（最强的语言模型、最好的识别和合成），文字中间结果便于审核、记录和接入工具；企业客服等场景至今大量采用。</dd>
+    <dt>端到端</dt><dd>延迟低一个数量级，保留语气和情感，可以处理打断、插话和多人对话；但端到端语音模型的“智力”往往弱于同代的文本模型，也更难做安全审核。</dd>
+    <dt>现在怎么看</dt><dd>混合是 2026 年的答案：一个轻快的全双工语音模型负责自然的对话节奏，必要时调用强大的文本推理模型或工具（GPT-Live、Thinker–Talker 都是这一思路），把“反应快”和“想得深”分给不同的部件。</dd>
+  </dl>
+</aside>
+
+<h2 id="music">音乐生成</h2>
+<p>音乐比语音更难：要同时处理旋律、和声、节奏、多种乐器和人声，还要有几分钟尺度的结构（主歌、副歌、桥段）。路线演进：OpenAI 的 Jukebox（2020）用分层的 VQ-VAE 和自回归 Transformer 生成带人声的歌曲，生成一分钟要几个小时；Google 的 MusicLM（2023）和 Meta 的 MusicGen（2023）用编解码器 token 和语言模型从文字描述生成音乐；2024 年 Suno 和 Udio 让普通人用一句描述生成完整的、带人声的歌曲，迅速流行。2025–26 年，Suno 迭代到 v5、V6，Google 推出 Lyria 3；2026 年 10 月的 Suno Speech 能用一个模型同时生成人声与配乐。</p>
+<aside class="dispute">
+  <h4>用唱片训练音乐模型：诉讼与和解</h4>
+  <dl>
+    <dt>唱片公司</dt><dd>2024 年 6 月，环球、索尼、华纳三大唱片公司起诉 Suno 和 Udio，指其未经授权用受版权保护的录音训练模型，生成的歌曲与原作直接竞争。德国 GEMA 也在慕尼黑起诉 Suno，据报道于 2026 年 7 月一审胜诉。</dd>
+    <dt>和解与授权</dt><dd>据报道：2025 年 10–11 月，环球与 Udio、华纳与 Udio 和 Suno 相继和解，转向授权合作；2026 年 9 月 Suno 推出与唱片公司合作开发的 V6，并下线了此前所有在授权之前训练的模型。环球和索尼对 Suno 的诉讼仍在继续，美国法院预计 2027 年之前不会就合理使用作出裁决。</dd>
+    <dt>现在怎么看</dt><dd>音乐是 AI 版权问题中最早从诉讼走向授权的领域，因为版权集中在少数几家公司手中，谈判对象明确。代价是授权模型的训练数据范围和用户的下载权限都受到限制。这一模式会不会扩展到图像、新闻和书籍，是第 <a class="xref" data-ref="industry"></a> 章的话题。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">语音识别只会听错，不会编造。</b>基于语言模型的识别器在静音或难辨的片段可能生成整句不存在的话。</li>
+  <li><b class="m">语音模型直接生成波形。</b>大多数生成的是编解码器 token 或梅尔频谱，再由解码器或声码器变成波形。</li>
+  <li><b class="m">能对话的语音助手就是“语音识别 + ChatGPT + 语音合成”。</b>那是三段式；2024 年后的端到端和全双工模型直接处理音频，延迟和表现力都完全不同。</li>
+  <li><b class="m">声音克隆需要大量录音。</b>零样本模型只需几秒钟的样本。</li>
+  <li><b class="m">AI 音乐的版权问题已经解决。</b>部分唱片公司已转向授权合作，但主要诉讼仍在进行，各国判决不一。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2016–2020</div>
+    <h4>神经网络生成声音</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>传统的拼接与参数合成声音机械。</dd>
+      <dt>怎么解决</dt><dd>WaveNet（2016）逐个采样点生成逼真的语音；Tacotron 等从文字生成梅尔频谱再接声码器；Jukebox（2020）生成带人声的音乐。</dd>
+      <dt>代价</dt><dd>逐采样点生成极慢；每个说话人需要大量数据。</dd>
+      <dt>引出</dt><dd>怎样把声音变成语言模型能处理的 token？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2021–2023</div>
+    <h4>编解码器 token 与弱监督识别</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>声音太长、太连续；识别模型对新场景不鲁棒。</dd>
+      <dt>怎么解决</dt><dd>SoundStream（2021）、EnCodec（2022）的残差向量量化；Whisper（2022）的 68 万小时弱监督训练；AudioLM（2022）、VALL-E（2023）把语音生成变成语言建模；MusicLM、MusicGen（2023）。</dd>
+      <dt>代价</dt><dd>声音克隆的滥用风险出现。</dd>
+      <dt>引出</dt><dd>能否和大语言模型合为一体，实时对话？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>端到端语音与全双工</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>三段式语音助手延迟高、丢失语气。</dd>
+      <dt>怎么解决</dt><dd>GPT-4o 端到端处理音频（平均约 320 毫秒）；Moshi 全双工；Suno、Udio 让大众生成完整歌曲；流匹配 TTS（F5-TTS 等）。</dd>
+      <dt>代价</dt><dd>端到端模型的推理能力弱于文本模型；音乐版权诉讼开始。</dd>
+      <dt>引出</dt><dd>怎样兼顾自然的对话与深度推理？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>全模态与授权的音乐模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>语音模型与最强的推理模型割裂；音乐模型的数据合法性。</dd>
+      <dt>怎么解决</dt><dd>Qwen 的 Thinker–Talker（2.5-Omni → 3-Omni → 3.5-Omni）；视频模型原生生成音频（第 <a class="xref" data-ref="video"></a> 章）；GPT-Live 全双工语音并在后台调用推理模型；唱片公司与 Udio、Suno 的和解，Suno V6 只用授权数据；Suno Speech 同时生成人声与伴奏。</dd>
+      <dt>代价</dt><dd>声音伪造更难识别；授权模型的数据与使用受限。</dd>
+      <dt>引出</dt><dd>声音和图像之外，模型还要理解三维的空间（第 <a class="xref" data-ref="spatial"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个编解码器每秒 50 帧、每帧 4 级码本、每个码本 1024 个码字。码率是多少？一分钟的语音有多少个 token？</summary><div class="ans">\(50\times 4\times 10 = 2000\) bps = 2 kbps。一分钟 \(60\times 50\times 4 = 12000\) 个编号（若按帧计，3000 帧）。</div></details>
+<details class="quiz"><summary>2. 三段式语音助手：端点检测等 500 毫秒，语言模型首 token 300 毫秒，语音合成首段 200 毫秒。用户说完多久才听到回应？要降到 300 毫秒以内，主要该从哪里下手？</summary><div class="ans">约 1 秒。最大的部分是端点检测的等待，三段串行也无法再压缩；要做到 300 毫秒以内，需要端到端或全双工模型：边听边预测用户何时说完、边理解边准备回应，而不是等静音后再开始。</div></details>
+<details class="quiz"><summary>3. 为什么 RVQ 的第 1 级码本适合承载“说了什么”，后面几级适合“怎么说的”？</summary><div class="ans">第 1 级要用很少的比特表示每一帧最主要的信息；如果训练时把它与语义特征对齐（如 Mimi），它就主要编码内容。后面的级只量化残差，补充的是第 1 级没有表示的细节：音色、韵律、录音环境。这让语言模型可以先生成内容 token，再生成声学细节。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2212.04356">Robust Speech Recognition via Large-Scale Weak Supervision</a>（Whisper, 2022）<span class="why">弱监督大规模训练的语音识别。</span></li>
+  <li><a href="https://arxiv.org/abs/2210.13438">High Fidelity Neural Audio Compression</a>（EnCodec, 2022）<span class="why">残差向量量化编解码器。</span></li>
+  <li><a href="https://arxiv.org/abs/2301.02111">Neural Codec Language Models are Zero-Shot Text to Speech Synthesizers</a>（VALL-E, 2023）<span class="why">把 TTS 变成语言建模。</span></li>
+  <li><a href="https://arxiv.org/abs/2410.00037">Moshi</a>（Kyutai, 2024）<span class="why">全双工对话、Mimi 编解码器与“内心独白”。</span></li>
+  <li><a href="https://arxiv.org/abs/2306.05284">Simple and Controllable Music Generation</a>（MusicGen, 2023）<span class="why">多码本的延迟排布与文字到音乐。</span></li>
+</ol>
+
+<div class="nextq">图像、视频、声音都是世界的投影。要让模型理解物体在三维空间里的形状和位置、生成可以从任意角度观看的场景，需要另一套表示：神经辐射场与高斯泼溅。下一章（第 <a class="xref" data-ref="spatial"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2107.03312">SoundStream</a> · <a href="https://arxiv.org/abs/2209.03143">AudioLM</a> · <a href="https://arxiv.org/abs/2301.11325">MusicLM</a> · <a href="https://arxiv.org/abs/2005.00341">Jukebox</a> · <a href="https://arxiv.org/abs/2410.06885">F5-TTS</a> · <a href="https://arxiv.org/abs/2412.10117">CosyVoice 2</a> · <a href="https://arxiv.org/abs/2401.17264">AudioSeal</a> · <a href="https://arxiv.org/abs/2402.08021">Careless Whisper</a> · <a href="https://openai.com/index/hello-gpt-4o/">GPT-4o</a> · <a href="https://openai.com/index/introducing-gpt-live-1-in-the-api/">GPT-Live-1</a> · <a href="https://en.wikipedia.org/wiki/Suno_(platform)">Suno（维基百科）</a> · <a href="https://www.chartlex.com/blog/business/music-industry-ai-lawsuits-tracker-2026">音乐行业 AI 诉讼追踪（2026）</a> · <a href="https://www.minssam.com/en/blog/2026-10-02-suno-speech-beta-voice-music-one-take/">Suno Speech</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

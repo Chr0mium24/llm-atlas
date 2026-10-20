@@ -263,4 +263,11 @@ window.ATLAS_TERMS = {
   // ---- video (video.html)
   'spacetime-patch': { t: '时空 patch', en: 'spacetime patch', d: '把潜视频沿时间和空间切成的小块（常为 1×2×2），每块一个 token；任意时长、分辨率的视频都变成一串 token（Sora, 2024）。', at: 'video#arch' },
   'diffusion-forcing': { t: 'Diffusion Forcing', en: 'Diffusion Forcing', d: '训练时给每一帧独立的噪声水平，使模型能以“不完美的前帧”为条件逐帧生成，缓解自回归视频的误差累积（2024）。', at: 'video#consistency' },
+
+  // ---- audio (audio.html)
+  mel: { t: '梅尔频谱', en: 'mel spectrogram', d: String.raw`每隔约 10 毫秒做一次短时傅里叶变换，把频率按梅尔刻度 \(m = 2595\log_{10}(1 + f/700)\) 分成几十个频带并取对数能量。声音的“图像”表示。`, at: 'audio#features' },
+  asr: { t: '语音识别（ASR）', en: 'automatic speech recognition', d: '把语音转写成文字。Whisper 用编码器读梅尔频谱、解码器像语言模型一样生成文字，68 万小时弱监督数据带来鲁棒性。', at: 'audio#features' },
+  'neural-codec': { t: '神经音频编解码器', en: 'neural audio codec', d: '把波形压成每秒几十帧、每帧几个码本编号的网络（SoundStream、EnCodec、Mimi），并能解码还原。让语言模型可以“预测声音 token”。', at: 'audio#codec' },
+  rvq: { t: '残差向量量化（RVQ）', en: 'residual vector quantization', d: '第 1 级码本量化原始向量，第 k 级量化前 k−1 级留下的残差；码率 = 帧率 × 级数 × log₂(码本大小)。', at: 'audio#codec' },
+  'full-duplex': { t: '全双工对话', en: 'full-duplex dialogue', d: '同时听和说、可随时被打断或插话的语音对话模型（Moshi、GPT-Live）。', at: 'audio#duplex' },
 };
