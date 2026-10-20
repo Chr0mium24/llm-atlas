@@ -1,8 +1,8 @@
-/* attn-scale — interactive demo (moved from ch02-attention.html) */
+/* attn-scale — distribution of raw vs scaled scores q·k for 16 random keys as the head dimension d_h grows */
 A.defineDemo('attn-scale', function (mount) {
-  const { bd } = A.demo(mount, '维度 d 越大，不缩放的 softmax 越容易饱和', '每次抽 16 个随机 key');
+  const { bd } = A.demo(mount, '头维度 d_h 越大，不缩放的分数越分散', '每次抽 1 个随机 query 和 16 个随机 key，重复 300 次');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
-  const dS = A.slider(ctl, { label: '维度 d', min: 2, max: 1024, log: true, value: 128, fmt: (v) => Math.round(v), on: () => view.redraw(), width: 260 });
+  const dS = A.slider(ctl, { label: '头维度 d_h', min: 2, max: 1024, log: true, value: 128, fmt: (v) => Math.round(v), on: () => view.redraw(), width: 260 });
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   const legend = A.el('div', { class: 'legend' }); bd.append(legend);
   const view = A.canvas(cv, { aspect: 0.32 }, paint);
@@ -33,8 +33,8 @@ A.defineDemo('attn-scale', function (mount) {
       A.text(ctx, title, box.x, 12, { size: 12.5, weight: 600 });
     };
     const range = Math.max(4, 3.5 * Math.sqrt(d));
-    drawHist(0, histRaw, cols[1], '不缩放：q·k（标准差 ≈ √d = ' + Math.sqrt(d).toFixed(1) + '）', range);
-    drawHist(half + 30, histSc, cols[0], '缩放：q·k / √d（标准差 ≈ 1）', 4);
+    drawHist(0, histRaw, cols[1], '不缩放：q·k（标准差 ≈ √d_h = ' + Math.sqrt(d).toFixed(1) + '）', range);
+    drawHist(half + 30, histSc, cols[0], '缩放：q·k / √d_h（标准差 ≈ 1）', 4);
     legend.innerHTML = `<span>16 个 key 中权重最大者的平均权重：不缩放 <b>${(maxRaw * 100).toFixed(1)}%</b>，缩放后 <b>${(maxScaled * 100).toFixed(1)}%</b></span><span>平均熵：不缩放 <b>${entRaw.toFixed(2)}</b> bit，缩放后 <b>${entScaled.toFixed(2)}</b> bit（均匀分布 = 4 bit）</span>`;
   }
 });

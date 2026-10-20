@@ -1,4 +1,4 @@
-/* attn-heads — interactive demo (moved from ch02-attention.html) */
+/* attn-heads — rule-built attention patterns (previous token, induction, copy, local window, sink, uniform) on any sentence */
 A.defineDemo('attn-heads', function (mount) {
   const { bd } = A.demo(mount, '注意力模式浏览器：几种典型的头', '悬停某一行，看这个位置在关注谁');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
@@ -9,7 +9,7 @@ A.defineDemo('attn-heads', function (mount) {
   let head = 'induction', causal = true, hover = -1;
   const HEADS = [
     { v: 'prev', t: '前一个 token' }, { v: 'induction', t: '归纳头' }, { v: 'copy', t: '相同 token' },
-    { v: 'local', t: '局部窗口 4' }, { v: 'sink', t: '注意力汇聚' }, { v: 'uniform', t: '均匀平均' },
+    { v: 'local', t: '局部窗口 4' }, { v: 'sink', t: '注意力汇' }, { v: 'uniform', t: '均匀平均' },
   ];
   A.seg(ctl, HEADS, head, (v) => { head = v; render(); }, '头的类型');
   A.check(ctl, '因果掩码（只能看过去）', true, (v) => { causal = v; render(); });

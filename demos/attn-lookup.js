@@ -1,4 +1,4 @@
-/* attn-lookup — interactive demo (moved from ch02-attention.html) */
+/* attn-lookup — drag a query and five keys in 2-D; scores q·k/√2, softmax with a temperature, output as a colour mix */
 A.defineDemo('attn-lookup', function (mount) {
   const { bd } = A.demo(mount, '拖动 Query 和 Key：注意力是软查询', '2 维向量，点积打分');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
