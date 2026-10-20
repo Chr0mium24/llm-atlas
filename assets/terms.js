@@ -612,4 +612,16 @@ window.ATLAS_TERMS = {
   degeneration: { t: "文本退化", en: "neural text degeneration", d: "用贪心或束搜索做开放式生成时，文本变得空洞、重复、陷入循环的现象（Holtzman 等, 2019）。采样加截断是主要对策。", at: "generation#degen" },
   'repetition-penalty': { t: "重复惩罚", en: "repetition / frequency / presence penalty", d: "按 token 在已生成文本中出现的次数压低它的 logit：\\(z_i - \\alpha_{\\text{freq}}c_i - \\alpha_{\\text{pres}}\\mathbb 1[c_i>0]\\)。能打断循环，也会误伤本该重复的词。", at: "generation#degen" },
   'block-diffusion': { t: "块扩散", en: "block diffusion (semi-autoregressive)", d: "把序列切成块，块与块之间从左到右生成，块内部用扩散并行填写；块长为 1 即自回归，等于全文即纯扩散。", at: "generation#dlm" },
+
+  // ---- attention (upgrade 2026-10-20)
+  'path-length': { t: "路径长度", en: "path length", d: "两个位置之间，信号（以及反向传播的梯度）要经过的计算步数。RNN 里等于两个位置的距离 \\(O(n)\\)，每一步都要乘一个雅可比矩阵；自注意力里任意两个位置之间只隔一步 \\(O(1)\\)。", at: "attention#before" },
+  'attn-score': { t: "注意力分数", en: "attention score (attention logit)", d: "softmax 之前的那个数：\\(s_{ij} = \\mathbf q_i\\cdot\\mathbf k_j/\\sqrt{d_h}\\)。softmax 之后变成注意力权重 \\(a_{ij}\\)。“分数失控”指训练中它越变越大，使 softmax 饱和。", at: "attention#zero-score" },
+  'qk-circuit': { t: "QK 电路", en: "QK circuit", d: "一个注意力头里决定“看哪里”的部分：\\(W_{QK} = W_QW_K^\\top\\)，分数 \\(\\mathbf x_iW_{QK}\\mathbf x_j^\\top\\) 是两个 token 向量的低秩双线性函数，秩不超过 \\(d_h\\)。", at: "attention#qkv" },
+  'ov-circuit': { t: "OV 电路", en: "OV circuit", d: "一个注意力头里决定“搬什么、写到哪”的部分：\\(W_{OV} = W_VW_O\\)。被看到的位置的向量乘上它，加回当前位置。可解释性研究常把一个头拆成 QK 和 OV 两部分分析。", at: "attention#qkv" },
+  'softmax-saturation': { t: "softmax 饱和", en: "softmax saturation", d: "分数彼此拉得太开时，softmax 几乎只剩最大的一项（接近独热）。此时雅可比 \\(a_i(\\delta_{ij}-a_j)\\) 接近零，梯度传不回分数。注意力除以 \\(\\sqrt{d_h}\\)、QK-Norm 都是为了避免它。", at: "attention#scale" },
+  'qk-clip': { t: "QK-Clip", en: "QK-Clip", d: "Kimi K2（2025）的做法：不改前向计算，每步更新后检查每个头的最大注意力分数，超过阈值 \\(\\tau\\)（K2 取 100）就把这个头的 \\(W_Q, W_K\\) 按比例缩小。与 Muon 合起来叫 MuonClip。", at: "attention#scale" },
+  'prev-token-head': { t: "前一个 token 头", en: "previous-token head", d: "几乎把全部权重放在紧挨着的前一个位置上的注意力头，靠位置编码实现。它把“我前面是谁”写进每个位置，是归纳头的前置零件。", at: "attention#patterns" },
+  'additive-attention': { t: "加性注意力", en: "additive attention (Bahdanau attention)", d: "Bahdanau 等（2014）的打分方式：\\(\\mathbf w^\\top\\tanh(W_1\\mathbf s + W_2\\mathbf h)\\)，用一个小网络比较解码器状态和编码器某个位置的隐藏状态。每对位置都要单独算一次，不能写成一次矩阵乘法，后来被点积打分取代。", at: "attention#evolution" },
+  'sparse-attention': { t: "稀疏注意力", en: "sparse attention", d: "每个 query 只看挑出来的一部分位置，而不是全部。早期用固定模式（Sparse Transformer, 2019：局部 + 跨步，\\(O(n\\sqrt n)\\)），2025 年后改成按内容挑选（NSA、DeepSeek 的 DSA）。", at: "attention#evolution" },
+  mqa: { t: "MQA", en: "multi-query attention", d: "多查询注意力（Shazeer, 2019）：所有 query 头共用同一组 K、V，KV 缓存和每步读取量都除以头数 \\(h\\)。质量和训练稳定性有损，后来被折中的 GQA 取代。", at: "attention#evolution" },
 };

@@ -13,7 +13,7 @@
 <header>
   <div class="kicker"></div>
   <h1>注意力：每个位置都去“查”其它位置</h1>
-  <p class="lede">2017 年的论文标题是《Attention Is All You Need》：去掉循环网络，只用注意力处理序列。注意力做的事情可以用一句话说清：每个位置发出一个“查询”，和所有位置的“标签”比较相关度，按相关度把各位置的“内容”加权平均，作为自己的新表示。这一章从它要解决的问题讲起，把这句话变成公式，逐步代入数字算一遍，再讲多头、因果掩码、训练出来的典型注意力模式，以及它的平方级代价。</p>
+  <p class="lede">2017 年的论文标题是《Attention Is All You Need》：去掉循环网络，只用注意力处理序列。注意力做的事情可以用一句话说清：每个位置发出一个“查询”，和所有位置的“标签”比较相关度，按相关度把各位置的“内容”加权平均，作为自己的新表示。这一章先用一句四个词的话把整个计算手算一遍，再讲为什么要除以 \(\sqrt{d_h}\)、多头、因果掩码与 KV 缓存的来历、训练出来的归纳头与注意力汇、平方级的代价，最后从 2014 年讲到 2026 年，看每一代注意力在修什么。</p>
 </header>
 
 <div class="bridge">上一章结束时，每个 token 都有了一个嵌入向量，但它们彼此独立：“它”不知道自己指的是谁，“bank”在“河岸”和“银行”两种句子里是同一个向量。需要一种机制，让每个位置根据上下文改写自己的表示。</div>
@@ -21,7 +21,8 @@
 <div class="prereq">
   <ul>
     <li>嵌入向量、点积与余弦相似度、softmax：第 <a class="xref" data-ref="tokens"></a> 章</li>
-    <li>矩阵乘法；均值与方差：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>矩阵乘法、方差、雅可比矩阵与链式法则：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>不需要序列模型或注意力的背景。「从零开始」一节用一句四个词的话，把整个计算代入数字算一遍，后面各节都接着用这个例子。</li>
   </ul>
 </div>
 
@@ -36,78 +37,217 @@
     <dt data-sym="W">\(W\)</dt><dd>记忆到记忆的权重矩阵，每一步共用</dd>
     <dt data-sym="U">\(U\)</dt><dd>输入到记忆的权重矩阵</dd>
   </dl>
+  <div class="fx-eg">记忆只有 2 维，\(W = \begin{pmatrix}0.5&amp;0\\0&amp;0.5\end{pmatrix}\)，\(U = I\)。读入 \(\mathbf x_1 = (1, 0)\)：\(\mathbf h_1 = \tanh(1, 0) = (0.76,\ 0)\)。再读入 \(\mathbf x_2 = (0, 1)\)：\(\mathbf h_2 = \tanh(0.38,\ 1) = (0.36,\ 0.76)\)。第一个 token 留下的 0.76 已经衰减成 0.36，再读几个就几乎看不见了。</div>
 </div>
 <p>这个设计有三个问题：</p>
 <ol>
   <li><b>信息瓶颈。</b>一整句、一整段的信息都要挤进一个几百维的向量，前面的内容会被后面的冲淡。</li>
   <li><b>不能并行。</b>第 \(t\) 步依赖第 \(t-1\) 步的结果，训练时 GPU 只能一步步串行地算，序列越长越慢。</li>
-  <li><b>远距离信息传不过来。</b>反向传播时，第 \(T\) 步的梯度要经过 \(T-1\) 次连乘才能到达第 1 步，每次乘一个雅可比矩阵，范数小于 1 就指数级衰减，叫<dfn data-t="vanishing-grad">梯度消失</dfn>。LSTM 用门控缓解了它，但没有根治。</li>
+  <li><b>远距离信息传不过来。</b>第 1 个 token 的信息要经过 \(T-1\) 次更新才能到达第 \(T\) 步。两个位置之间，信号要经过的计算步数叫<dfn data-t="path-length">路径长度</dfn>；RNN 里它等于两个位置的距离。反向传播时，梯度沿着同一条路走回来，每步乘一个雅可比矩阵，范数小于 1 就指数级衰减，叫<dfn data-t="vanishing-grad">梯度消失</dfn>。LSTM 用门控缓解了它，但没有根治。</li>
 </ol>
-<p>2014 年，Bahdanau 等人给机器翻译模型加了一个补丁：解码器每生成一个词，不再只看那个压缩过的向量，而是回头对输入句子的<b>每一个位置</b>算一个相关度，按相关度加权平均。这就是<dfn data-t="attention-mech">注意力</dfn>。它让模型可以直接“看”到任意远的位置，瓶颈和远距离问题一起解决了。2017 年的 Transformer 把这个思路推到底：干脆去掉循环，序列内部也只用注意力，即<dfn data-t="self-attention">自注意力</dfn>（self-attention）。</p>
+<details class="deep"><summary>远处的信息为什么传不过来：数一数路径长度</summary><div class="in">
+<p>看梯度怎样从第 \(T\) 步传回第 1 步。对 \(\mathbf h_t = \tanh(W\mathbf h_{t-1} + U\mathbf x_t)\) 求导，利用 \(\tanh'(z) = 1-\tanh^2 z\)：</p>
+\[ \frac{\partial \mathbf h_t}{\partial \mathbf h_{t-1}} = \operatorname{diag}\big(1-\mathbf h_t^2\big)\,W \]
+<p>由<span class="term" data-t="chain-rule">链式法则</span>，跨越 \(T-1\) 步的<span class="term" data-t="jacobian">雅可比矩阵</span>是 \(T-1\) 个这样的矩阵连乘。tanh 的导数不超过 1，于是</p>
+\[ \Big\|\frac{\partial \mathbf h_T}{\partial \mathbf h_1}\Big\| \le \prod_{t=2}^{T}\big\|\operatorname{diag}(1-\mathbf h_t^2)\big\|\,\|W\| \le \|W\|^{T-1} \]
+<p>（\(\|W\|\) 是 \(W\) 的最大奇异值。）\(\|W\| = 0.9\)、相隔 100 个 token 时，上界是 \(0.9^{99}\approx 3\times 10^{-5}\)。反过来 \(\|W\|&gt;1\) 时梯度又可能爆炸。LSTM 把记忆的更新改成加法 \(\mathbf c_t = \mathbf f_t\odot\mathbf c_{t-1} + \dots\)，这条路径上的雅可比是 \(\operatorname{diag}(\mathbf f_t)\)：遗忘门 \(\mathbf f_t\) 接近 1 时梯度几乎原样传回。但它通常小于 1，取 0.95，100 步后仍只剩 \(0.95^{100}\approx 0.006\)。</p>
+<p>再看注意力。输出是 \(\mathbf o_i = \sum_j a_{ij}\mathbf v_j\)（下一节定义），对任意位置的 value 求导：\(\partial \mathbf o_i/\partial \mathbf v_j = a_{ij} I\)。不管 \(i\) 和 \(j\) 相隔多远，中间只有一步。Transformer 原论文用三个量比较几种层（\(n\) 为序列长度，\(d\) 为维度，\(k\) 为卷积核宽度）：</p>
+<div class="tablewrap"><table>
+  <tr><th>层的类型</th><th>每层计算量</th><th>必须串行的步数</th><th>最长路径长度</th></tr>
+  <tr><td>自注意力</td><td>\(O(n^2 d)\)</td><td>\(O(1)\)</td><td>\(O(1)\)</td></tr>
+  <tr><td>循环</td><td>\(O(n d^2)\)</td><td>\(O(n)\)</td><td>\(O(n)\)</td></tr>
+  <tr><td>卷积（空洞卷积）</td><td>\(O(k n d^2)\)</td><td>\(O(1)\)</td><td>\(O(\log_k n)\)</td></tr>
+</table></div>
+<p><b>这个推导告诉我们：</b>RNN 难学长距离依赖，不是调参能解决的：两个位置相隔多远，信号就要连乘多少次。注意力把任意两个位置之间的路径长度降成 1，也去掉了串行；代价是要为每一对位置都算一个分数，计算量从 \(O(nd^2)\) 变成 \(O(n^2d)\)。这个代价贯穿了本章的后半部分。</p>
+</div></details>
+<p>2014 年，Bahdanau 等人给机器翻译模型加了一个补丁：解码器每生成一个词，不再只看那个压缩过的向量，而是回头对输入句子的<b>每一个位置</b>算一个相关度，按相关度加权平均。这就是<dfn data-t="attention-mech">注意力</dfn>。论文里画出了这些相关度：把 “European Economic Area” 译成 “zone économique européenne” 时，每个法语词的注意力都落在对应的英语词上，连形容词的语序颠倒也对上了。没有人教过模型两种语言的词怎样对应，这种“对齐”是从翻译任务里自己学出来的。它让模型可以直接“看”到任意远的位置，瓶颈和远距离问题一起解决了。2017 年的 Transformer 把这个思路推到底：干脆去掉循环，序列内部也只用注意力，即<dfn data-t="self-attention">自注意力</dfn>（self-attention）。</p>
 
-<h2 id="qkv">Q、K、V：一次“软”的字典查询</h2>
-<p>普通的字典查询是精确匹配：给一个键，返回唯一对应的值。注意力把它变成软匹配：查询和每个键都算一个相似度，按相似度把所有值混合起来。每个 token 的向量 \(\mathbf x\) 乘上三个可学习的矩阵，得到三个角色不同的向量：</p>
+<h2 id="qkv" data-short="从零开始：手算注意力">从零开始：一句四个词的话，手算一遍注意力</h2>
+<p>普通的字典查询是精确匹配：给一个键，返回唯一对应的值。注意力把它变成软匹配：查询和每个键都算一个相似度，按相似度把所有值混合起来。这一节不用任何真实模型，只用一句四个词的话、每个词三个数，把注意力的每一步都代入数字算出来。后面讲掩码、缩放、多头和代价时，都接着用这个例子。</p>
+
+<h3 id="zero-toy">玩具：小猫追红球</h3>
+<p>句子“小猫追红球”切成 4 个 token：小猫、追、红、球。按第 <a class="xref" data-ref="tokens"></a> 章的做法，每个 token 查表得到一个<span class="term" data-t="embedding">嵌入</span>向量。真实模型的嵌入有几千维，每一维都没有名字；这里只用 \(d = 3\) 维，并且手工规定三维的意思，方便读数：</p>
+<div class="tablewrap"><table style="width:auto">
+  <tr><th>词</th><th class="num">事物</th><th class="num">会动</th><th class="num">颜色</th></tr>
+  <tr><td>小猫</td><td class="num">1</td><td class="num">1</td><td class="num">0</td></tr>
+  <tr><td>追</td><td class="num">0</td><td class="num">1</td><td class="num">0</td></tr>
+  <tr><td>红</td><td class="num">0</td><td class="num">0</td><td class="num">1</td></tr>
+  <tr><td>球</td><td class="num">1</td><td class="num">0</td><td class="num">0</td></tr>
+</table></div>
+<p>四行排成一个 \(4\times 3\) 的矩阵 \(X\)，每行一个词。现在每个向量只知道自己：“追”不知道谁在追、追什么，“球”不知道自己是红的、正在被追。注意力要做的，就是让每个词从其它词那里取回需要的信息，改写自己。</p>
+
+<h3 id="zero-qkv">第 1 步：同一个向量，乘三个矩阵</h3>
+<p>每个词的向量 \(\mathbf x\) 分别乘三个可学习的矩阵，得到三个角色不同的向量：</p>
 <ul>
   <li><dfn data-t="attn-query">query</dfn> \(\mathbf q = \mathbf x W_Q\)：我在找什么样的信息；</li>
   <li><dfn data-t="attn-key">key</dfn> \(\mathbf k = \mathbf x W_K\)：我这里有什么样的信息，供别人匹配；</li>
   <li><dfn data-t="attn-value">value</dfn> \(\mathbf v = \mathbf x W_V\)：如果被选中，我交出去的内容。</li>
 </ul>
-<p>对位置 \(i\)，注意力的输出是：</p>
 <div class="fx">
-\[ \htmlClass{sym-o}{\mathbf o_i} = \sum_{j} \htmlClass{c-adv}{\htmlClass{sym-a}{a_{ij}}}\, \htmlClass{c-dir}{\htmlClass{sym-v}{\mathbf v_j}},\qquad \htmlClass{sym-a}{a_{ij}} = \operatorname{softmax}_j\!\Big(\frac{\htmlClass{sym-q}{\mathbf q_i}\cdot \htmlClass{sym-k}{\mathbf k_j}}{\sqrt{\htmlClass{sym-dk}{d_k}}}\Big) \]
-  <div class="fx-read">位置 \(i\) 拿自己的 query 和每个位置的 key 做点积，除以 \(\sqrt{d_k}\)，softmax 成和为 1 的<span style="color:var(--s2)">权重</span>，再用权重把所有位置的 <span style="color:var(--s1)">value</span> 加权平均。</div>
+\[ \htmlClass{sym-q}{\mathbf q_i} = \htmlClass{sym-x}{\mathbf x_i}\,\htmlClass{sym-WQ}{W_Q},\qquad \htmlClass{sym-k}{\mathbf k_i} = \htmlClass{sym-x}{\mathbf x_i}\,\htmlClass{sym-WQ}{W_K},\qquad \htmlClass{sym-v}{\mathbf v_i} = \htmlClass{sym-x}{\mathbf x_i}\,\htmlClass{sym-WQ}{W_V} \]
+  <div class="fx-read">同一个词向量，乘三个不同的矩阵，得到它的查询、键和值。三个矩阵对所有位置共用，是这个注意力头要学的全部参数。</div>
+  <dl class="fx-syms">
+    <dt data-sym="x">\(\mathbf x_i\)</dt><dd>第 \(i\) 个词的向量，\(d\) 维（行向量）</dd>
+    <dt data-sym="WQ">\(W_Q, W_K, W_V\)</dt><dd>三个 \(d\times d_h\) 的矩阵，把 \(d\) 维投影到 \(d_h\) 维</dd>
+    <dt data-sym="q">\(\mathbf q_i,\ \mathbf k_i,\ \mathbf v_i\)</dt><dd>第 \(i\) 个词的 query、key、value，都是 \(d_h\) 维；\(d_h\) 叫头维度</dd>
+  </dl>
+  <div class="fx-eg">\(d = 3\)，\(d_h = 2\)，\(W_Q = \begin{pmatrix}0&amp;2\\1&amp;0\\2&amp;0\end{pmatrix}\)（三行对应事物、会动、颜色）。“小猫”的 \(\mathbf x = (1, 1, 0)\)：\(\mathbf q = 1\times(0, 2) + 1\times(1, 0) + 0\times(2, 0) = (1, 2)\)。\(\mathbf x\) 只含 0 和 1，乘法就是“哪几位是 1，就把 \(W\) 的哪几行加起来”。</div>
+</div>
+<p>再取 \(W_K = \begin{pmatrix}1&amp;-1\\0&amp;1\\0&amp;1\end{pmatrix}\)、\(W_V = \begin{pmatrix}0&amp;0\\1&amp;0\\0&amp;1\end{pmatrix}\)，四个词各算一遍：</p>
+<div class="tablewrap"><table style="width:auto">
+  <tr><th>词</th><th>\(\mathbf x\)</th><th>\(\mathbf q = \mathbf xW_Q\)</th><th>\(\mathbf k = \mathbf xW_K\)</th><th>\(\mathbf v = \mathbf xW_V\)</th></tr>
+  <tr><td>小猫</td><td class="mono">(1, 1, 0)</td><td class="mono">(1, 2)</td><td class="mono">(1, 0)</td><td class="mono">(1, 0)</td></tr>
+  <tr><td>追</td><td class="mono">(0, 1, 0)</td><td class="mono">(1, 0)</td><td class="mono">(0, 1)</td><td class="mono">(1, 0)</td></tr>
+  <tr><td>红</td><td class="mono">(0, 0, 1)</td><td class="mono">(2, 0)</td><td class="mono">(0, 1)</td><td class="mono">(0, 1)</td></tr>
+  <tr><td>球</td><td class="mono">(1, 0, 0)</td><td class="mono">(0, 2)</td><td class="mono">(1, −1)</td><td class="mono">(0, 0)</td></tr>
+</table></div>
+<p>这些数可以这样读：key 的两维是（是事物, 是描述）：“小猫”“球”是事物，“追”“红”是描述（动作或属性）。query 的两维是（找事物, 找描述）：“追”和“红”在找事物，“球”在找描述，“小猫”主要找描述，也找一点事物。value 只有（会动, 颜色）两维：这个头只负责搬运“动”和“色”两种信息，“事物”这一维被丢掉了。三个矩阵是我手工挑的；真实模型里它们从随机数开始，由训练学出来，学到的“角色”也没有现成的名字。</p>
+
+<h3 id="zero-score">第 2–5 步：打分、缩放、softmax、加权求和</h3>
+<p>对第 \(i\) 个词，拿它的 query 和每个词的 key 做点积，除以 \(\sqrt{d_h}\)，得到的数叫<dfn data-t="attn-score">注意力分数</dfn>（attention score，也叫注意力 logit）；用 <span class="term" data-t="softmax">softmax</span> 把分数变成和为 1 的权重，再按权重把 value 加起来：</p>
+<div class="fx">
+\[ \htmlClass{sym-o}{\mathbf o_i} = \sum_{j} \htmlClass{c-adv}{\htmlClass{sym-a}{a_{ij}}}\, \htmlClass{c-dir}{\htmlClass{sym-v}{\mathbf v_j}},\qquad \htmlClass{sym-a}{a_{ij}} = \operatorname{softmax}_j\!\Big(\frac{\htmlClass{sym-q}{\mathbf q_i}\cdot \htmlClass{sym-k}{\mathbf k_j}}{\sqrt{\htmlClass{sym-dh}{d_h}}}\Big) \]
+  <div class="fx-read">位置 \(i\) 拿自己的 query 和每个位置的 key 做点积，除以 \(\sqrt{d_h}\)，softmax 成和为 1 的<span style="color:var(--s2)">权重</span>，再用权重把所有位置的 <span style="color:var(--s1)">value</span> 加权平均。</div>
   <dl class="fx-syms">
     <dt data-sym="o">\(\mathbf o_i\)</dt><dd>位置 \(i\) 的输出：它从上下文中收集到的信息</dd>
     <dt data-sym="a">\(a_{ij}\)</dt><dd>注意力权重：位置 \(i\) 分给位置 \(j\) 多少注意力，对 \(j\) 求和为 1</dd>
     <dt data-sym="q">\(\mathbf q_i\)</dt><dd>位置 \(i\) 的 query</dd>
     <dt data-sym="k">\(\mathbf k_j\)</dt><dd>位置 \(j\) 的 key</dd>
     <dt data-sym="v">\(\mathbf v_j\)</dt><dd>位置 \(j\) 的 value</dd>
-    <dt data-sym="dk">\(d_k\)</dt><dd>query 和 key 的维度，例如 128</dd>
+    <dt data-sym="dh">\(d_h\)</dt><dd>头维度：query、key 的维度。玩具里是 2，大模型里通常是 128</dd>
   </dl>
-  <div class="fx-eg">\(d_k = 2\)，\(\mathbf q = (1, 0)\)，两个位置的 key 是 \((1,0)\) 和 \((0,1)\)，value 是 \((1,0)\) 和 \((0,1)\)。分数 \(1/\sqrt2 \approx 0.71\) 和 \(0\)；softmax：\(e^{0.71}\approx 2.03\)，\(e^0 = 1\)，权重 \(0.67, 0.33\)；输出 \(\mathbf o = 0.67\,(1,0) + 0.33\,(0,1) = (0.67,\ 0.33)\)。</div>
-  <div class="fx-step" data-tex="\htmlClass{c-new}{\mathbf q_i\cdot\mathbf k_j}">第 1 步：query 和每个 key 做点积，得到相关度分数。</div>
-  <div class="fx-step" data-tex="\dfrac{\mathbf q_i\cdot\mathbf k_j}{\htmlClass{c-new}{\sqrt{d_k}}}">第 2 步：除以 \(\sqrt{d_k}\)，把分数缩放到合适的量级（下一节解释为什么）。</div>
-  <div class="fx-step" data-tex="a_{ij} = \htmlClass{c-new}{\operatorname{softmax}_j}\Big(\dfrac{\mathbf q_i\cdot\mathbf k_j}{\sqrt{d_k}}\Big)">第 3 步：对所有位置 \(j\) 做 softmax，分数变成和为 1 的权重。</div>
+  <div class="fx-eg">算“球”这一行，\(\mathbf q = (0, 2)\)。和四个 key 的点积：\((0, 2)\cdot(1, 0) = 0\)，\((0,2)\cdot(0,1) = 2\)，\(2\)，\((0,2)\cdot(1,-1) = -2\)。除以 \(\sqrt2\)：\((0,\ 1.41,\ 1.41,\ -1.41)\)。取指数：\((1,\ 4.11,\ 4.11,\ 0.24)\)，总和 9.47，权重 \((0.11,\ 0.43,\ 0.43,\ 0.03)\)。输出 \(\mathbf o = 0.11\,(1,0) + 0.43\,(1,0) + 0.43\,(0,1) + 0.03\,(0,0) = (0.54,\ 0.43)\)。</div>
+  <div class="fx-step" data-tex="\htmlClass{c-new}{\mathbf q_i\cdot\mathbf k_j}">第 1 步：query 和每个 key 做点积，得到相关度。</div>
+  <div class="fx-step" data-tex="\dfrac{\mathbf q_i\cdot\mathbf k_j}{\htmlClass{c-new}{\sqrt{d_h}}}">第 2 步：除以 \(\sqrt{d_h}\)，把分数缩放到合适的量级（下面专门一节解释为什么）。</div>
+  <div class="fx-step" data-tex="a_{ij} = \htmlClass{c-new}{\operatorname{softmax}_j}\Big(\dfrac{\mathbf q_i\cdot\mathbf k_j}{\sqrt{d_h}}\Big)">第 3 步：对所有位置 \(j\) 做 softmax，分数变成和为 1 的权重。</div>
   <div class="fx-step" data-tex="\mathbf o_i = \htmlClass{c-new}{\sum_j} a_{ij}\,\htmlClass{c-new}{\mathbf v_j}">第 4 步：用权重把所有 value 加权平均，就是输出。</div>
 </div>
+<p>四个词都这样算，得到一张 \(4\times 4\) 的权重表（行是正在计算的词，列是被看的词，百分数四舍五入）：</p>
+<div class="tablewrap"><table style="width:auto">
+  <tr><th>query ＼ key</th><th class="num">小猫</th><th class="num">追</th><th class="num">红</th><th class="num">球</th><th class="num">输出 o（会动, 颜色）</th></tr>
+  <tr><td>小猫</td><td class="num">19%</td><td class="num">38%</td><td class="num">38%</td><td class="num">5%</td><td class="num mono">(0.57, 0.38)</td></tr>
+  <tr><td>追</td><td class="num">33%</td><td class="num">17%</td><td class="num">17%</td><td class="num">33%</td><td class="num mono">(0.50, 0.17)</td></tr>
+  <tr><td>红</td><td class="num">40%</td><td class="num">10%</td><td class="num">10%</td><td class="num">40%</td><td class="num mono">(0.50, 0.10)</td></tr>
+  <tr><td>球</td><td class="num">11%</td><td class="num">43%</td><td class="num">43%</td><td class="num">3%</td><td class="num mono">(0.54, 0.43)</td></tr>
+</table></div>
+<p>“球”把 87% 的注意力分给了“追”和“红”，输出 \((0.54, 0.43)\)：它现在“知道”周围有在动的东西，也有颜色。“追”把三分之二平分给两个事物“小猫”和“球”：谁在追、追什么，它都收到了。“红”也平分给“小猫”和“球”：光看内容分不出它在修饰哪个，因为两者都是事物。要分清，得靠位置信息（下一节末尾）。每个输出随后加回这个词原来的向量上（下一章的残差连接），词的表示就被上下文改写了。</p>
 <p>把所有位置的 query、key、value 分别排成矩阵 \(Q, K, V\)（每行一个位置），所有位置可以一次算完：</p>
 <div class="fx">
-\[ \operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\Big(\frac{\htmlClass{sym-QK}{QK^\top}}{\sqrt{d_k}}\Big)\,V \]
+\[ \operatorname{Attention}(Q, K, V) = \operatorname{softmax}\!\Big(\frac{\htmlClass{sym-QK}{QK^\top}}{\sqrt{d_h}}\Big)\,V \]
   <div class="fx-read">\(QK^\top\) 一次算出所有位置两两之间的分数，得到一个 \(n\times n\) 的矩阵；按行 softmax，再乘 \(V\)。整个过程只有矩阵乘法，非常适合 GPU 并行。</div>
   <dl class="fx-syms">
     <dt data-sym="QK">\(QK^\top\)</dt><dd>\(n\times n\) 的分数矩阵，第 \(i\) 行第 \(j\) 列是 \(\mathbf q_i\cdot\mathbf k_j\)</dd>
   </dl>
+  <div class="fx-eg">玩具里 \(Q\) 和 \(K\) 都是 \(4\times 2\)，\(QK^\top\) 是 \(4\times 4\)：第一行 \((1, 2, 2, -1)\)，即“小猫”的 q 和四个 key 的点积。整张表一次矩阵乘法算完，上面的权重表就是它除以 \(\sqrt2\) 后逐行 softmax 的结果。</div>
 </div>
-<p>下面两个演示：第一个把一个位置的计算拆成 7 步、代入真实数字；第二个可以拖动 query 和 key，直观地感受“软查询”。</p>
+<p>下面两个演示：第一个把这一节的计算拆成 8 步，数字和正文完全相同，可以换着算每一个词；第二个可以拖动 query 和 key，直观地感受“软查询”。</p>
 <div data-demo="attn-step" class="bleed"></div>
 <div data-demo="attn-lookup"></div>
+<p>第二个演示里的温度 \(\tau\)：分数先除以 \(\tau\) 再做 softmax。\(\tau\) 小，分布尖，接近“只取分数最大的那个”的硬查询；\(\tau\) 大，接近对所有 value 取平均。除以 \(\sqrt{d_h}\) 其实就是一个固定的温度；第 <a class="xref" data-ref="generation"></a> 章采样时调的<span class="term" data-t="temperature">温度</span>是同一个旋钮。</p>
 
-<details class="deep"><summary>Q 和 K 其实是一个低秩双线性形式</summary><div class="in">
+<h3 id="zero-big">放回大模型：这些维度变成多少</h3>
+<div class="tablewrap"><table>
+  <tr><th>量</th><th>玩具</th><th>Llama 3 8B</th></tr>
+  <tr><td>序列长度 \(n\)</td><td>4</td><td>训练时 8192（3.1 版扩展到 128K）</td></tr>
+  <tr><td>嵌入维度 \(d\)</td><td>3</td><td>4096</td></tr>
+  <tr><td>头维度 \(d_h\)</td><td>2</td><td>128</td></tr>
+  <tr><td>每层的头数 \(h\)</td><td>1</td><td>32（K、V 只有 8 组，见“每一代在修什么”）</td></tr>
+  <tr><td>一个头的 \(W_Q\)</td><td>\(3\times 2\)</td><td>\(4096\times 128\)</td></tr>
+  <tr><td>一个头的分数矩阵</td><td>\(4\times 4 = 16\) 个数</td><td>\(8192^2\approx 6700\) 万个数</td></tr>
+  <tr><td>缩放因子 \(\sqrt{d_h}\)</td><td>1.41</td><td>11.3</td></tr>
+  <tr><td>层数 \(L\)</td><td>1</td><td>32</td></tr>
+</table></div>
+<p>每一层的每个头，做的都是上面这一套计算，只是数字大了几千倍。32 层的注意力矩阵加起来约 13 亿参数，约占模型主体（不含嵌入）的五分之一，其余主要是下一章的 MLP。规模一大，玩具里看不出来的三件事变得要紧：分数会不会太大（缩放）、一个头够不够（多头）、\(n\times n\) 的矩阵算不算得起（代价）。下面一节一节讲。</p>
+
+<details class="deep"><summary>Q 和 K 其实是一个低秩的双线性形式</summary><div class="in">
 <p>把 \(\mathbf q_i = \mathbf x_i W_Q\)、\(\mathbf k_j = \mathbf x_j W_K\) 代入分数：</p>
 \[ \mathbf q_i\cdot\mathbf k_j = \mathbf x_i\,W_Q W_K^\top\,\mathbf x_j^\top = \mathbf x_i\,W_{QK}\,\mathbf x_j^\top,\qquad W_{QK} = W_Q W_K^\top \in \mathbb R^{d\times d} \]
-<p>所以分数是两个 token 向量之间的一个双线性函数，由一个 \(d\times d\) 矩阵决定。\(W_Q, W_K\) 都是 \(d\times d_k\)，它们的乘积秩最多是 \(d_k\)。用两个窄矩阵相乘，而不是直接学一个 \(d\times d\) 的矩阵，等于强制这个双线性形式是低秩的：参数从 \(d^2\) 降到 \(2 d d_k\)，计算也更省（先各自投影到 \(d_k\) 维再点积）。</p>
-<p>同理，value 和输出投影可以合成 \(W_{OV} = W_V W_O\)，它决定“被看到的位置把什么信息写回来”。可解释性研究常把一个注意力头拆成这两个电路分析：\(W_{QK}\) 决定看哪里，\(W_{OV}\) 决定搬什么（第 <a class="xref" data-ref="interpretability"></a> 章）。</p>
-<p><b>这个推导告诉我们：</b>Q 和 K 不是两种独立的“东西”，而是一个“相关度函数”的两半；分开写是为了低秩和计算效率。也因为 \(W_{QK}\) 不必对称，“A 关注 B”和“B 关注 A”可以不同。</p>
+<p>所以分数是两个 token 向量之间的一个双线性函数，由一个 \(d\times d\) 矩阵决定。\(W_Q, W_K\) 都是 \(d\times d_h\)，它们的乘积<span class="term" data-t="matrix-rank">秩</span>最多是 \(d_h\)。用两个窄矩阵相乘，而不是直接学一个 \(d\times d\) 的矩阵，等于强制这个双线性形式是低秩的：参数从 \(d^2\) 降到 \(2 d d_h\)，计算也更省（先各自投影到 \(d_h\) 维再点积）。玩具里：</p>
+\[ W_{QK} = \begin{pmatrix}0&2\\1&0\\2&0\end{pmatrix}\begin{pmatrix}1&0&0\\-1&1&1\end{pmatrix} = \begin{pmatrix}-2&2&2\\1&0&0\\2&0&0\end{pmatrix} \]
+<p>行是 query 一方的特征（事物、会动、颜色），列是 key 一方的特征。第一行说：“事物”去找“会动”和“颜色”（+2），排斥另一个“事物”（−2）；第一列说：“会动”和“颜色”去找“事物”。验证一下：“球”\((1,0,0)\) 看“追”\((0,1,0)\)，取第 1 行第 2 列，得 2，和上面的点积相同。这张表不对称，秩为 2，正好等于 \(d_h\)。</p>
+<p>同理，value 和每个头最后的输出投影 \(W_O\)（见多头一节）可以合成 \(W_{OV} = W_V W_O\)，它决定“被看到的位置把什么信息写回来”。可解释性研究把一个注意力头拆成这两部分分析：\(W_{QK}\) 叫<dfn data-t="qk-circuit">QK 电路</dfn>，决定看哪里；\(W_{OV}\) 叫<dfn data-t="ov-circuit">OV 电路</dfn>，决定搬什么（第 <a class="xref" data-ref="interpretability"></a> 章）。</p>
+<p><b>这个推导告诉我们：</b>Q 和 K 不是两种独立的“东西”，而是一个“相关度函数”的两半；分开写是为了低秩和计算效率。也因为 \(W_{QK}\) 不必对称，“A 关注 B”和“B 关注 A”可以不同：玩具里“球”看“追”的分数是 2，“追”看“球”只有 1。</p>
 </div></details>
 
-<h2 id="scale">为什么要除以 √d</h2>
-<p>假设 query 和 key 的每一维都是独立的、均值 0、方差 1 的随机数。点积是 \(d_k\) 项乘积的和：</p>
+<h2 id="causal">因果掩码、编码器与解码器</h2>
+<p>GPT 这类模型的任务是预测下一个 token（第 <a class="xref" data-ref="generation"></a> 章），第 \(i\) 个位置只能看到前 \(i\) 个 token，否则就是偷看答案。做法是在 softmax 之前给分数矩阵加一个<dfn data-t="causal-mask">因果掩码</dfn>：</p>
 <div class="fx">
-\[ \operatorname{Var}(\mathbf q\cdot\mathbf k) = \sum_{m=1}^{d_k}\operatorname{Var}(q_m k_m) = \sum_{m=1}^{d_k}\mathbb E[q_m^2]\,\mathbb E[k_m^2] = d_k \]
-  <div class="fx-read">每一项的方差是 1，\(d_k\) 项相加，方差就是 \(d_k\)：点积的典型大小是 \(\sqrt{d_k}\)。除以 \(\sqrt{d_k}\) 正好把方差拉回 1。</div>
-  <div class="fx-eg">\(d_k = 128\)：不缩放时点积的标准差约 \(\sqrt{128}\approx 11.3\)。16 个分数里最大的往往比次大的高出好几，softmax 后最大的那个权重接近 100%。缩放后标准差为 1，权重分布平缓得多。</div>
+\[ A = \operatorname{softmax}\!\Big(\frac{QK^\top}{\sqrt{d_h}} + \htmlClass{sym-M}{M}\Big),\qquad \htmlClass{sym-M}{M_{ij}} = \begin{cases} 0 & j \le i\\ -\infty & j > i \end{cases} \]
+  <div class="fx-read">右上三角（“后面的位置”）的分数被设成负无穷，softmax 之后权重恰好为 0，前面位置的权重重新归一化。</div>
+  <dl class="fx-syms">
+    <dt data-sym="M">\(M\)</dt><dd>掩码矩阵：允许看的位置为 0，不允许看的为 \(-\infty\)</dd>
+  </dl>
+  <div class="fx-eg">玩具里“红”是第 3 个词，缩放后的分数是 \((1.41,\ 0,\ 0,\ 1.41)\)。加上掩码 \((0, 0, 0, -\infty)\) 变成 \((1.41,\ 0,\ 0,\ -\infty)\)；取指数 \((4.11,\ 1,\ 1,\ 0)\)，总和 6.11，权重 \((0.67,\ 0.16,\ 0.16,\ 0)\)。“球”被完全屏蔽。</div>
 </div>
-<p>为什么分数太大是坏事？softmax 饱和成接近独热的分布后，它对输入几乎不再敏感，梯度接近 0，训练就卡住了（推导见下）。下面的演示直接比较缩放与不缩放：</p>
+<p>玩具加上掩码后的权重表（演示里勾上“因果掩码”可以逐步看）：</p>
+<div class="tablewrap"><table style="width:auto">
+  <tr><th>query ＼ key</th><th class="num">小猫</th><th class="num">追</th><th class="num">红</th><th class="num">球</th><th class="num">输出 o（会动, 颜色）</th></tr>
+  <tr><td>小猫</td><td class="num">100%</td><td class="num muted">0</td><td class="num muted">0</td><td class="num muted">0</td><td class="num mono">(1, 0)</td></tr>
+  <tr><td>追</td><td class="num">67%</td><td class="num">33%</td><td class="num muted">0</td><td class="num muted">0</td><td class="num mono">(1, 0)</td></tr>
+  <tr><td>红</td><td class="num">67%</td><td class="num">16%</td><td class="num">16%</td><td class="num muted">0</td><td class="num mono">(0.84, 0.16)</td></tr>
+  <tr><td>球</td><td class="num">11%</td><td class="num">43%</td><td class="num">43%</td><td class="num">3%</td><td class="num mono">(0.54, 0.43)</td></tr>
+</table></div>
+<p>“小猫”只能看自己。“红”看不到后面的“球”，只好把 67% 的权重给了能看到的唯一事物“小猫”：此刻它“以为”自己在修饰小猫。“球”排在最后，照样把“追”和“红”收了进来，它这一行和不加掩码时完全一样。只能看过去的模型里，信息只能从前往后流：修饰语不知道自己修饰谁，被修饰的词却能把修饰语收进来。所以最后一个位置最“知情”，预测下一个 token 就用它的输出。</p>
+<p>掩码带来一个重要的好处：训练时整段文本一次输入，每个位置都在预测自己的下一个 token，\(n\) 个预测在一次前向计算里并行完成。这是 Transformer 训练效率远高于 RNN 的原因之一。</p>
+
+<h3 id="causal-gen">生成时：矩阵一行一行长出来，KV 缓存从这里来</h3>
+<p>生成时 token 是一个一个出来的。第 \(t\) 步只多了一个新 token，只需要为它算一行：它的 q 和前面 \(t\) 个 key 打分。前面各行一个数都不会变，因为掩码保证了它们看不到新 token。所以旧 token 的 k、v 算一次就可以存起来反复用，这就是 <span class="term" data-t="kv-cache">KV 缓存</span>（第 <a class="xref" data-ref="long-context"></a> 章）。提示词那部分可以一次并行算完，叫<span class="term" data-t="prefill">预填充</span>；之后每步一行，叫<span class="term" data-t="decode">解码</span>（第 <a class="xref" data-ref="serving"></a> 章）。</p>
+<div data-demo="attention-causal-grow" class="bleed"></div>
+<p>缓存的大小很快变得可观。Llama 3 8B 每个 token 要存 32 层 × 8 组 K/V × 128 维 × 2（K 和 V），BF16 下每个数 2 字节，合计 131 KB；8192 个 token 约 1.1 GB，128K 个 token 约 17 GB，这只是一个请求。每生成一个 token，都要把整个缓存从显存读一遍，所以解码的速度往往受限于显存带宽，而不是算力。后面 MQA、GQA、MLA 的出发点都在这里。</p>
+
+<h3 id="causal-enc">编码器、解码器与交叉注意力</h3>
+<p>不加掩码、每个位置能看到全部上下文的叫<b>编码器</b>（BERT 就是这样，擅长理解）；加掩码的叫<b>解码器</b>（GPT 系列，擅长生成）。如果 query 来自一个序列、key 和 value 来自另一个序列，叫<dfn data-t="cross-attention">交叉注意力</dfn>：原始 Transformer 的解码器用它读取输入句子，文生图模型用它让图像的每个位置去“查”提示词（第 <a class="xref" data-ref="image"></a> 章）。Bahdanau 的注意力其实就是交叉注意力：query 是解码器的状态，key 和 value 是编码器在每个位置的隐藏状态。</p>
+
+<h3 id="causal-order">顺序从哪来</h3>
+<p>把“小猫追红球”换成“红球追小猫”：四个词不变，只是顺序变了。不加掩码时再算一遍，每个词的权重和输出与原句完全相同，只是行和列跟着换了位置。意思完全不同的两句话，在注意力看来是同一组向量。这个性质叫<span class="term" data-t="perm-equiv">置换等变</span>：把输入打乱，\(Q, K, V\) 的行跟着打乱，分数矩阵的行和列按同样方式重排，按行做的 softmax 不受影响，输出也只是跟着重排（完整的证明在第 <a class="xref" data-ref="transformer"></a> 章）。所以必须另外注入<span class="term" data-t="pos-enc">位置信息</span>，今天的标准做法 <span class="term" data-t="rope">RoPE</span> 按位置旋转 q 和 k，下一章详细讲。</p>
+<p>有一个例外：加了因果掩码后，换词序会改变输出（演示里勾上掩码再切换词序：“红”排第一时只能看自己）。第 \(i\) 个位置恰好能看到 \(i\) 个词，这本身就泄露了位置。下一章里“不加位置编码也能训练”这个意外发现，原因就在这里。</p>
+
+<h2 id="scale" data-short="为什么要除以 √d">为什么要除以 \(\sqrt{d_h}\)</h2>
+<p>玩具里 \(d_h = 2\)，除以 \(\sqrt2\) 只是让分数小了三成，不缩放时“球”那一行的权重是 \((6\%, 46\%, 46\%, 1\%)\)，差别不大。真实模型 \(d_h = 128\)，情况完全不同。假设 query 和 key 的每一维都是独立的、均值 0、方差 1 的随机数（初始化时大致如此），点积是 \(d_h\) 项乘积的和：</p>
+<div class="fx">
+\[ \operatorname{Var}(\mathbf q\cdot\mathbf k) = \sum_{m=1}^{d_h}\operatorname{Var}(q_m k_m) = \sum_{m=1}^{d_h}\mathbb E[q_m^2]\,\mathbb E[k_m^2] = \htmlClass{c-new}{d_h} \]
+  <div class="fx-read">每一项的方差是 1，\(d_h\) 项相加，方差就是 \(d_h\)：点积的典型大小是 \(\sqrt{d_h}\)。除以 \(\sqrt{d_h}\) 正好把方差拉回 1。</div>
+  <div class="fx-eg">\(d_h = 128\)：不缩放时点积的标准差约 \(\sqrt{128}\approx 11.3\)。16 个这样的分数里，最大的平均比次大的高约 \(0.48\times 11.3\approx 5.4\)，softmax 之后最大的权重是次大的 \(e^{5.4}\approx 200\) 多倍。缩放后标准差为 1，两者只差 \(e^{0.48}\approx 1.6\) 倍。</div>
+</div>
+<p>下面的演示随机抽 query 和 key，比较缩放前后分数的分布。\(d_h = 128\) 时，不缩放的最大权重平均约 90%，缩放后约 25%：</p>
 <div data-demo="attn-scale"></div>
-<details class="deep"><summary>softmax 饱和时梯度为什么会消失</summary><div class="in">
-<p>设 \(\mathbf p = \operatorname{softmax}(\mathbf z)\)。对 \(p_i = e^{z_i}/\sum_m e^{z_m}\) 求偏导：</p>
-\[ \frac{\partial p_i}{\partial z_j} = \frac{\delta_{ij}e^{z_i}\sum_m e^{z_m} - e^{z_i}e^{z_j}}{\big(\sum_m e^{z_m}\big)^2} = p_i\,(\delta_{ij} - p_j) \]
-<p>（\(\delta_{ij}\) 在 \(i = j\) 时为 1，否则为 0。）如果分布接近独热，某个 \(p_1\approx 1\)、其余 \(\approx 0\)：对角项 \(p_1(1 - p_1)\approx 0\)，其余项 \(p_i p_j \approx 0\)。整个雅可比矩阵接近零，分数的微小变化几乎不改变权重，反向传过来的梯度也就几乎为零。</p>
-<p><b>这个推导告诉我们：</b>注意力的分数必须控制在合适的量级。除以 \(\sqrt{d_k}\) 只保证初始化时没问题；训练过程中分数仍可能越变越大，这是大模型训练不稳定的一个来源。2023 年以后的模型普遍加了额外的保护：在点积前对 q、k 做归一化（QK-Norm），对分数做软截断（Gemma 2 的 logit soft-capping），或者在优化器里直接限制 \(W_Q, W_K\) 的尺度（Kimi K2 的 QK-Clip）。</p>
+<p>衡量一个权重分布“有多分散”，可以用它的熵 \(H = -\sum_j a_{ij}\log_2 a_{ij}\)：16 个位置均匀分配时是 4 比特，全部给一个位置时是 0。玩具里“球”那一行 \((0.11, 0.43, 0.43, 0.03)\) 的熵是 1.52 比特（4 个位置的上限是 2）。上面的演示里，\(d_h = 128\) 时不缩放的平均熵只有 0.36 比特，缩放后 3.4 比特。分数太分散时，softmax 几乎只剩最大的那一项，这叫 <dfn data-t="softmax-saturation">softmax 饱和</dfn>。饱和的坏处不在前向，而在反向：权重对分数几乎不再敏感，梯度传不回去，训练就卡住了。</p>
+<details class="deep"><summary>softmax 的雅可比：饱和时梯度为什么会消失</summary><div class="in">
+<p>设 \(\mathbf a = \operatorname{softmax}(\mathbf s)\)。对 \(a_i = e^{s_i}/\sum_m e^{s_m}\) 求偏导（商的求导法则）：</p>
+\[ \frac{\partial a_i}{\partial s_j} = \frac{\delta_{ij}e^{s_i}\sum_m e^{s_m} - e^{s_i}e^{s_j}}{\big(\sum_m e^{s_m}\big)^2} = a_i\,(\delta_{ij} - a_j) \]
+<p>（\(\delta_{ij}\) 在 \(i = j\) 时为 1，否则为 0。）设损失对权重的梯度是 \(g_i = \partial L/\partial a_i\)，传到分数上：</p>
+\[ \frac{\partial L}{\partial s_j} = \sum_i g_i\,a_i(\delta_{ij} - a_j) = a_j\Big(g_j - \sum_i a_i g_i\Big) = a_j\,(g_j - \bar g) \]
+<p>每个分数收到的梯度，等于它的权重乘以“它的上游梯度比加权平均高多少”。分布接近独热、\(a_1\approx 1\) 时：其它位置 \(a_j\approx 0\)，梯度≈0；第 1 个位置 \(\bar g\approx g_1\)，括号≈0，梯度也≈0。所有分数同时收不到梯度。</p>
+<p>代入数字。4 个位置均匀分布 \((0.25\times 4)\)：雅可比对角线是 \(0.25\times 0.75 = 0.19\)，非对角线 \(-0.0625\)。饱和分布 \((0.97, 0.01, 0.01, 0.01)\)：对角线 \(0.97\times 0.03 = 0.029\) 和 \(0.0099\)，非对角线 \(-0.0097\) 和 \(-0.0001\)，整体小了一个数量级；最大权重到 0.999 时，再小 30 倍。</p>
+<p><b>这个推导告诉我们：</b>注意力的分数必须控制在合适的量级。除以 \(\sqrt{d_h}\) 是一种温度，它把初始化时的分数拉回标准差 1；训练过程中分数仍可能越变越大，饱和又会回来，这是大模型训练不稳定的一个来源。</p>
 </div></details>
+<p>下面的演示把这件事算出来：每个点 240 个随机 query，看有多少个 query 的梯度已经小于均匀分布时的 10%（实际上传不回去了）。默认是 \(d_h = 128\)、不缩放，四成多的 query 已经“死了”。切到“除以 \(\sqrt{d_h}\)”，曲线变平；再把 \(c\) 拖大，模拟训练中 q、k 越变越长：</p>
+<div data-demo="attention-saturation" class="bleed"></div>
+<details class="deep"><summary>点积的方差为什么是 \(d_h\)，训练之后又会怎样</summary><div class="in">
+<p><b>第 1 步，单项。</b>设 \(q_m, k_m\) 独立，均值 0、方差 1。乘积的均值 \(\mathbb E[q_mk_m] = \mathbb E[q_m]\,\mathbb E[k_m] = 0\)；方差 \(\mathbb E[q_m^2k_m^2] - 0^2 = \mathbb E[q_m^2]\,\mathbb E[k_m^2] = 1\)。</p>
+<p><b>第 2 步，求和。</b>不同维度的乘积互相独立，独立变量之和的方差等于方差之和（<a class="xref" data-ref="nn-basics" data-hash="init" data-full="1"></a>的“初始化”一节用过同一条），所以 \(\operatorname{Var}(\mathbf q\cdot\mathbf k) = d_h\)。由中心极限定理，\(d_h\) 大时 \(\mathbf q\cdot\mathbf k\) 近似服从 \(\mathcal N(0, d_h)\)。</p>
+<p><b>第 3 步，分数拉开多远。</b>16 个独立的标准正态数，最大的一个平均约 1.77，次大的约 1.28，差 0.48。乘上标准差 \(\sqrt{d_h}\)，差距随维度按 \(\sqrt{d_h}\) 增长，权重之比按 \(e^{0.48\sqrt{d_h}}\) 增长：\(d_h = 16\) 时约 7 倍，\(d_h = 128\) 时约 200 倍，\(d_h = 1024\) 时约 \(5\times 10^6\) 倍。</p>
+<p><b>第 4 步，训练之后。</b>上面假设 q 和 k 独立。训练的目的恰恰是让该匹配的 q 和 k 方向一致。极端情况 \(\mathbf k = \mathbf q\)：\(\mathbf q\cdot\mathbf q = \sum_m q_m^2\)，均值是 \(d_h\) 而不是 0，除以 \(\sqrt{d_h}\) 后还剩 \(\sqrt{d_h}\)，随维度增长。μP（Yang 等, 2022）据此主张除以 \(d_h\) 而不是 \(\sqrt{d_h}\)，让模型变宽时分数的量级保持不变、最优超参数可以从小模型直接搬到大模型。实际的大模型几乎都把 \(d_h\) 固定在 64–128（Llama 3 的 8B、70B、405B 都是 128），变大时增加的是头数，所以两种缩放只差一个常数，可以并进 \(W_Q\) 的初始化或学习率里。</p>
+<p><b>这个推导告诉我们：</b>\(1/\sqrt{d_h}\) 是按“初始化时 q、k 互相独立”算出来的，它只保证训练开始时分数的标准差是 1。训练开始以后，分数的大小由学到的权重决定，需要另外的机制来控制。</p>
+</div></details>
+<p>2023 年以后，大模型普遍在缩放之外再加一道保护，常见的有三种：</p>
+<div class="fx">
+\[ \htmlClass{sym-s}{s_{ij}} = \frac{\htmlClass{c-clip}{\operatorname{RMSNorm}}(\mathbf q_i)\cdot\htmlClass{c-clip}{\operatorname{RMSNorm}}(\mathbf k_j)}{\sqrt{d_h}},\qquad |s_{ij}| \le \sqrt{d_h} \]
+  <span class="eqnote">QK-Norm：先把 q、k 各自归一化到固定长度再点积，分数有了上限</span>
+  <div class="fx-read">点积之前，把 q 和 k 各自除以自己的均方根长度（再乘一个可学习的系数），两个长度都是 \(\sqrt{d_h}\) 的向量做点积再除以 \(\sqrt{d_h}\)，结果不超过 \(\sqrt{d_h}\)。q、k 本身怎么变长，都被抵消掉。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(s_{ij}\)</dt><dd>注意力分数（softmax 之前）</dd>
+  </dl>
+  <div class="fx-eg">\(d_h = 128\)：不加保护时，训练中 q、k 都变长 3 倍，分数就放大 9 倍，标准差从 1 变成 9；加了 QK-Norm，分数始终在 \(\pm 11.3\) 以内（乘上学到的系数后上限可调），标准差仍约为 1。</div>
+</div>
+<ul>
+  <li><b>QK-Norm</b>：上面的式子，对 q、k 做 <span class="term" data-t="rmsnorm">RMSNorm</span>（下一章）。ViT-22B（2023）靠它稳住了 220 亿参数的训练，Gemma 3（2025-03）用它替换了 Gemma 2 的软截断，Qwen3（2025-04）也加上了它。</li>
+  <li><b>logit 软截断</b>：\(s \leftarrow 50\tanh(s/50)\)，分数被平滑地压进 \(\pm 50\)（Gemma 2, 2024）。缺点是和当时常用的 FlashAttention 实现不兼容，额外的 tanh 也要算。</li>
+  <li><b><dfn data-t="qk-clip">QK-Clip</dfn></b>：不改前向计算，而在每步更新后检查每个头的最大分数，超过阈值 \(\tau\) 就把这个头的 \(W_Q, W_K\) 按比例缩小。Kimi K2（2025-07）用 \(\tau = 100\)。不加它时，一个激活 90 亿参数的<span class="term" data-t="moe">混合专家</span>试验模型用 <span class="term" data-t="muon">Muon</span> 优化器训练，最大分数很快超过 1000；报告指出这种量级通常带来明显的<span class="term" data-t="loss-spike">损失尖峰</span>，甚至发散。</li>
+</ul>
 
 <h2 id="multihead">多头注意力</h2>
-<p>一个注意力头只能给出一组权重，也就是一种“关注方式”。但一个词往往同时需要几种信息：它的主语是谁、前一个词是什么、前文有没有出现过它。<dfn data-t="multi-head">多头注意力</dfn>把 \(d\) 维切成 \(h\) 份，每份是一个独立的头，有自己的 \(W_Q, W_K, W_V\)，各算各的，结果拼起来再乘一个输出矩阵：</p>
+<p>一个注意力头只能给出一组权重，也就是一种“关注方式”。玩具里那个头只搬“动”和“色”，而且分不清“红”修饰谁。一个词往往同时需要几种信息：它的主语是谁、前一个词是什么、前文有没有出现过它。<dfn data-t="multi-head">多头注意力</dfn>把 \(d\) 维切成 \(h\) 份，每份是一个独立的头，有自己的 \(W_Q, W_K, W_V\)，各算各的，结果拼起来再乘一个输出矩阵：</p>
 <div class="fx">
 \[ \begin{aligned} \operatorname{MultiHead}(X) &= \big[\,\htmlClass{sym-hd}{\text{head}_1};\ \dots;\ \text{head}_h\,\big]\,\htmlClass{sym-WO}{W_O}\\ \text{head}_m &= \operatorname{Attention}(XW_Q^{(m)},\ XW_K^{(m)},\ XW_V^{(m)}) \end{aligned} \]
   <div class="fx-read">\(h\) 个头各自用一套小矩阵做注意力，输出拼接成 \(d\) 维，再用 \(W_O\) 混合。</div>
@@ -117,42 +257,68 @@
   </dl>
   <div class="fx-eg">Llama 3 8B：\(d = 4096\)，\(h = 32\)，每头 \(d_h = 128\)。每个头的 \(W_Q^{(m)}\) 是 \(4096\times 128\)，32 个头拼起来正好是 \(4096\times 4096\)：参数量和“一个 4096 维的大头”完全相同，只是被分成了 32 种独立的关注方式。</div>
 </div>
-<p>训练好的模型里，不同的头确实学会了不同的分工，下面会看到几种典型的模式。</p>
-
-<h2 id="causal">因果掩码、编码器与解码器</h2>
-<p>GPT 这类模型的任务是预测下一个 token（第 <a class="xref" data-ref="generation"></a> 章），第 \(i\) 个位置只能看到前 \(i\) 个 token，否则就是偷看答案。做法是在 softmax 之前给分数矩阵加一个<dfn data-t="causal-mask">因果掩码</dfn>：</p>
-<div class="fx">
-\[ A = \operatorname{softmax}\!\Big(\frac{QK^\top}{\sqrt{d_k}} + \htmlClass{sym-M}{M}\Big),\qquad \htmlClass{sym-M}{M_{ij}} = \begin{cases} 0 & j \le i\\ -\infty & j > i \end{cases} \]
-  <div class="fx-read">右上三角（“后面的位置”）的分数被设成负无穷，softmax 之后权重恰好为 0，前面位置的权重重新归一化。</div>
-  <dl class="fx-syms">
-    <dt data-sym="M">\(M\)</dt><dd>掩码矩阵：允许看的位置为 0，不允许看的为 \(-\infty\)</dd>
+<p>回到玩具：再加一个头，它的 \(W_V\) 搬“事物”这一维，\(W_Q, W_K\) 让描述词去找事物，“追”就能同时从第一个头知道“周围有在动的东西”、从第二个头知道“附近有哪些事物”。每个头有自己的 softmax，所以能同时看不同的地方。训练好的模型里，不同的头确实学会了不同的分工，下面会看到几种典型的模式。</p>
+<details class="deep"><summary>多头 = 在 \(h\) 个低维子空间里各查一次</summary><div class="in">
+<p>把输出矩阵 \(W_O\)（\(d\times d\)）按行切成 \(h\) 块，每块 \(d_h\times d\)，记作 \(W_O^{(m)}\)。拼接后再相乘，等于各头分别相乘再相加：</p>
+\[ \big[\text{head}_1;\dots;\text{head}_h\big]W_O = \sum_{m=1}^{h}\text{head}_m\,W_O^{(m)} = \sum_{m=1}^{h} A^{(m)}\,X\,\underbrace{W_V^{(m)}W_O^{(m)}}_{W_{OV}^{(m)}} \]
+<p>其中 \(A^{(m)} = \operatorname{softmax}\big(XW_{QK}^{(m)}X^\top/\sqrt{d_h}\big)\)。多头注意力于是是 \(h\) 个互不通信的小单元之和：每个单元用自己的 QK 电路决定看哪里，用自己的 OV 电路决定搬什么，结果加在一起。</p>
+<p><b>参数量。</b>每个头的 \(W_Q, W_K, W_V\) 各 \(d\times d_h\)，加上 \(W_O^{(m)}\) 的 \(d_h\times d\)，共 \(4dd_h\)；\(h\) 个头共 \(4dd_hh = 4d^2\)（因为 \(hd_h = d\)）。一个 \(d_h = d\) 的单头也是 \(4d^2\)。<b>计算量。</b>每个头算分数 \(2n^2d_h\) FLOPs，\(h\) 个头 \(2n^2d\)，同样与单头相同。</p>
+<p><b>不同在哪。</b>单头只有一个 softmax：每个位置只能给出一种权重分布。\(h\) 个头有 \(h\) 个 softmax，可以同时看 \(h\) 个地方。代价是每个头的 \(W_{QK}^{(m)}\) 秩最多是 \(d_h\)：头切得太细，每个头能表达的“相关度”就太粗糙，Bhojanapalli 等（2020）称之为低秩瓶颈。这也是 \(d_h\) 一般固定在 64–128、模型变大时加头数而不是把头切得更细的原因。</p>
+<p><b>这个推导告诉我们：</b>多头不是“更多参数”，而是把同样的参数分成 \(h\) 份独立的查找，各头的输出相加后写回同一个向量（下一章的<span class="term" data-t="residual-stream">残差流</span>）。各头独立，也为后面的 MQA、GQA 留下了余地：K、V 只是各头的“被查材料”，可以让几个头共用一份。</p>
+</div></details>
+<aside class="dispute surprise">
+  <h4>训练好的模型里，大部分头可以直接删掉</h4>
+  <dl>
+    <dt>发现</dt><dd>Michel 等（2019）在机器翻译模型和 BERT 上逐个删头：大部分头单独删掉，测试成绩没有显著变化，不少层只留一个头也行。Voita 等（2019）在英俄翻译模型上，把编码器 48 个头剪掉 38 个，BLEU（翻译质量的自动评分）只降 0.15。</dd>
+    <dt>但是</dt><dd>剩下的少数头不能动。Voita 等发现最后才被剪掉的是分工明确的头：看相邻位置的、跟踪句法关系的、关注罕见词的。Michel 等也发现一次删太多头，成绩会突然崩溃。长上下文模型里，不到 5% 的“检索头”负责从上下文里把信息复制出来，把它们屏蔽掉，“大海捞针”测试（在长文里藏一句话，让模型找出来）就失败，模型开始编造（Wu 等, 2024）。</dd>
+    <dt>意义</dt><dd>多头的冗余主要用在训练中：很多头同时探索，少数头最终承担关键功能。推理时的冗余则被利用来省显存：MQA、GQA 让多个头共用 K、V，几乎不掉点。哪些头关键，正是可解释性研究要回答的问题（第 <a class="xref" data-ref="interpretability"></a> 章）。</dd>
   </dl>
-  <div class="fx-eg">第 2 个位置原本的分数是 \((1.2,\ 0.4,\ 2.0)\)。加上掩码 \((0, 0, -\infty)\) 后变成 \((1.2,\ 0.4,\ -\infty)\)，softmax 得 \((0.69,\ 0.31,\ 0)\)：第 3 个位置被完全屏蔽。</div>
-</div>
-<p>掩码带来一个重要的好处：训练时整段文本一次输入，每个位置都在预测自己的下一个 token，\(n\) 个预测在一次前向计算里并行完成。这是 Transformer 训练效率远高于 RNN 的原因之一。</p>
-<p>不加掩码、每个位置能看到全部上下文的叫<b>编码器</b>（BERT 就是这样，擅长理解）；加掩码的叫<b>解码器</b>（GPT 系列，擅长生成）。如果 query 来自一个序列、key 和 value 来自另一个序列，叫<dfn data-t="cross-attention">交叉注意力</dfn>：原始 Transformer 的解码器用它读取输入句子，文生图模型用它让图像的每个位置去“查”提示词（第 <a class="xref" data-ref="image"></a> 章）。</p>
+</aside>
 
 <h2 id="patterns">训练出来的注意力模式</h2>
 <p>可解释性研究（Anthropic 等, 2021–2022）在训练好的模型里找到了一些分工清晰的头。下面的演示按规则构造出这几种模式，可以输入自己的句子，悬停查看每一行在看哪里：</p>
 <div data-demo="attn-heads"></div>
 <p>其中两种值得单独说：</p>
 <ul>
-  <li><b><dfn data-t="induction-head">归纳头</dfn>（induction head）</b>：“上次见到 A 后面跟着 B，这次又见到 A，就去看 B，预测下一个是 B”。它要两层配合：前一层的“前一个 token 头”先把“我前面是谁”写进每个位置，后一层的归纳头再用这个信息去匹配。Olsson 等（2022）发现，归纳头在训练中会在某个时刻突然形成，同一时刻模型的<dfn data-t="icl">上下文学习</dfn>（in-context learning，看几个示例就学会新任务）能力也出现跃升。few-shot 提示之所以有效，很大程度上靠这种机制。</li>
-  <li><b><dfn data-t="attention-sink">注意力汇</dfn>（attention sink）</b>：很多头会把大量权重放在第一个 token 上，哪怕它只是一个“开始”标记。softmax 的权重和必须为 1，一个头“没什么要看”的时候，多出来的权重总得有个去处。StreamingLLM（2023）利用这一点：做滑动窗口推理时保留开头几个 token，模型就不会崩。</li>
+  <li><b><dfn data-t="induction-head">归纳头</dfn>（induction head）</b>：“上次见到 A 后面跟着 B，这次又见到 A，就去看 B，预测下一个是 B”。它要两层配合：前一层的<dfn data-t="prev-token-head">前一个 token 头</dfn>几乎只看紧挨着的前一个位置，把“我前面是谁”写进每个位置；后一层的归纳头再用这个信息去匹配（推导见下）。Olsson 等（2022）发现，归纳头在训练早期的一个很窄的窗口里突然形成（他们的大模型约在训练到 25 亿到 50 亿 token 之间），同一时刻模型的<dfn data-t="icl">上下文学习</dfn>（in-context learning，看几个示例就学会新任务）能力也出现跃升。few-shot 提示之所以有效，很大程度上靠这种机制。</li>
+  <li><b><dfn data-t="attention-sink">注意力汇</dfn>（attention sink）</b>：很多头会把大量权重放在第一个 token 上，哪怕它只是一个“开始”标记。softmax 的权重和必须为 1，一个头“没什么要看”的时候，多出来的权重总得有个去处。StreamingLLM（2023）利用这一点：做滑动窗口推理时保留开头 4 个 token，Llama 2 等模型就能稳定处理 400 万 token 的流式输入；把开头的 token 挤出窗口，<span class="term" data-t="perplexity">困惑度</span>立刻飙升。</li>
 </ul>
+<details class="deep"><summary>归纳头为什么至少要两层</summary><div class="in">
+<p>任务：前文出现过“… A B …”，现在又读到 A，要预测下一个是 B。例如“哈利 波特 走进了 …… 哈利 →？”。</p>
+<p><b>只有一层行不行？</b>第 \(i\) 个位置（第二个 A）的 query 只依赖 \(\mathbf x_i\)，第 \(j\) 个位置的 key 只依赖 \(\mathbf x_j\)（和它的位置）。分数 \(\mathbf x_iW_{QK}\mathbf x_j^\top\) 能表达“找和我一样的 token”，于是会找到前面那个 A 本身，把 A 复制过来，预测出 A：错了一位。真正要找的是“前一个 token 是 A 的那个位置”，可位置 \(j\) 的向量里没有“我前面是谁”的信息。</p>
+<p><b>第 1 层：前一个 token 头。</b>它的分数只看相对位置，几乎把全部权重放在 \(j-1\) 上（这需要位置编码，第 <a class="xref" data-ref="transformer"></a> 章）。它的 OV 电路把 \(\mathbf x_{j-1}\) 的内容搬到位置 \(j\)：</p>
+\[ \mathbf r_j \leftarrow \mathbf r_j + \mathbf x_{j-1}W_{OV}^{(1)} \]
+<p>（\(\mathbf r_j\) 是位置 \(j\) 的向量，每一层的输出都加到它上面。）现在 B 所在的位置里写着“我前面是 A”。</p>
+<p><b>第 2 层：归纳头。</b>它的 query 读当前 token 的内容（“我是 A”），key 读第 1 层写进去的那一份（“我前面是 A”）：</p>
+\[ s_{ij} = \frac{\big(\mathbf x_iW_Q^{(2)}\big)\cdot\big(\mathbf x_{j-1}W_{OV}^{(1)}W_K^{(2)}\big)}{\sqrt{d_h}},\quad \text{在}\ x_{j-1} = x_i\ \text{时最大} \]
+<p>于是第二个 A 的注意力落在 B 上；归纳头的 OV 电路把 B 的内容搬回来，输出层据此提高“B”的概率。key 用到了前一层某个头的输出，这种跨层配合叫 K 组合（K-composition, Elhage 等, 2021）。</p>
+<p><b>这个推导告诉我们：</b>在上下文里“照着前文接着写”，需要两个头跨层配合，单层注意力做不到：只有注意力层的一层模型里找不到归纳头，两层模型里就有。两个零件缺一不可，任何一个没长好，另一个也得不到有用的梯度，所以归纳头在训练中“突然”出现，上下文学习能力也同时跃升。演示里切换“前一个 token”和“归纳头”两种模式，看的就是这两层。</p>
+</div></details>
+<details class="deep"><summary>注意力汇为什么出现：权重必须和为 1</summary><div class="in">
+<p>注意力的输出是 value 的加权平均：\(\mathbf o_i = \sum_{j\le i}a_{ij}\mathbf v_j\)，\(a_{ij}&gt;0\)，\(\sum_j a_{ij} = 1\)。</p>
+<p><b>第 1 步，一个头有时需要“什么也不做”。</b>很多头只在特定情况下有用：归纳头只在出现重复时有事做。没事做时，最好的输出是 \(\mathbf o_i\approx\mathbf 0\)，不往这个位置的向量里写任何东西。</p>
+<p><b>第 2 步，softmax 不允许“全部为零”。</b>权重和必须为 1，\(\mathbf o_i\) 只能落在各个 \(\mathbf v_j\) 的加权平均里。要让它接近 0，办法是把权重集中到某个 value 接近 0 的位置上。</p>
+<p><b>第 3 步，为什么是第一个 token。</b>这个“垃圾桶”必须对所有位置都可见；在因果掩码下，只有第 1 个位置被每个位置看到。于是模型学会让第一个 token 的 key 和几乎所有 query 都匹配。Gu 等（ICLR 2025）的测量显示，汇所在位置的 value 对输出几乎没有贡献，它的作用更像一个附加在 key 上的偏置。</p>
+<p><b>第 4 步，给它一个正式的出口。</b>在 softmax 的分母里加一项可学习的常数 \(b\)：</p>
+\[ a_{ij} = \frac{e^{s_{ij}}}{e^{b} + \sum_{j'\le i}e^{s_{ij'}}},\qquad \sum_{j} a_{ij} = 1 - \frac{e^{b}}{e^{b} + \sum_{j'\le i}e^{s_{ij'}}} &lt; 1 \]
+<p>所有分数都低时，权重和接近 0，输出接近 0，不需要占用一个真实的 token。这就是 Evan Miller（2023）提出的“分母加一”，gpt-oss（2025-08）给每个头学一个这样的常数。另一种出口是门控：输出乘一个 0 到 1 之间的门，门关上就是“什么也不做”（下面的门控注意力）。Gu 等还发现，把 softmax 换成不归一化的 sigmoid，10 亿参数以内的模型就不再出现注意力汇。</p>
+<p><b>这个推导告诉我们：</b>注意力汇是“权重和为 1”加上因果掩码之后，模型能找到的最便宜的空操作。显式地给它一个空操作，它就不再需要占用第一个 token。</p>
+</div></details>
+<p>注意力汇常常和另一个现象一起出现。Sun 等（2024）发现，大模型里有极少数激活值比其它的大得多（可以到 10 万倍），叫<b>巨量激活</b>（massive activations）。它们几乎不随输入变化，作用相当于固定的偏置；只把其中 4 个置零，模型就崩溃，换成它们的平均值则没有影响。它们出现在第一个 token 等少数位置上，正是注意力汇所在的地方。对量化来说，这些巨大的数是最难处理的离群值（第 <a class="xref" data-ref="quantization"></a> 章）。</p>
+<p>2025 年，Qwen 团队给出了一个很小的改动：在注意力输出之后、乘 \(W_O\) 之前，按头、按输入乘一个 sigmoid 门，\(\mathbf o_i' = \sigma(\mathbf x_iW_g)\odot\mathbf o_i\)，叫<b>门控注意力</b>（gated attention）。门可以直接把一个头关掉，注意力汇随之消失，训练更稳、可以用更大的学习率，长上下文外推也更好。这篇论文获得 NeurIPS 2025 最佳论文，门控注意力已用在 Qwen3-Next（2025-09）和 Qwen3.5（2026-02）的全注意力层里。</p>
 <aside class="dispute">
   <h4>注意力汇是缺陷还是功能</h4>
   <dl>
-    <dt>一种看法</dt><dd>它是 softmax 的副作用，浪费了注意力，还和某些通道里异常巨大的激活值（massive activations）同时出现，给量化和长上下文外推带来麻烦。Qwen 团队的门控注意力（Gated Attention, NeurIPS 2025 最佳论文）在注意力输出后加一个按头、按输入变化的 sigmoid 门，注意力汇随之消失，训练更稳、可以用更大的学习率、长上下文外推更好，已用于 Qwen3-Next。</dd>
-    <dt>另一种看法</dt><dd>它是模型学会的一种“隐式门控”：一个头不需要时，把权重倒进汇里，等于自动关掉。2026 年的多项研究（如 NYU 的 “The Spike, the Sparse and the Sink”）发现，注意力汇与巨量激活的同时出现主要源于 Pre-Norm 结构，两者分工不同；也有研究认为注意力汇是为了缓冲第一个 token 上过大的梯度。</dd>
-    <dt>现在怎么看</dt><dd>两种看法并不矛盾：注意力汇是模型在“权重必须和为 1”这个约束下找到的变通办法。显式地提供门控之后，模型就不再需要它。各研究对“巨量激活是不是注意力汇的直接原因”仍有分歧。</dd>
+    <dt>一种看法</dt><dd>它是 softmax 的副作用，浪费了注意力，还和巨量激活同时出现，给量化和长上下文外推带来麻烦。门控注意力、gpt-oss 的可学习汇都证明，给出显式的出口之后，模型可以不需要它。</dd>
+    <dt>另一种看法</dt><dd>它是模型学会的一种“隐式门控”：一个头不需要时，把权重倒进汇里，等于自动关掉。2026 年的多项研究（如 NYU 等的 “The Spike, the Sparse and the Sink”）发现，注意力汇与巨量激活的同时出现主要源于 <span class="term" data-t="pre-norm">Pre-Norm</span> 结构，去掉它两者就分开，各有分工；也有研究认为注意力汇是为了缓冲第一个 token 上过大的梯度。</dd>
+    <dt>现在怎么看</dt><dd>两种看法并不矛盾：注意力汇是模型在“权重必须和为 1”这个约束下找到的变通办法。显式地提供门控或汇之后，模型就不再需要占用真实的 token。各研究对“巨量激活是不是注意力汇的直接原因”仍有分歧。</dd>
   </dl>
 </aside>
 <aside class="dispute">
   <h4>注意力权重能不能当作“解释”</h4>
   <dl>
     <dt>主张</dt><dd>权重大的位置就是模型“认为重要”的位置，可以直接用来解释模型的决定。</dd>
-    <dt>反方</dt><dd>Jain 与 Wallace（2019）发现，常常可以找到完全不同的注意力分布，而模型输出几乎不变；而且注意力只是众多层、众多头中的一个环节，value 向量的大小、后续的 MLP 都会改变最终影响。</dd>
+    <dt>反方</dt><dd>Jain 与 Wallace（2019）发现，常常可以找到完全不同的注意力分布，而模型输出几乎不变；而且注意力只是众多层、众多头中的一个环节，value 向量的大小、后续的 MLP 都会改变最终影响。注意力汇就是反例：权重最大的那个 token 往往什么信息也没提供。</dd>
     <dt>现在怎么看</dt><dd>单个头的权重可以提示“信息从哪里流过来”，但不能等同于因果解释。要确认某个位置的作用，需要做干预实验（改掉它看输出怎么变），这是第 <a class="xref" data-ref="interpretability"></a> 章的方法。</dd>
   </dl>
 </aside>
@@ -164,20 +330,63 @@
   <div class="fx-read">注意力的计算量随 \(n\) 的平方增长，线性层随 \(n\) 线性增长。两者在 \(n = 6d\) 时相等；序列再长，注意力就成了主要开销。</div>
   <div class="fx-eg">\(d = 4096\)：\(n = 6\times 4096 \approx 2.5\) 万 token 时两者相当。到 \(n = 100\) 万，注意力的计算量是线性层的 \(10^6/(6\times 4096) \approx 40\) 倍。显存方面，一个头的 \(n\times n\) 分数矩阵在 \(n = 128\text{K}\) 时就有约 \(1.7\times 10^{10}\) 个数，BF16 下约 34 GB。</div>
 </div>
-<p>后面几章讲的大部分技术，都在想办法绕开这个平方：</p>
+<details class="deep"><summary>一层注意力要算多少、存多少：训练、预填充与解码</summary><div class="in">
+<p><b>训练与预填充（一次处理 \(n\) 个 token）。</b>一次 \((m\times k)\) 乘 \((k\times p)\) 的矩阵乘法约 \(2mkp\) 次浮点运算（<span class="term" data-t="flops">FLOPs</span>）。逐项数：</p>
 <ul>
-  <li><b>FlashAttention</b>：结果完全相同，但分块计算，不把 \(n\times n\) 矩阵写进显存，显存从 \(O(n^2)\) 降到 \(O(n)\)（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
-  <li><b>KV cache 与 GQA、MLA</b>：生成时缓存历史的 K、V，并压缩它们的大小（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
-  <li><b>线性注意力与状态空间模型</b>：Mamba、DeltaNet、Kimi Delta Attention，把历史压进固定大小的状态，代价降为 \(O(n)\)；2025–26 年的主流是和普通注意力按约 3:1 混合使用。</li>
-  <li><b>稀疏注意力</b>：每个 query 只看挑出来的少量位置，例如 DeepSeek V3.2 的 DSA 和 V4 的 CSA / HCA。</li>
+  <li>Q、K、V、O 四个投影：\(n\times d\) 乘 \(d\times d\)，各 \(2nd^2\)，共 \(8nd^2\)。</li>
+  <li>分数 \(QK^\top\)：每个头 \(n\times d_h\) 乘 \(d_h\times n\)，\(2n^2d_h\)；\(h\) 个头共 \(2n^2d\)。</li>
+  <li>加权求和 \(AV\)：同样 \(2n^2d\)。</li>
+  <li>MLP（中间层宽 \(4d\)，下一章）：两个 \(d\times 4d\) 的矩阵，\(16nd^2\)。</li>
 </ul>
+<p>合计 \(24nd^2 + 4n^2d\)，两部分之比 \(4n^2d/24nd^2 = n/6d\)。因果掩码让一半的分数不必算，好的内核会跳过它们，平方项再减半。存储方面，朴素实现要把每个头 \(n\times n\) 的分数矩阵写进显存；<span class="term" data-t="flash-attention">FlashAttention</span> 分块计算、不写回，显存降到 \(O(n)\)，计算量不变。</p>
+<p><b>解码（每步 1 个 token）。</b>第 \(t\) 步：投影 \(8d^2\) FLOPs；和缓存里 \(t\) 个 key 打分、再加权求和，共 \(4td\)；还要把这 \(t\) 对 K、V 从显存读一遍。生成 \(n\) 个 token，注意力的总计算是 \(\sum_t 4td\approx 2n^2d\)，仍是平方，只是摊到了每一步。如果不缓存，每一步都要为前面所有 token 重算 K、V，光这一项就是 \(\sum_t 4td^2\approx 2n^2d^2\)，又多出一个 \(d\) 倍。</p>
+<p><b>解码慢在读。</b>每从缓存读一个数，只做一次乘加（2 FLOPs）；BF16 一个数 2 字节，相当于每字节 1 FLOP。H100 每读一个字节能做约 300 次运算，所以解码时的注意力几乎全部时间都花在读 KV 缓存上（第 <a class="xref" data-ref="serving"></a> 章把这个比值和批大小一起算了一遍）。</p>
+<p><b>这个推导告诉我们：</b>注意力的平方代价有两张面孔：训练和预填充时是计算与显存（\(n\times n\) 的矩阵），解码时是带宽（每步读整个 KV 缓存）。前者由 FlashAttention 这类“换计算顺序”的方法缓解，后者由 MQA、GQA、MLA 这类“缩小 KV”的方法缓解；两者都不改变平方本身。要改变平方，得改注意力的公式：稀疏注意力或线性注意力。</p>
+</div></details>
+<p>下一节按这条线索，从 2014 年一直走到 2026 年。</p>
+
+<h2 id="evolution" data-short="每一代在修什么">每一代在修什么：从翻译里的对齐到线性注意力混合</h2>
+<p>十二年里注意力的公式只改过几处，每一处都是在修上一代留下的某个瓶颈。先看最早的三代，改的都是“分数怎么算”：</p>
+<div class="fx">
+\[ \operatorname{score}(\htmlClass{sym-s}{\mathbf s}, \htmlClass{sym-hh}{\mathbf h}) = \begin{cases} \htmlClass{sym-w}{\mathbf w}^\top\tanh\big(\htmlClass{sym-w}{W_1}\mathbf s + \htmlClass{sym-w}{W_2}\mathbf h\big) & \text{加性（2014）}\\ \mathbf s^\top \htmlClass{sym-W}{W}\,\mathbf h & \text{乘性（2015）}\\ \htmlClass{c-new}{\mathbf q\cdot\mathbf k/\sqrt{d_h}} & \text{缩放点积（2017）}\end{cases} \]
+  <div class="fx-read">加性打分用一个小网络比较两个向量；乘性打分用一个矩阵做双线性比较，点积是 \(W = I\) 的特例；缩放点积先把两边各自投影成 q、k，再点积、除以 \(\sqrt{d_h}\)。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(\mathbf s\)</dt><dd>解码器当前的状态，相当于 query</dd>
+    <dt data-sym="hh">\(\mathbf h\)</dt><dd>编码器在某个位置的隐藏状态，同时充当 key 和 value</dd>
+    <dt data-sym="w">\(\mathbf w, W_1, W_2\)</dt><dd>加性打分的参数：一个只有一层隐藏层的小网络</dd>
+    <dt data-sym="W">\(W\)</dt><dd>乘性打分的矩阵</dd>
+  </dl>
+  <div class="fx-eg">\(n\) 个 query 对 \(n\) 个位置：每个 \(W_1\mathbf s\)、\(W_2\mathbf h\) 都可以提前算好，但 \(\tanh\) 必须对每一对单独算，要存一个 \(n\times n\times d_a\) 的中间结果（\(d_a\) 是小网络隐藏层的宽度），无法写成一次矩阵乘法。点积打分把 \(n\times n\) 个分数写成一次 \(QK^\top\)，直接用 GPU 上最快的矩阵乘法。</div>
+</div>
+<div class="tablewrap"><table>
+  <tr><th>一代</th><th>时间</th><th>改了哪一项</th><th>修的瓶颈</th><th>留下的代价</th></tr>
+  <tr><td>加性注意力（Bahdanau）</td><td>2014-09</td><td>解码器每步对输入的每个位置打分、加权</td><td>整句压成一个固定向量</td><td>每对位置跑一次小网络；主体仍是 RNN</td></tr>
+  <tr><td>乘性 / 点积（Luong）</td><td>2015-08</td><td>打分换成 \(\mathbf s^\top W\mathbf h\) 或点积；可选局部窗口</td><td>打分太慢</td><td>维度大时点积过大，效果反而不如加性</td></tr>
+  <tr><td>自注意力（Transformer）</td><td>2017-06</td><td>除以 \(\sqrt{d_h}\)；Q、K、V 来自同一序列；多头；去掉循环</td><td>串行计算、长路径</td><td>\(O(n^2)\) 计算和显存；不知道顺序</td></tr>
+  <tr><td>稀疏注意力（Sparse Transformer）</td><td>2019-04</td><td>每个 query 只看约 \(\sqrt n\) 个固定位置</td><td>\(n^2\) 计算</td><td>固定模式会漏信息；不规则访存，GPU 上不快</td></tr>
+  <tr><td>MQA</td><td>2019-11</td><td>所有头共用一组 K、V</td><td>解码时读 KV 缓存的带宽</td><td>质量下降、训练不稳</td></tr>
+  <tr><td>FlashAttention</td><td>2022-05</td><td>公式不变；分块 + 在线 softmax，\(n\times n\) 矩阵不写回显存</td><td>显存读写</td><td>计算量仍是 \(O(n^2)\)；每代硬件都要重写内核</td></tr>
+  <tr><td>GQA</td><td>2023-05</td><td>K、V 分成 \(g\) 组，每组被若干个头共用</td><td>同 MQA，质量损失更小</td><td>KV 仍随 \(n\) 线性增长</td></tr>
+  <tr><td>MLA</td><td>2024-05</td><td>只缓存一个低维潜向量，K、V 由它升维</td><td>KV 缓存的大小</td><td>位置编码要单独处理，实现复杂</td></tr>
+  <tr><td>线性注意力混合、稀疏选择</td><td>2025–26</td><td>多数层去掉 softmax、改用固定大小的状态；或每个 query 只对挑出的 top-k 做注意力</td><td>百万 token 的计算与 KV</td><td>精确回忆变弱；框架与内核支持滞后</td></tr>
+</table></div>
+<p><b>对齐（2014）。</b>卡在哪：编码器-解码器模型把整句压成一个固定向量，句子一长，翻译质量急剧下降。改了什么：解码器每生成一个词，都对编码器每个位置的隐藏状态用<dfn data-t="additive-attention">加性注意力</dfn>打分，softmax 后加权求和，作为这一步的额外输入。代价：主体仍是 RNN，训练依旧串行；每一对位置都要过一次小网络。</p>
+<p><b>点积（2015）。</b>Luong 等把打分换成乘性或纯点积，计算更简单，还试了只看一个窗口的“局部注意力”，这是后来滑动窗口注意力的前身。留下的问题在 Transformer 论文里说得很清楚：维度小时两种打分差不多，维度大时不缩放的点积反而不如加性打分。原因就是上面推导的方差随维度增长。</p>
+<p><b>自注意力（2017）。</b>改了三处：除以 \(\sqrt{d_h}\) 修好了点积；Q、K、V 都来自同一序列，注意力从“翻译时回头看原句”变成“序列内部互相看”；循环整个去掉，靠多头和堆叠层数获得表达力。代价是平方级的计算与显存，以及对顺序不敏感，后者由位置编码补上（下一章）。</p>
+<p><b>稀疏（2019）。</b>OpenAI 的 Sparse Transformer 让每个位置只看两类位置：最近的约 \(\sqrt n\) 个，以及每隔 \(\sqrt n\) 取一个的“跨步”位置。两层叠起来，任意两个位置仍然连得通，计算量降到 \(O(n\sqrt n)\)。这类“只看挑出来的一部分”的做法统称<dfn data-t="sparse-attention">稀疏注意力</dfn>。GPT-3（2020）就交替使用稠密层和这种局部带状的稀疏层。代价是模式固定、与内容无关，该看的可能恰好没看；不规则的访存让它在 GPU 上的实际加速有限。2020 年的 Longformer、BigBird 改成“局部窗口 + 少数全局 token”，同样没成为主流。</p>
+<p><b>共享 K、V（2019、2023）。</b>Shazeer（2019）指出，解码慢不在计算，而在每步都要把所有头的 K、V 从显存读一遍。<dfn data-t="mqa">MQA</dfn>（multi-query attention）让所有 query 头共用一组 K、V，缓存和读取量都除以头数 \(h\)。代价是质量下降、训练不稳。<span class="term" data-t="gqa">GQA</span>（2023）取中间：K、V 分成 \(g\) 组，每组被 \(h/g\) 个 query 头共用，还可以用原预训练约 5% 的算力把现成的多头模型改造过来。Llama 3 的 32 个 query 头配 8 组 K、V，缓存是不共享时的四分之一，成了今天的默认做法。</p>
+<p><b>IO 感知（2022）。</b><span class="term" data-t="flash-attention">FlashAttention</span> 一个字都没改公式。它看到的瓶颈在别处：朴素实现把 \(n\times n\) 的分数矩阵写进显存、读出来做 softmax、再写回去，时间都花在了搬数据上。它把 Q、K、V 切成小块放进片上的高速存储，用<span class="term" data-t="online-softmax">在线 softmax</span> 边扫边归一化，结果在数学上与原公式完全相同（不是近似），显存从 \(O(n^2)\) 降到 \(O(n)\)，速度快 2–4 倍。代价是计算量的平方还在，而且每一代 GPU 都要重新写内核（第 <a class="xref" data-ref="long-context"></a> 章）。</p>
+<p><b>压缩 KV（2024）。</b>DeepSeek-V2 的 <span class="term" data-t="mla">MLA</span> 不再缓存 K、V 本身，只缓存一个 512 维的潜向量（外加 64 维单独处理位置），需要时再升维成各头的 K、V；推导里矩阵可以合并，升维这一步其实不用真做。每层每 token 只存 576 个数，128 个头的普通多头注意力要存 \(2\times 128\times 128 = 32768\) 个。代价是 RoPE 不能直接套用，要“解耦”出一小块单独旋转（第 <a class="xref" data-ref="long-context"></a> 章）。</p>
+<p><b>线性注意力混合与稀疏选择（2025–26）。</b>前面几代都没有动平方本身。<span class="term" data-t="linear-attention">线性注意力</span>去掉 softmax，利用矩阵乘法的结合律把所有历史压进一个固定大小的状态矩阵，每步代价是常数，像 RNN 一样；代价是精确回忆变弱，存的东西一多就相互干扰。所以主流做法是混合：每 3 层线性注意力配 1 层全注意力，Qwen3-Next（2025-09）、Kimi Linear（2025-10）、Qwen3.5（2026-02）都是这个比例；MiniMax-01（2025-01）用 7:1。另一条路保留 softmax，但让每个 query 先用一个很轻的打分器挑出 top-k 个历史 token，只对它们做完整注意力，例如 DeepSeek V3.2 的 DSA。两条路线的细节都在第 <a class="xref" data-ref="long-context"></a> 章。</p>
+<p><b>还在变化的部分。</b>混合不是单向的进步：MiniMax 在 M2（2025-10）回到了全注意力，理由是复杂推理和智能体任务上的缺陷，以及推理框架的支持不成熟。全注意力层本身也还在改：门控注意力、可学习的汇、QK-Norm 都是 2024–26 年加上的。十二年下来，\(\operatorname{softmax}(QK^\top/\sqrt{d_h})V\) 这个核心没有被替换，只是被包上了越来越多的补丁和替身。</p>
 
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
-  <li><b class="m">注意力权重越大，说明这个词越重要。</b>权重只说明信息从哪个位置流过来，不等于因果上的重要性；还要看 value 和后续层。见上面的争议框。</li>
-  <li><b class="m">多头注意力的参数是单头的 \(h\) 倍。</b>每个头的维度是 \(d/h\)，\(h\) 个头加起来和一个 \(d\) 维的头参数相同。多头改变的是表达方式，不是参数量。</li>
-  <li><b class="m">注意力能看到整个上下文，所以长文本没有问题。</b>能看到不等于能用好：长文本中间位置的信息常被忽略（lost in the middle），而且计算量随长度平方增长（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
-  <li><b class="m">Transformer 天然知道词的顺序。</b>注意力本身对顺序不敏感，把输入打乱，每个位置的输出只会跟着换位置。顺序信息要另外注入，即下一章的位置编码。</li>
+  <li><b class="m">注意力权重越大，说明这个词越重要。</b>权重只说明信息从哪个位置流过来，不等于因果上的重要性；还要看 value 和后续层。注意力汇上的权重最大，提供的信息却几乎为零。见上面的争议框。</li>
+  <li><b class="m">多头注意力的参数是单头的 \(h\) 倍。</b>每个头的维度是 \(d/h\)，\(h\) 个头加起来和一个 \(d\) 维的头参数相同，计算量也相同。多头改变的是表达方式（\(h\) 个独立的 softmax），不是参数量。</li>
+  <li><b class="m">除以 \(\sqrt{d_h}\) 是为了防止数值溢出。</b>溢出靠 softmax 之前先减去最大值解决，这不改变结果。\(\sqrt{d_h}\) 管的是分布的形状：分数拉得太开，softmax 饱和，梯度传不回去。它也只管初始化时，训练中的分数增长要靠 QK-Norm 等另外控制。</li>
+  <li><b class="m">Transformer 天然知道词的顺序。</b>注意力本身对顺序不敏感：“小猫追红球”和“红球追小猫”在不加掩码时得到同样的一组输出，只是换了位置。顺序信息要另外注入，即下一章的位置编码。</li>
+  <li><b class="m">KV 缓存是一种为了提速而做的近似。</b>它是精确的。因果掩码保证旧 token 看不到新 token，它们的 k、v 和注意力输出在生成过程中根本不会变，缓存只是省掉了重复计算。会改变结果的是另一些技术：把缓存量化成低精度、丢掉一部分旧 token、用线性注意力替代。</li>
 </ul>
 
 <h2 id="history">演进史</h2>
@@ -187,11 +396,11 @@
     <h4>Bahdanau 注意力：翻译时回头看原句</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>编码器把整句压成一个固定向量，句子一长，翻译质量就急剧下降。</dd>
-      <dt>怎么解决</dt><dd>解码器每生成一个词，都对输入的每个位置算相关度，加权取信息。</dd>
+      <dt>怎么解决</dt><dd>解码器每生成一个词，都对输入的每个位置算相关度，加权取信息；模型自己学会了两种语言之间的对齐。</dd>
       <dt>代价</dt><dd>主体仍是 RNN，训练依旧串行、很慢。</dd>
       <dt>引出</dt><dd>既然注意力已经能看到所有位置，还需要循环吗？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt alive">变体</span>Luong 注意力（2015）</summary><div>用点积代替 Bahdanau 的小网络来算相关度，更简单更快。“点积打分”这一做法被 Transformer 沿用。</div></details>
+    <details class="hist-branch"><summary><span class="bt alive">变体</span>Luong 注意力（2015）</summary><div>用点积或双线性代替 Bahdanau 的小网络来打分，更简单更快，还提出了只看一个窗口的局部注意力。“点积打分”被 Transformer 沿用，“局部窗口”后来变成了滑动窗口注意力。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2017-06</div>
@@ -211,50 +420,65 @@
       <dt>卡在哪</dt><dd>每个任务都要从头训练模型，标注数据不够。</dd>
       <dt>怎么解决</dt><dd>BERT（只有编码器，双向注意力）用于理解任务；GPT（只有解码器，因果掩码）用于生成；都先在海量文本上预训练。</dd>
       <dt>代价</dt><dd>上下文长度受平方代价限制，通常只有 512 到 2048 个 token。</dd>
-      <dt>引出</dt><dd>怎样让注意力处理更长的序列？</dd>
+      <dt>引出</dt><dd>怎样让注意力处理更长的序列，生成得更快？</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt dead">退出生成主线</span>只有编码器与编码器-解码器</summary><div>BERT 式的双向编码器和 T5 式的编码器-解码器，在 2019–2021 年的很多基准上领先。但只有解码器的模型把所有任务都写成“接着往下写”，一个结构、一个目标就能扩展到底，还能直接用 KV 缓存生成。到大模型时代，前沿模型几乎都是只有解码器的。双向编码器留在了检索、向量化和重排序里。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2019–2023</div>
     <h4>效率：从近似注意力到精确而快的注意力</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>平方代价让长序列又慢又占显存。</dd>
-      <dt>怎么解决</dt><dd>先是各种近似注意力；最终胜出的是不改数学、只改计算顺序的 FlashAttention（2022），以及减少 KV 头数的 MQA（2019）/ GQA（2023）。</dd>
+      <dt>卡在哪</dt><dd>平方代价让长序列又慢又占显存；生成时每步都要读一遍所有头的 K、V。</dd>
+      <dt>怎么解决</dt><dd>先是固定模式的稀疏注意力和各种近似；最终胜出的是不改数学、只改计算顺序的 FlashAttention（2022），以及减少 KV 头数的 MQA（2019）/ GQA（2023）。</dd>
       <dt>代价</dt><dd>计算量的平方没有消失，只是更快、更省显存。</dd>
-      <dt>引出</dt><dd>真正降低复杂度，需要改变注意力本身（第 <a class="xref" data-ref="long-context"></a> 章）。</dd>
+      <dt>引出</dt><dd>上下文从几千 token 走向百万 token，KV 缓存和平方代价重新成为瓶颈。</dd>
     </dl>
     <details class="hist-branch"><summary><span class="bt dead">大多被淘汰</span>2020 年的“高效注意力”家族</summary><div>Reformer、Linformer、Performer、Longformer、BigBird 等用哈希、低秩、核近似或固定的稀疏模式降低复杂度。它们大多在质量上有损，而且对 GPU 不友好（不规则访存），实际速度提升有限。FlashAttention 让精确注意力足够快之后，它们基本退出了主流。留下来的是“局部窗口 + 少量全局”的思想（滑动窗口注意力），以及线性注意力这条线，后者在 2025 年以混合架构的形式回归。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2021–2026</div>
-    <h4>理解注意力在做什么，并修补它</h4>
+    <div class="hist-date">2021–2024</div>
+    <h4>打开黑箱：头在做什么，数值为什么失控</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>不知道训练出来的注意力头在做什么；训练中注意力分数失控、出现注意力汇。</dd>
-      <dt>怎么解决</dt><dd>可解释性研究发现了归纳头等电路；QK-Norm、logit 软截断、QK-Clip 控制分数尺度；门控注意力（2025）去掉注意力汇；2026 年对巨量激活与注意力汇的成因有了系统解释。</dd>
-      <dt>代价</dt><dd>机制理解仍局限于简单的头和小模型。</dd>
-      <dt>引出</dt><dd>注意力不知道顺序：位置信息要从哪里来？</dd>
+      <dt>卡在哪</dt><dd>不知道训练出来的注意力头在做什么；模型变大后，注意力分数失控、出现注意力汇和巨量激活。</dd>
+      <dt>怎么解决</dt><dd>可解释性研究找到了 QK / OV 电路、归纳头（2022）、注意力汇（2023）、巨量激活（2024）；QK-Norm（2023）和 logit 软截断（2024）控制分数的尺度。</dd>
+      <dt>代价</dt><dd>机制理解局限于简单的头和小模型；补丁大多是经验性的。</dd>
+      <dt>引出</dt><dd>这些理解能不能反过来，变成结构上的改动？</dd>
     </dl>
     <details class="hist-branch"><summary><span class="bt debate">争论</span>注意力权重能否作为解释</summary><div>2019 年的 “Attention is not Explanation” 和 “Attention is not not Explanation” 两篇论文针锋相对。现在的共识是：权重只能提示信息流向，因果结论需要干预实验。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024–2026</div>
+    <h4>压缩 KV、混合线性层、给注意力加门</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>百万 token 的上下文和长程智能体任务，让 KV 缓存与平方代价成为推理的主要成本；softmax 的副作用在大规模训练中暴露。</dd>
+      <dt>怎么解决</dt><dd>MLA 把 KV 压成潜向量（2024）；3:1 的线性注意力混合（2025–26）；稀疏选择（DSA）；门控注意力去掉注意力汇（2025）；QK-Clip 在万亿参数训练中控制分数（2025）。</dd>
+      <dt>代价</dt><dd>结构与推理系统深度耦合，每种新结构都要配新的内核和框架支持；线性层的精确回忆变弱。</dd>
+      <dt>引出</dt><dd>所有这些变化都发生在同一个 Transformer 块里：注意力之外还有 MLP、归一化、残差连接和位置编码（下一章）。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">回归</span>线性注意力</summary><div>2020 年的线性注意力因为精确回忆差被搁置。加上 Delta 规则和遗忘门之后（DeltaNet、Gated DeltaNet、KDA），它的状态更新相当于在线做一步梯度下降，记忆不再只加不减。2025 年起它作为混合架构的主体回到了前沿模型里（第 <a class="xref" data-ref="long-context"></a> 章）。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>MiniMax 从线性混合回到全注意力</summary><div>MiniMax-01（2025-01）用 7:1 的线性注意力混合，M2（2025-10）回到了全注意力，理由是复杂推理与智能体任务上的缺陷和工程生态不成熟。同一时期 Qwen 和 Kimi 则继续加码混合。哪条路更适合前沿模型，取决于任务和部署条件，目前没有定论。</div></details>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. \(d_k = 2\)，\(\mathbf q = (1, 0)\)，\(\mathbf k_1 = (1, 0)\)，\(\mathbf k_2 = (0, 1)\)，\(\mathbf v_1 = (1, 0)\)，\(\mathbf v_2 = (0, 1)\)。手算注意力输出。</summary><div class="ans">分数 \(1/\sqrt2 \approx 0.707\) 和 \(0\)。softmax：\(e^{0.707}\approx 2.03\)、\(e^0 = 1\)，权重 \(2.03/3.03 \approx 0.67\)、\(0.33\)。输出 \(0.67\,\mathbf v_1 + 0.33\,\mathbf v_2 = (0.67,\ 0.33)\)。</div></details>
-<details class="quiz"><summary>2. 为什么把一个 4096 维的注意力拆成 32 个 128 维的头，参数量不变？</summary><div class="ans">每个头的 \(W_Q^{(m)}\) 是 \(4096\times 128\)，32 个头合起来是 \(4096\times 4096\)，和一个完整的 \(W_Q\) 一样大；\(W_K, W_V, W_O\) 同理。变化在于分数被分成 32 组独立计算、各自 softmax，于是可以同时关注不同的位置。</div></details>
+<details class="quiz"><summary>1. 用本章的玩具（小猫 追 红 球），加因果掩码，手算“追”这一行的权重和输出。和不加掩码时比，它少收到了什么？</summary><div class="ans">\(\mathbf q_{\text{追}} = (1, 0)\)，能看到的 key 是 \(\mathbf k_{\text{小猫}} = (1, 0)\)、\(\mathbf k_{\text{追}} = (0, 1)\)。点积 1、0；除以 \(\sqrt2\)：0.71、0；取指数 2.03、1，总和 3.03；权重 0.67、0.33。输出 \(0.67\,(1,0) + 0.33\,(1,0) = (1,\ 0)\)。不加掩码时它还把 33% 给了“球”、17% 给了“红”，输出是 \((0.50,\ 0.17)\)：加了掩码后它不知道追的对象，也收不到颜色信息。</div></details>
+<details class="quiz"><summary>2. 为什么把一个 4096 维的注意力拆成 32 个 128 维的头，参数量不变？</summary><div class="ans">每个头的 \(W_Q^{(m)}\) 是 \(4096\times 128\)，32 个头合起来是 \(4096\times 4096\)，和一个完整的 \(W_Q\) 一样大；\(W_K, W_V, W_O\) 同理。变化在于分数被分成 32 组独立计算、各自 softmax，于是可以同时关注不同的位置；代价是每个头的 \(W_{QK}\) 秩最多 128。</div></details>
 <details class="quiz"><summary>3. \(d = 4096\) 的模型，序列多长时注意力的计算量开始超过线性层？到 32K 时注意力大约是线性层的几倍？</summary><div class="ans">两者相等时 \(4n^2d = 24nd^2\)，即 \(n = 6d \approx 24{,}576\)。\(n = 32{,}768\) 时比值是 \(n/(6d) = 32768/24576 \approx 1.33\) 倍。</div></details>
+<details class="quiz"><summary>4. 为什么归纳头至少需要两层？如果只有一层注意力，看到第二个“哈利”时，它最可能预测出什么？</summary><div class="ans">一层时，每个位置的 key 只含它自己的 token 和位置，没有“我前面是谁”的信息。分数能表达“找和我一样的 token”，于是找到前面那个“哈利”本身，把“哈利”复制过来，预测下一个还是“哈利”。要找到“前一个 token 是哈利的位置”（即“波特”），需要第一层的前一个 token 头先把“哈利”写进“波特”的位置，第二层的归纳头再用它的 key 去匹配。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
-  <li><a href="https://arxiv.org/abs/1409.0473">Neural Machine Translation by Jointly Learning to Align and Translate</a>（Bahdanau 等, 2014）<span class="why">注意力的起点：为了解决什么问题、最初长什么样。</span></li>
-  <li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a>（Vaswani 等, 2017）<span class="why">Transformer 原文。第 3.2 节对缩放点积和多头的描述值得逐句读。</span></li>
-  <li><a href="https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html">In-context Learning and Induction Heads</a>（Olsson 等, 2022）<span class="why">归纳头与上下文学习之间的联系。</span></li>
+  <li><a href="https://arxiv.org/abs/1409.0473">Neural Machine Translation by Jointly Learning to Align and Translate</a>（Bahdanau 等, 2014）<span class="why">注意力的起点：为了解决什么问题、最初长什么样；看看论文里的对齐图。</span></li>
+  <li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a>（Vaswani 等, 2017）<span class="why">Transformer 原文。第 3.2 节对缩放点积和多头的描述、第 4 节的复杂度与路径长度对比值得逐句读。</span></li>
+  <li><a href="https://transformer-circuits.pub/2021/framework/index.html">A Mathematical Framework for Transformer Circuits</a>（Elhage 等, 2021）<span class="why">QK / OV 电路、头与头之间的组合、为什么一层模型里没有归纳头：读懂“一个头在做什么”的基本工具。</span></li>
+  <li><a href="https://transformer-circuits.pub/2022/in-context-learning-and-induction-heads/index.html">In-context Learning and Induction Heads</a>（Olsson 等, 2022）<span class="why">归纳头与上下文学习之间的联系，以及训练中的“相变”。</span></li>
   <li><a href="https://arxiv.org/abs/2309.17453">Efficient Streaming Language Models with Attention Sinks</a>（Xiao 等, 2023）<span class="why">注意力汇的发现与利用。</span></li>
   <li><a href="https://neurips.cc/virtual/2025/poster/120216">Gated Attention for Large Language Models</a>（Qiu 等, NeurIPS 2025 最佳论文）<span class="why">一个小改动如何去掉注意力汇、稳定训练，以及它为什么有效。</span></li>
 </ol>
 
-<div class="nextq">注意力让每个位置都能看到所有位置，但它对顺序完全不敏感：“狗咬人”和“人咬狗”在它看来一样。注意力也只是整个模型的一半，另一半是逐位置的 MLP。下一章（第 <a class="xref" data-ref="transformer"></a> 章）把注意力、MLP、归一化、残差连接和位置编码拼成一个完整的 Transformer 块。</div>
+<div class="nextq">注意力让每个位置都能看到所有位置，但它对顺序完全不敏感：“小猫追红球”和“红球追小猫”在它看来一样。它也只是加权平均，缺少对每个位置的非线性加工；一层又不够，层一深就难训练。下一章（第 <a class="xref" data-ref="transformer"></a> 章）把注意力、MLP、归一化、残差连接和位置编码拼成一个完整的 Transformer 块。</div>
 
-<p class="src">资料：<a href="https://arxiv.org/abs/1902.10186">Attention is not Explanation</a> · <a href="https://arxiv.org/abs/1908.04626">Attention is not not Explanation</a> · <a href="https://arxiv.org/abs/2603.05498">The Spike, the Sparse and the Sink（ICML 2026）</a> · <a href="https://www.alibabacloud.com/blog/alibaba-qwen-wins-%E2%80%9Cneurips-2025-best-paper-award%E2%80%9D-for-breakthrough-in-attention-mechanisms_602708">Qwen 门控注意力获奖说明</a> · <a href="https://github.com/qiuzh20/gated_attention">gated_attention 代码</a> · <a href="https://arxiv.org/abs/2507.20534">Kimi K2（QK-Clip）</a>。</p>
+<p class="src">资料：<a href="https://arxiv.org/abs/1508.04025">Luong 等 2015</a> · <a href="https://arxiv.org/abs/1705.03122">ConvS2S</a> · <a href="https://arxiv.org/abs/1904.10509">Sparse Transformer</a> · <a href="https://arxiv.org/abs/1911.02150">MQA（Shazeer 2019）</a> · <a href="https://arxiv.org/abs/2305.13245">GQA</a> · <a href="https://arxiv.org/abs/2205.14135">FlashAttention</a> · <a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2（MLA）</a> · <a href="https://arxiv.org/abs/1905.10650">Are Sixteen Heads Really Better than One?</a> · <a href="https://arxiv.org/abs/1905.09418">Voita 等 2019</a> · <a href="https://arxiv.org/abs/2404.15574">Retrieval Head</a> · <a href="https://arxiv.org/abs/2002.07028">低秩瓶颈（Bhojanapalli 等 2020）</a> · <a href="https://arxiv.org/abs/2203.03466">Tensor Programs V（μP）</a> · <a href="https://arxiv.org/abs/2408.00118">Gemma 2（软截断）</a> · <a href="https://arxiv.org/abs/2503.19786">Gemma 3（QK-Norm）</a> · <a href="https://arxiv.org/abs/2505.09388">Qwen3 技术报告</a> · <a href="https://arxiv.org/abs/2507.20534">Kimi K2（QK-Clip）</a> · <a href="https://arxiv.org/abs/2402.17762">Massive Activations</a> · <a href="https://arxiv.org/abs/2410.10781">When Attention Sink Emerges</a> · <a href="https://www.evanmiller.org/attention-is-off-by-one.html">Attention Is Off By One</a> · <a href="https://huggingface.co/blog/welcome-openai-gpt-oss">gpt-oss 发布说明（可学习的汇）</a> · <a href="https://arxiv.org/abs/2603.05498">The Spike, the Sparse and the Sink（ICML 2026）</a> · <a href="https://www.alibabacloud.com/blog/alibaba-qwen-wins-%E2%80%9Cneurips-2025-best-paper-award%E2%80%9D-for-breakthrough-in-attention-mechanisms_602708">Qwen 门控注意力获奖说明</a> · <a href="https://github.com/qiuzh20/gated_attention">gated_attention 代码</a> · <a href="https://arxiv.org/abs/2501.08313">MiniMax-01</a> · <a href="https://arxiv.org/abs/2510.26692">Kimi Linear</a> · <a href="https://sebastianraschka.com/llm-architecture-gallery/hybrid-attention/">混合注意力架构汇总（Qwen3-Next / Qwen3.5 的 3:1 比例）</a> · <a href="https://arxiv.org/abs/1902.10186">Attention is not Explanation</a> · <a href="https://arxiv.org/abs/1908.04626">Attention is not not Explanation</a>。“缩放只管初始化”的演示用随机向量实际模拟，q、k 每维独立服从标准正态；“逐 token 生成”演示的 q、k 是固定种子的随机向量，只为展示形状。</p>
 
 <footer id="pager"></footer>
 </div></main>
