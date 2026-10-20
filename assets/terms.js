@@ -261,7 +261,7 @@ window.ATLAS_TERMS = {
   'unified-model': { t: '理解与生成统一模型', en: 'unified understanding & generation', d: '同一个模型既能看图也能画图，常由语言模型负责理解与规划、扩散或自回归头负责生成像素（GPT-4o、BAGEL 等）。', at: 'image#unified' },
 
   // ---- video (video.html)
-  'spacetime-patch': { t: '时空 patch', en: 'spacetime patch', d: '把潜视频沿时间和空间切成的小块（常为 1×2×2），每块一个 token；任意时长、分辨率的视频都变成一串 token（Sora, 2024）。', at: 'video#arch' },
+  'spacetime-patch': { t: '时空 patch', en: 'spacetime patch', d: '把潜视频沿时间和空间切成的小块（常为 1×2×2），每块一个 token；任意时长、分辨率的视频都变成一串 token（Sora, 2024）。', at: 'video#zero-patch' },
   'diffusion-forcing': { t: 'Diffusion Forcing', en: 'Diffusion Forcing', d: '训练时给每一帧独立的噪声水平，使模型能以“不完美的前帧”为条件逐帧生成，缓解自回归视频的误差累积（2024）。', at: 'video#consistency' },
 
   // ---- audio (audio.html)
@@ -339,4 +339,49 @@ window.ATLAS_TERMS = {
   // ---- prologue (prologue.html)
   pretraining: { t: '预训练', en: 'pretraining', d: '先在海量无标注文本上学“预测下一个（或被遮住的）词”，得到通用的基座模型，再用少量数据适配具体任务。2018 年由 GPT 与 BERT 确立。', at: 'prologue#arc' },
   'bitter-lesson': { t: '苦涩的教训', en: 'the bitter lesson', d: 'Sutton（2019）：能随算力扩展的通用方法（搜索与学习），最终总会胜过融入人类知识的专门方法。', at: 'prologue#lessons' },
+
+  // ---- video (upgrade 2026-10-20)
+  'temporal-redundancy': { t: "时间冗余", en: "temporal redundancy", d: "相邻帧之间大部分像素几乎不变，下一帧大多可以从上一帧猜出来。传统视频编码靠它压缩两三百倍；视频 VAE 因此能在时间上压 4 倍而丢失很少。", at: "video#zero-redundancy" },
+  'latent-frame': { t: "潜帧", en: "latent frame", d: "视频 VAE 压缩后时间方向上的一“帧”。因果 VAE 下 \\(N_t = 1 + (T-1)/f_t\\)：第一帧单独一个，之后每 \\(f_t\\)（常为 4）帧一个。", at: "video#zero-vae" },
+  'causal-vae': { t: "3D 因果 VAE", en: "causal 3D VAE", d: "时间方向只用因果卷积的视频 VAE：编码第 t 帧只看它和之前的帧。第一帧单独编码，所以一张图就是 1 帧的视频；还能分块编码任意长度（MAGVIT-v2 起，CogVideoX、HunyuanVideo、Wan 沿用）。", at: "video#zero-vae" },
+  'joint-image-video': { t: "图像视频联合训练", en: "joint image-video training", d: "把图片当作只有 1 帧的视频，与视频混在一起训练同一个模型：从图片学外观与概念，从视频学运动。因果 VAE 让两者的潜变量同分布。", at: "video#zero-vae" },
+  nfe: { t: "函数评估次数（NFE）", en: "number of function evaluations", d: "一次生成里去噪网络被调用的总次数，衡量采样成本。50 步加 CFG 是 100 次；少步蒸馏后常为 1–8 次。", at: "video#zero-gen" },
+  'full-3d-attention': { t: "全 3D 注意力", en: "full 3D attention", d: "视频的每个 token 直接看所有潜帧的所有位置，代价 \\((N_tN_s)^2\\)。能直接关联运动物体在不同帧里的位置，CogVideoX 之后的大模型多采用。", at: "video#arch" },
+  'factorized-attention': { t: "时空分解注意力", en: "factorized space-time attention", d: "先在每个潜帧内部做空间注意力，再在每个空间位置上沿时间做注意力，代价 \\(N_tN_s^2 + N_sN_t^2\\)，约为全 3D 的 \\(1/N_t\\)；代价是运动物体的跨帧关联要两跳。", at: "video#arch" },
+  'noise-augmentation': { t: "上下文加噪", en: "context noise augmentation", d: "训练自回归模型时给上下文帧加噪（并告诉模型噪声水平），让它习惯不完美的上下文。真实与生成上下文的 KL 按 \\(a^2/b^2\\) 缩小，代价是上下文信息变少（GameNGen、Diffusion Forcing）。", at: "video#ar-noise" },
+  'self-forcing': { t: "Self Forcing", en: "Self Forcing", d: "训练时就按推理方式自回归滚动生成（KV 缓存），以自己生成的帧为上下文，对整段视频用分布匹配等损失训练；训练与推理的上下文分布一致。4 步去噪，单张 H100 每秒 17 帧（2025-06）。", at: "video#ar-self" },
+  'noise-stage-moe': { t: "按噪声分工的 MoE", en: "noise-stage mixture of experts", d: "把去噪过程按噪声水平切段，各段用不同的专家网络，每步只激活一个；没有路由器，由去噪进度决定。Wan 2.2：高噪声专家管构图与运动、低噪声专家管细节，总 27B、每步 14B（2025-07）。", at: "video#frontier-moe" },
+  snr: { t: "信噪比（SNR）", en: "signal-to-noise ratio", d: "扩散里 \\(\\mathrm{SNR}(t) = a_t^2/b_t^2\\)，流匹配下为 \\(((1-t)/t)^2\\)。分量 \\(k\\) 的 \\(a_t^2\\lambda_k/b_t^2 = 1\\) 时它“确定了一半”，分界频率随 \\(\\sqrt{\\mathrm{SNR}}\\) 由低向高移动。", at: "video#frontier-moe" },
+  'av-joint': { t: "音视频联合生成", en: "joint audio-video generation", d: "在同一个去噪过程里同时生成视频和音频（对白、音效、音乐），常用视频塔 + 音频塔逐层交叉注意力、共享时间坐标对齐。Veo 3（2025-05）首先商用。", at: "video#frontier-audio" },
+  'multi-shot': { t: "多镜头生成", en: "multi-shot generation", d: "一次生成包含多个镜头与镜头切换的视频，并让角色、风格跨镜头保持一致；常在位置编码中加入镜头信息（Seedance 1.0, 2025）。", at: "video#frontier-shots" },
+  'chain-of-frames': { t: "帧链", en: "chain-of-frames", d: "把视觉任务表述成“画面接下来怎样变化”，让视频模型逐帧演化出答案（走迷宫、分割、补全），类比语言模型的思维链（Wiedemer 等, 2025）。", at: "video#physics" },
+  'cascade-diffusion': { t: "级联扩散", en: "cascaded diffusion", d: "先用基础模型生成低分辨率、低帧率的样本，再用多个超分模型逐级提高分辨率与帧率。Imagen Video 用 7 个模型从 16×40×24、3 fps 放大到 128×1280×768、24 fps（2022）。", at: "video#history" },
+
+  // ---- evaluation (upgrade 2026-10-20)
+  benchmark: { t: "基准", en: "benchmark", d: "一组固定的题目、标准答案和判分规则。它是从“这一类题”的总体里抽出的一份样本，分数是对真实能力的有噪声的估计。", at: "evaluation#ev0-toy" },
+  'standard-error': { t: "标准误", en: "standard error (SE)", d: "估计量（如准确率）在“换一份题再考一次”时的标准差。准确率的标准误是 \\(\\sqrt{p(1-p)/n}\\)，题目翻 4 倍才减半。", at: "evaluation#ev0-se" },
+  'confidence-interval': { t: "置信区间", en: "confidence interval", d: "\\(\\hat p \\pm 1.96\\,\\mathrm{SE}\\)：反复抽题、每次都这样算一个区间，95% 的区间会盖住真实值。区间包含 0 的差距，统计上不能断言存在。", at: "evaluation#ev0-ci" },
+  'paired-test': { t: "配对比较", en: "paired comparison", d: "两个模型在同一组题上比较时，逐题求差再估计差的均值。两者一起涨落的部分（协方差）被扣掉，方差通常小一半左右。", at: "evaluation#ev0-paired" },
+  'stat-power': { t: "统计功效", en: "statistical power", d: "真实差距存在时，一次评测能得出“显著”结论的概率。80% 功效需要约 \\(2.8^2\\sigma_d^2/\\delta^2\\) 道题，差距减半，题目要翻 4 倍。", at: "evaluation#ev0-paired" },
+  'clustered-se': { t: "聚类标准误", en: "clustered standard error", d: "题目成组出现（同一篇文章、同一个仓库）时按组计算的标准误。组内相关 \\(\\rho\\)、每组 \\(m\\) 题时，方差放大 \\(1+(m-1)\\rho\\) 倍。", at: "evaluation#ev0-cluster" },
+  bootstrap: { t: "自助法", en: "bootstrap", d: "从已有数据里有放回地重抽同样多的样本、重算统计量，重复上千次，用结果的散布当误差棒。不需要推公式，任何统计量都能用。", at: "evaluation#ev0-cluster" },
+  saturation: { t: "饱和（基准）", en: "benchmark saturation", d: "前沿模型的分数挤到天花板附近，模型之间的差距小于统计误差和标注错误，基准不再能区分模型。", at: "evaluation#static" },
+  'pass-hat-k': { t: "pass^k", en: "pass^k", d: "同一任务独立做 \\(k\\) 次、全部成功的概率，衡量可靠性；单题为 \\(p^k\\)。与“至少一次成功”的 pass@k 相对，随 \\(k\\) 增大而下降。", at: "evaluation#passk" },
+  elo: { t: "Elo 等级分", en: "Elo rating", d: "每赛一场按“实际结果 − 预期胜率”调整分数：\\(R \\leftarrow R + K(S - E)\\)。它是 Bradley-Terry 似然上步长固定的随机梯度，结果依赖对局顺序。", at: "evaluation#arena" },
+  'style-control': { t: "风格控制", en: "style control", d: "在 Bradley-Terry 回归里加入回答长度、标题、列表、加粗等风格变量，把“风格带来的胜率”从模型分数里分离出去（LMArena, 2024-08）。", at: "evaluation#arena" },
+  'llm-judge': { t: "LLM 评委", en: "LLM-as-a-judge", d: "用强模型代替人给回答打分或做两两比较。便宜，但偏爱特定位置、更长的回答和与自己风格相近的回答。", at: "evaluation#arena" },
+  irt: { t: "项目反应理论（IRT）", en: "item response theory", d: "心理测量学的模型：做对的概率 \\(\\sigma(a_j(\\theta_i - b_j))\\) 只取决于能力 \\(\\theta\\) 与难度 \\(b\\) 之差。Elo 和 METR 时间跨度都是它的特例。", at: "evaluation#horizon" },
+  'construct-validity': { t: "构念效度", en: "construct validity", d: "一个测量是否真的测到了它声称要测的能力（“推理”“安全”“编程”），而不是题目格式、应试技巧或别的相关因素。", at: "evaluation#generations" },
+  'eval-awareness': { t: "评估意识", en: "evaluation awareness", d: "模型识别出自己正在被测试，并可能因此改变行为。说出口的只是下限；它让评测结果与真实部署中的行为可能不一致。", at: "evaluation#validity" },
+
+  // ---- serving (upgrade 2026-10-20)
+  ttft: { t: "首 token 延迟", en: "time to first token (TTFT)", d: "从请求到达到第一个输出 token 返回的时间，等于排队 + 预填充 + 网络。长提示、高负载时主要被预填充和排队拉长。", at: "serving#life-prefill" },
+  tpot: { t: "每 token 间隔", en: "time per output token (TPOT)", d: "第一个 token 之后平均每生成一个 token 的时间 \\((T_{\\text{结束}} - T_{\\text{首}})/(n_{\\text{输出}} - 1)\\)，即用户看到的“打字速度”。由解码一步的时长决定，批越大、上下文越长越慢。", at: "serving#life-decode" },
+  slo: { t: "服务等级目标", en: "service level objective (SLO)", d: "服务方给延迟定的目标，例如“90% 的请求首 token ≤ 2 秒、每 token ≤ 50 毫秒”。有效吞吐只计算达标的请求。", at: "serving#life-done" },
+  'littles-law': { t: "利特尔定律", en: "Little's law", d: "稳定系统里的平均请求数 = 到达率 × 平均停留时间，\\(\\bar N = \\lambda\\bar T\\)，与到达和服务时间的分布无关（Little, 1961）。", at: "serving#queue" },
+  'load-factor': { t: "负载率", en: "utilization / load factor", d: "到达率与最大服务率之比 \\(\\rho = \\lambda/\\mu\\)。M/M/1 队列的平均停留时间是 \\(S/(1-\\rho)\\)，\\(\\rho\\) 接近 1 时发散，所以服务必须留余量。", at: "serving#queue" },
+  'kv-fragmentation': { t: "显存碎片", en: "KV-cache fragmentation", d: "预留了却没存 token 的 KV 显存：按最大长度预留造成的内部碎片，以及大小不一的空洞放不下新请求的外部碎片。分页把它压到每个请求最多半块。", at: "serving#batching" },
+  'chunked-prefill': { t: "分块预填充", en: "chunked prefill", d: "把长提示切成几百到几千 token 的块，与正在解码的请求拼进同一步，用解码留下的空闲算力完成预填充，避免长提示让所有人卡顿（Sarathi-Serve, 2024）。", at: "serving#disagg" },
+  'kv-aware-routing': { t: "KV 感知路由", en: "KV-aware routing", d: "多台机器部署同一模型时，把请求发给已经缓存了它前缀 KV 的那台，以提高前缀缓存命中率（NVIDIA Dynamo、llm-d）。", at: "serving#prefix" },
+  'wide-ep': { t: "宽专家并行", en: "wide expert parallelism", d: "大型 MoE 解码时把专家分散到几十到上百张卡（如 DeepSeek 的 144 路），注意力部分用数据并行，token 经全对全通信送到专家所在的卡。", at: "serving#scale" },
 };

@@ -13,30 +13,158 @@
 <header>
   <div class="kicker"></div>
   <h1>评测：分数说明了什么，又掩盖了什么</h1>
-  <p class="lede">每个新模型发布都附一张成绩表，可同一个模型换一种提示格式、换一个评测框架，分数能差十几个百分点；基准两三年就被做满，题目早已散落在训练数据里。这一章讲怎样正确地读一个分数（误差棒、提示敏感性、污染），三类主要的评测方式（静态基准、人类偏好竞技场、智能体任务）各自的陷阱，METR 的“时间跨度”怎样把能力换算成“能干多长的活”，以及 2026 年评测研究的核心问题：基准到底测到了它声称要测的能力吗？</p>
+  <p class="lede">每个新模型发布都附一张成绩表，可同一个模型换一种提示格式、换一个评测框架，分数能差十几个百分点；基准两三年就被做满，题目早已散落在训练数据里。这一章先用一个 100 道题的玩具基准，把读分数需要的统计学从零讲一遍（标准误、置信区间、配对比较、聚类），再讲三类主要的评测方式（静态基准、人类偏好竞技场、智能体任务）各自怎样估计、各自的陷阱，METR 的“时间跨度”怎样把能力换算成“能干多长的活”，然后沿着 GLUE → MMLU → 竞技场 → HLE → SWE-bench → 时间跨度，讲清每一代基准在修上一代的什么毛病。最后是 2026 年最麻烦的问题：模型知道自己在被测试。</p>
 </header>
 
 <div class="bridge">上一章从内部理解模型；这一章从外部衡量它。衡量也是整个领域的方向盘：规模定律、RL 的奖励、研究的进展、投资的判断，最终都依赖“分数涨了没有”。分数如果不可靠，所有这些都会跟着偏。</div>
 
 <div class="prereq">
   <ul>
+    <li>期望、方差，“\(n\) 个独立样本平均值的方差是单个的 \(1/n\)”：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
     <li>Bradley-Terry 模型、古德哈特定律：第 <a class="xref" data-ref="sft"></a> 章；pass@k：第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="coding"></a> 章</li>
     <li>记忆与污染：第 <a class="xref" data-ref="data"></a> 章；涌现与度量方式：第 <a class="xref" data-ref="scaling"></a> 章</li>
     <li>SWE-bench、智能体评测、harness：第 <a class="xref" data-ref="coding"></a>、<a class="xref" data-ref="agents"></a> 章</li>
+    <li>不需要统计学背景。下面「从零开始」一节会把用到的统计概念全部讲一遍。</li>
   </ul>
 </div>
 
-<h2 id="read">怎样读一个分数</h2>
-<p>一个基准上的分数是对“真实能力”的一次有噪声的抽样估计。最基本的问题是：两个模型差 2 分，是真的有差别，还是运气？</p>
+<h2 id="basics" data-short="评测统计 从零开始">从零开始：一个 100 道题的玩具基准</h2>
+<p>这一节不涉及任何真实的基准。用一个只有 100 道题的玩具基准和两个模型，把后面每一节都要用到的统计概念按顺序讲一遍：基准与准确率、标准误、置信区间、配对比较与统计功效、聚类。每个概念先在玩具上算出数字，再放回真实的评测。已经熟悉统计的读者可以直接跳到<a href="#read">「怎样读一个分数」</a>。</p>
+
+<h3 id="ev0-toy">两个模型，100 道题</h3>
+<p>一个<dfn data-t="benchmark">基准</dfn>（benchmark）就是一组固定的题目、标准答案和判分规则。在一个 100 道题的基准上，模型 A 答对 74 道，模型 B 答对 70 道。发布会上的说法是“A 比 B 高 4 个百分点”。问题是：如果换另外 100 道同类的题，A 还会领先吗？</p>
+<p>要回答它，先换一个视角。我们真正关心的不是这 100 道题本身，而是“这一类题”上的能力。所有可能出的同类题构成一个看不见的题目总体，A 在这个总体上的真实准确率记为 \(p_A\)。手里的 100 道题是从总体里抽出的一份样本。把第 \(i\) 题答对记为 \(x_i = 1\)、答错记为 0，准确率就是样本平均：</p>
+\[ \hat p = \frac1n\sum_{i=1}^{n} x_i \]
+<span class="eqnote">带帽子的 \(\hat p\) 是估计值，不带帽子的 \(p\) 是总体上的真实值</span>
+<p>74% 是对 \(p_A\) 的一个估计。估计就有误差：换一份题，\(\hat p\) 就会变。评测统计学要回答的就是“变多少”。Miller（2024）把这个“题目来自一个看不见的总体”的视角系统地引入了大模型评测，下面的很多公式都出自他的整理。</p>
+<p>后面还要用到两个模型的逐题对照。把 100 道题按“谁对谁错”分成四格：</p>
+<div class="tablewrap"><table>
+  <tr><th></th><th>B 答对</th><th>B 答错</th><th>合计</th></tr>
+  <tr><td><b>A 答对</b></td><td>64</td><td>10</td><td>74</td></tr>
+  <tr><td><b>A 答错</b></td><td>6</td><td>20</td><td>26</td></tr>
+  <tr><td><b>合计</b></td><td>70</td><td>30</td><td>100</td></tr>
+</table></div>
+<p>注意：“A 比 B 多对 4 道”只来自 16 道意见不一致的题（A 对 B 错 10 道，B 对 A 错 6 道）。另外 84 道，两个模型要么都对、要么都错，对“谁更强”这个问题没有提供任何信息。这一点在配对比较里会变成公式。</p>
+
+<h3 id="ev0-se">标准误：一次考试的分数里有多少运气</h3>
+<p>每道题是一次对或错的抽样，就像抛一枚正面概率为 \(p\) 的硬币。一次抛掷的方差是 \(p(1-p)\)；\(n\) 次的平均，方差缩小 \(n\) 倍（附录的<span class="term" data-t="expectation">期望</span>一节）。估计值的标准差叫<dfn data-t="standard-error">标准误</dfn>（standard error, SE）：</p>
 <div class="fx">
-\[ \operatorname{SE} = \sqrt{\frac{\htmlClass{sym-p}{p}(1 - p)}{\htmlClass{sym-n}{n}}},\qquad 95\%\ \text{置信区间}\approx p \pm 1.96\,\operatorname{SE} \]
-  <div class="fx-read">把每道题看成一次“对 / 错”的抽样，准确率 \(p\) 的标准误随题目数 \(n\) 的平方根缩小。两个模型的分差小于约 \(\sqrt2\times 1.96\,\operatorname{SE}\) 时，统计上无法区分。</div>
+\[ \operatorname{SE}(\hat p) = \sqrt{\frac{\htmlClass{sym-p}{\hat p}\,(1 - \htmlClass{sym-p}{\hat p})}{\htmlClass{sym-n}{n}}} \]
+  <div class="fx-read">把每道题看成一次“对 / 错”的抽样。准确率的波动幅度，等于单题的波动 \(\sqrt{p(1-p)}\) 除以题数的平方根。题目翻 4 倍，误差才减半。</div>
   <dl class="fx-syms">
-    <dt data-sym="p">\(p\)</dt><dd>观测到的准确率</dd>
+    <dt data-sym="p">\(\hat p\)</dt><dd>观测到的准确率；真实值未知，用观测值代入</dd>
     <dt data-sym="n">\(n\)</dt><dd>题目数</dd>
   </dl>
-  <div class="fx-eg">SWE-bench Verified 有 500 题，准确率 80% 时 \(\operatorname{SE} = \sqrt{0.8\times 0.2/500}\approx 1.8\%\)，95% 区间约 \(\pm 3.5\) 个百分点。两个模型 79.5% 对 81.0% 的“领先”在统计上没有意义。AIME 只有 30 题，准确率 70% 时区间约 \(\pm 16\) 个百分点，一次评测的排名几乎全是噪声，所以通常要多次采样取平均（pass@1 的均值）。</div>
+  <div class="fx-eg">玩具基准：A 的 \(\operatorname{SE} = \sqrt{0.74\times 0.26/100}\approx 4.4\) 个百分点，B 的 \(\sqrt{0.70\times 0.30/100}\approx 4.6\) 个百分点。真实基准：SWE-bench Verified 有 500 题，准确率 80% 时 \(\operatorname{SE} = \sqrt{0.8\times 0.2/500}\approx 1.8\%\)；AIME 一年只有 30 题，准确率 70% 时 \(\operatorname{SE}\approx 8.4\%\)。</div>
 </div>
+<p>\(p(1-p)\) 在 \(p = 50\%\) 时最大、在 0 或 1 附近很小，所以同样的题数，中等准确率时的分数最不稳。小基准上的排名几乎全是噪声，所以 AIME 这类基准通常让模型每题采样多次、报告平均（pass@1 的均值）。但多采样有一个上限：</p>
+
+<details class="deep"><summary>标准误的来历，以及“多采样几次”能消掉哪部分噪声</summary><div class="in">
+<p><b>第 1 步，单题的方差。</b>\(x\) 只取 0 或 1，所以 \(x^2 = x\)，\(\mathbb E[x^2] = p\)，方差 \(\operatorname{Var}(x) = \mathbb E[x^2] - p^2 = p(1-p)\)。</p>
+<p><b>第 2 步，平均的方差。</b>题目独立时，和的方差等于方差的和：\(\operatorname{Var}(\sum x_i) = n\,p(1-p)\)。再除以 \(n^2\)（平均要除以 \(n\)，方差就除以 \(n^2\)），得 \(\operatorname{Var}(\hat p) = p(1-p)/n\)，开方就是标准误。</p>
+<p><b>第 3 步，把两种随机性分开。</b>模型的输出带随机性（温度大于 0），所以第 \(i\) 题有自己的“答对率” \(p_i\)：有的题几乎总对，有的几乎总错。一次评测里的 \(x_i\) 其实经过了两次抽签：先抽到哪道题，再在这道题上采样一次。用总方差公式（law of total variance）把它们分开：</p>
+\[ \operatorname{Var}(x) = \underbrace{\operatorname{Var}(p_i)}_{\text{题与题之间}} + \underbrace{\mathbb E\big[p_i(1-p_i)\big]}_{\text{同一题的不同采样}} \]
+<p>两项之和恰好还是 \(p(1-p)\)：\(\operatorname{Var}(p_i) = \mathbb E[p_i^2] - p^2\)，\(\mathbb E[p_i(1-p_i)] = p - \mathbb E[p_i^2]\)，相加得 \(p - p^2\)。</p>
+<p><b>第 4 步，每题采样 \(K\) 次。</b>同一题采样 \(K\) 次取平均，只有第二项被 \(K\) 除：</p>
+\[ \operatorname{Var}(\hat p) = \frac{\operatorname{Var}(p_i)}{n} + \frac{\mathbb E\big[p_i(1-p_i)\big]}{nK} \]
+<p><b>代入数字。</b>AIME 30 题，总准确率 70%。设题与题之间的方差 \(\operatorname{Var}(p_i) = 0.12\)（多数题要么几乎总对、要么几乎总错），则第二项的系数是 \(0.21 - 0.12 = 0.09\)。\(K = 1\)：\(\operatorname{SE} = \sqrt{0.21/30}\approx 8.4\) 个点；\(K = 16\)：\(\sqrt{0.12/30 + 0.09/480}\approx 6.5\) 个点；\(K\to\infty\)：\(\sqrt{0.12/30}\approx 6.3\) 个点。采样从 1 次加到 16 次，误差只从 8.4 降到 6.5。</p>
+<p><b>这个推导告诉我们：</b>多次采样消掉的是“模型抽签”的噪声，消不掉“出了哪些题”的运气。如果只关心“在这 30 道题上谁更高”，第一项不存在，多采样就是关键；如果想推断“这一类题上的能力”，误差的下限由题目数决定，只能靠更多的题。</p>
+</div></details>
+
+<h3 id="ev0-ci">置信区间：“A 比 B 好吗”</h3>
+<p>标准误给出波动的幅度，<dfn data-t="confidence-interval">置信区间</dfn>（confidence interval）把它变成一个范围：\(\hat p \pm 1.96\,\operatorname{SE}\)。1.96 来自正态分布：均值两侧 1.96 个标准差以内占 95%（\(\hat p\) 是很多个 0/1 的平均，按中心极限定理近似正态）。含义要说准确：如果反复抽题、每次都这样算一个区间，95% 的区间会盖住真实值。真实值是固定的，变的是区间。</p>
+<p>玩具基准上，A 的区间是 74 ± 8.6，即 [65.4%, 82.6%]；B 是 70 ± 9.0，即 [61.0%, 79.0%]。两个区间大面积重叠。要回答“A 比 B 好吗”，应该直接看差的区间。如果把两个模型当成在两份独立的题上考试，差的方差是两个方差之和：</p>
+\[ \operatorname{SE}(\hat p_A - \hat p_B) = \sqrt{4.4^2 + 4.6^2}\approx 6.3,\qquad 4 \pm 1.96\times 6.3 = [-8.4,\ 16.4] \]
+<p>区间包含 0：这份数据不足以断言 A 更好。顺带一提，“两个区间不重叠才算显著”是一个过严的判断：两个区间各宽 \(1.96\,\operatorname{SE}\)，加起来比差的区间宽约 \(\sqrt 2\) 倍，重叠一点的差距也可能是显著的。</p>
+
+<h3 id="ev0-paired">配对：同一组题上比较，噪声小得多</h3>
+<p>上面的算法忽略了一件事：两个模型做的是<b>同一份题</b>，而且对错高度相关。难题两个都错，简单题两个都对。逐题算差 \(d_i = x_{A,i} - x_{B,i}\)（取值 +1、0、−1），直接估计差的均值和它的标准误，这叫<dfn data-t="paired-test">配对比较</dfn>（paired comparison）：</p>
+<div class="fx">
+\[ \operatorname{SE}(\hat p_A - \hat p_B) = \sqrt{\frac{\htmlClass{sym-vA}{\sigma_A^2} + \htmlClass{sym-vB}{\sigma_B^2} \htmlClass{c-clip}{\;-\;2\,\htmlClass{sym-cov}{\sigma_{AB}}}}{\htmlClass{sym-n}{n}}} \]
+  <div class="fx-read">差的波动 = 两个模型各自的波动之和，减去两者“一起涨落”的那部分（协方差）的两倍。不配对的算法等于把协方差当成 0。</div>
+  <dl class="fx-syms">
+    <dt data-sym="vA">\(\sigma_A^2\)</dt><dd>A 单题对错的方差 \(p_A(1-p_A)\)</dd>
+    <dt data-sym="vB">\(\sigma_B^2\)</dt><dd>B 单题对错的方差 \(p_B(1-p_B)\)</dd>
+    <dt data-sym="cov">\(\sigma_{AB}\)</dt><dd>协方差：\(P(\text{两个都对}) - p_A p_B\)。两个模型越是“一起对、一起错”，它越大</dd>
+    <dt data-sym="n">\(n\)</dt><dd>两个模型共同做的题数</dd>
+  </dl>
+  <div class="fx-eg">玩具基准：\(\sigma_A^2 = 0.192\)，\(\sigma_B^2 = 0.210\)，\(\sigma_{AB} = 0.64 - 0.74\times 0.70 = 0.122\)（相关系数约 0.61）。配对 \(\operatorname{SE} = \sqrt{(0.192 + 0.210 - 0.244)/100}\approx 4.0\) 个点，比不配对的 6.3 小了三分之一以上。差的区间 \(4\pm 7.8 = [-3.8,\ 11.8]\)，仍然包含 0。</div>
+  <div class="fx-step" data-tex="\sqrt{\frac{\sigma_A^2 + \sigma_B^2}{n}}"><b>第 1 步：不配对。</b>把两个模型当成在两份独立的题上考试，方差直接相加。</div>
+  <div class="fx-step" data-tex="\sqrt{\frac{\sigma_A^2 + \sigma_B^2 \htmlClass{c-new}{\;-\;2\sigma_{AB}}}{n}}"><b>第 2 步：扣掉协方差。</b>同一道题上两个模型一起对或一起错的部分，在相减时抵消了。</div>
+</div>
+<p>这次配对没有让结论翻转，但同样的数据被用得更充分了。Miller 报告，真实评测里两个前沿模型的逐题相关常在 0.5 上下（论文中的例子：MATH 约 0.50、HumanEval 约 0.64，模型名是匿名的），配对相当于“免费”减掉了约一半的方差。做法也很简单：在同一组题上评测，报告逐题差值的均值和标准误。</p>
+<p>反过来问：真实差距是 \(\delta\)，需要多少题才有把握分辨出来？“有把握”用<dfn data-t="stat-power">统计功效</dfn>（statistical power）衡量：真实差距存在时，一次评测能得出“显著”结论的概率。常用的标准是 80%。</p>
+<div class="fx">
+\[ \htmlClass{sym-n}{n} \approx \frac{(1.96 + 0.84)^2\;\htmlClass{sym-vd}{\sigma_d^2}}{\htmlClass{sym-d}{\delta}^2} \]
+  <div class="fx-read">想分辨的差距缩小一半，题目要翻 4 倍；单题差值的波动越小（配对、两个模型越相似），需要的题越少。</div>
+  <dl class="fx-syms">
+    <dt data-sym="d">\(\delta\)</dt><dd>想分辨的真实差距</dd>
+    <dt data-sym="vd">\(\sigma_d^2\)</dt><dd>单题差值的方差：配对时是 \(\sigma_A^2 + \sigma_B^2 - 2\sigma_{AB}\)，两份独立的题时是 \(\sigma_A^2 + \sigma_B^2\)</dd>
+    <dt data-sym="n">\(n\)</dt><dd>需要的题数；1.96 对应 5% 的显著性水平，0.84 对应 80% 的功效</dd>
+  </dl>
+  <div class="fx-eg">两个模型的准确率在 75% 上下、真实差 2 个点、逐题相关 0.6：配对的 \(\sigma_d^2\approx 0.15\)，\(n\approx 7.84\times 0.15/0.02^2\approx 2900\) 道题；两份独立的题，\(\sigma_d^2\approx 0.375\)，要约 7300 道。SWE-bench Verified 只有 500 道。</div>
+</div>
+<p>下面的演示把这件事做成实验：同样的 40 次模拟评测，一次用配对分析、一次用不配对分析，看哪种能分辨出 2 个点的真实差距。</p>
+<div data-demo="evaluation-paired" class="bleed"></div>
+
+<details class="deep"><summary>配对比较的方差、McNemar 检验与样本量公式</summary><div class="in">
+<p><b>第 1 步，差的方差。</b>对任意两个随机变量，展开 \(\mathbb E\big[((a - \mathbb Ea) - (b - \mathbb Eb))^2\big]\)：</p>
+\[ \operatorname{Var}(a - b) = \operatorname{Var}(a) + \operatorname{Var}(b) - 2\operatorname{Cov}(a, b) \]
+<p>对 0/1 变量，\(\operatorname{Cov}(x_A, x_B) = \mathbb E[x_A x_B] - p_A p_B\)，而 \(x_A x_B = 1\) 恰好表示“两个都对”。代入四格表：\(0.64 - 0.518 = 0.122\)。</p>
+<p><b>第 2 步，只看不一致的题。</b>换一种算法：\(d_i\) 取 +1 的概率是 \(b/n\)（A 对 B 错，\(b = 10\)），取 −1 的概率是 \(c/n\)（\(c = 6\)），其余为 0。于是</p>
+\[ \mathbb E[d] = \frac{b - c}{n} = 0.04,\qquad \operatorname{Var}(d) = \frac{b + c}{n} - \Big(\frac{b-c}{n}\Big)^2 = 0.16 - 0.0016 = 0.1584 \]
+<p>与第 1 步的 \(0.192 + 0.210 - 0.244 = 0.158\) 相同。两个都对、两个都错的 84 道题完全不出现在公式里。</p>
+<p><b>第 3 步，McNemar 检验。</b>在“没有差别”的假设下，每道不一致的题 A 赢或 B 赢的概率各一半，\(b\) 服从 \(\operatorname{Bin}(b + c, 1/2)\)。标准化后得到检验统计量 \(z = (b - c)/\sqrt{b + c} = 4/4 = 1.0\)，与 \(0.04/0.040\) 一致：差距只有一个标准误，远不到 1.96。</p>
+<p><b>第 4 步，样本量。</b>真实差距为 \(\delta\) 时，观测到的差近似服从均值 \(\delta\)、标准差 \(\sigma_d/\sqrt n\) 的正态分布。“显著”要求观测值超过门槛 \(1.96\,\sigma_d/\sqrt n\)；要让 80% 的观测值超过门槛，门槛必须在均值左边 0.84 个标准差处：\(\delta - 0.84\,\sigma_d/\sqrt n \ge 1.96\,\sigma_d/\sqrt n\)。整理得 \(n \ge (1.96 + 0.84)^2\sigma_d^2/\delta^2\)。</p>
+<p><b>这个推导告诉我们：</b>比较两个模型时，真正提供信息的只有“意见不一致”的题。两个模型越相似（比如同一家族的两个版本），不一致的题越少，差值的方差越小，配对的收益越大。另一面是，要分辨的差距越小，题目数按 \(1/\delta^2\) 增长：在 500 道题的基准上宣称“领先 1 个点”，几乎不可能有统计依据。</p>
+</div></details>
+
+<h3 id="ev0-cluster">题目不独立：聚类标准误</h3>
+<p>上面都假设题目之间独立。很多基准并不满足：阅读理解是一篇文章出好几道题；SWE-bench Verified 的 500 题来自 12 个代码仓库，其中 django 一个仓库就有 231 题；智能体基准常把同一个环境改几处参数，做成一组任务。同一组里的题“一起难、一起易”：模型读不懂这篇文章，几道题可能全错。这时 \(n\) 道题提供的信息少于 \(n\) 份。</p>
+<div class="fx">
+\[ \operatorname{SE}_{\text{聚类}} \approx \operatorname{SE}_{\text{独立}}\;\sqrt{\htmlClass{sym-deff}{1 + (\htmlClass{sym-m}{m} - 1)\,\htmlClass{sym-rho}{\rho}}} \]
+  <div class="fx-read">每组 \(m\) 道题、组内两两相关 \(\rho\) 时，方差被放大 \(1 + (m-1)\rho\) 倍。等价地说，有效题数从 \(n\) 降到 \(n/(1 + (m-1)\rho)\)。</div>
+  <dl class="fx-syms">
+    <dt data-sym="m">\(m\)</dt><dd>每组的题数（一篇文章、一个仓库、一个环境出了几道题）</dd>
+    <dt data-sym="rho">\(\rho\)</dt><dd>组内相关：同一组里两道题对错的相关系数</dd>
+    <dt data-sym="deff">\(1 + (m-1)\rho\)</dt><dd>设计效应（design effect）：方差被放大的倍数</dd>
+  </dl>
+  <div class="fx-eg">玩具基准若是 20 篇文章 × 5 题、\(\rho = 0.3\)：设计效应 \(1 + 4\times 0.3 = 2.2\)，A 的标准误从 4.4 变成 \(4.4\times\sqrt{2.2}\approx 6.5\) 个点，100 道题只相当于约 45 道独立的题。Miller 在阅读理解基准 DROP 上算出，聚类标准误是朴素标准误的 3 倍多，相当于设计效应约 9。</div>
+</div>
+<p>按组来算方差，组内的相关就自动算了进去，这叫<dfn data-t="clustered-se">聚类标准误</dfn>（clustered standard error）。另一种不用推公式的办法是<dfn data-t="bootstrap">自助法</dfn>（bootstrap）：从已有的数据里有放回地重抽同样多的样本，重算一遍分数，重复上千次，看结果散布多宽。有分组时就按组重抽，整组一起进出。METR 的时间跨度正是这样处理的：同一“任务家族”里的任务按家族大小的平方根倒数加权，误差棒用“先抽家族、再抽任务、再抽运行”的三层自助法算出。</p>
+
+<details class="deep"><summary>聚类标准误的推导</summary><div class="in">
+<p><b>第 1 步，按组写开。</b>设有 \(G\) 组、每组 \(m\) 题，\(n = Gm\)。\(\hat p = \frac1n\sum_g\sum_j x_{gj}\)。它的方差是所有两两协方差之和除以 \(n^2\)：</p>
+\[ \operatorname{Var}(\hat p) = \frac{1}{n^2}\Big[\sum_{g,j}\operatorname{Var}(x_{gj}) + \sum_{g}\sum_{j\ne k}\operatorname{Cov}(x_{gj}, x_{gk}) + \sum_{g\ne h}\sum_{j,k}\operatorname{Cov}(x_{gj}, x_{hk})\Big] \]
+<p><b>第 2 步，数项。</b>不同组之间独立，第三项为 0。第一项有 \(n\) 个 \(\sigma^2\)；第二项每组有 \(m(m-1)\) 对，每对协方差 \(\rho\sigma^2\)，共 \(G\,m(m-1)\rho\sigma^2 = n(m-1)\rho\sigma^2\)。合起来：</p>
+\[ \operatorname{Var}(\hat p) = \frac{\sigma^2}{n}\,\big[1 + (m-1)\rho\big] \]
+<p>两个极端：\(\rho = 0\) 时回到独立的情形；\(\rho = 1\) 时同组的 \(m\) 道题完全同对同错，等于只有 \(G\) 道题，方差放大 \(m\) 倍。</p>
+<p><b>第 3 步，不假设 \(\rho\) 的一般形式。</b>组的大小不等、相关结构未知时，直接用每组残差之和来估计：</p>
+\[ \widehat{\operatorname{Var}}(\hat p) = \frac{1}{n^2}\sum_{g=1}^{G}\Big(\sum_{j\in g}(x_{gj} - \hat p)\Big)^2 \]
+<p>每组只有一道题时，它就是普通的 \(\frac{1}{n^2}\sum(x_i - \hat p)^2 \approx \hat p(1-\hat p)/n\)。组内一起偏高或一起偏低时，组内残差先相加、再平方，交叉项就被算了进去。</p>
+<p><b>这个推导告诉我们：</b>基准的“有效规模”不是题数，而是独立信息的份数。把一道题改写成 10 个版本，误差并不会缩小 \(\sqrt{10}\) 倍。想让基准更准，要增加独立的来源（更多文章、更多仓库、更多环境），而不是在同一来源里多出题。</p>
+</div></details>
+
+<h3 id="ev0-llm">放回大模型：常见基准的误差棒有多宽</h3>
+<p>把上面的公式套到几个真实基准上（准确率是为计算假设的典型值；最后一列假设两个模型逐题相关 0.6、用配对比较、要求 80% 功效）：</p>
+<div class="tablewrap"><table>
+  <tr><th>基准</th><th>题数</th><th>假设的准确率</th><th>标准误</th><th>95% 区间</th><th>能分辨的最小差距</th></tr>
+  <tr><td>AIME（一年）</td><td>30</td><td>70%</td><td>8.4 点</td><td>±16.4 点</td><td>约 21 点</td></tr>
+  <tr><td>Terminal-Bench 2.0</td><td>89</td><td>60%</td><td>5.2 点</td><td>±10.2 点</td><td>约 13 点</td></tr>
+  <tr><td>GPQA Diamond</td><td>198</td><td>85%</td><td>2.5 点</td><td>±5.0 点</td><td>约 6.4 点</td></tr>
+  <tr><td>SWE-bench Verified</td><td>500</td><td>80%</td><td>1.8 点</td><td>±3.5 点</td><td>约 4.5 点</td></tr>
+  <tr><td>人类最后的考试（HLE）</td><td>2500</td><td>40%</td><td>1.0 点</td><td>±1.9 点</td><td>约 2.5 点</td></tr>
+  <tr><td>MMLU</td><td>14042</td><td>88%</td><td>0.3 点</td><td>±0.5 点</td><td>约 0.7 点</td></tr>
+</table></div>
+<p>读法：在 AIME 上，两个模型差 10 分可能只是运气；在 SWE-bench Verified 上，差 2 分的“领先”没有统计意义，况且它还有仓库聚类（django 占近一半）。MMLU 的统计误差很小，但它约有 6.5% 的题本身有错（见下文的饱和），统计之外的误差远大于统计误差。这就是下一节的内容。</p>
+
+<h2 id="read">怎样读一个分数：统计之外的变数</h2>
+<p>标准误只量化了“抽到哪些题”的运气。真实评测里还有几类同样大、但不会自动出现在误差棒里的变数：</p>
+<ul>
+  <li><b>评测设置。</b>提示模板、少样本示例、答案怎样解析、是否允许思考、思考预算多大、采样温度、最大输出长度。不同评测框架之间的这些差别，就能让同一个模型的分数差 10–20 个百分点。</li>
+  <li><b>智能体的 <span class="term" data-t="harness">harness</span>。</b>同一个模型换一套工具、上下文管理和重试策略，智能体基准上的分数可差十几个百分点（第 <a class="xref" data-ref="agents"></a> 章）。厂商自报的分数通常用的是自家 harness。</li>
+  <li><b>判分本身的错误。</b>标准答案有错、测试用例写得太窄或太宽、LLM 评委打分有偏（下文）。这类错误在每次评测里都一样，再多的题也平均不掉。</li>
+</ul>
 <aside class="dispute surprise">
   <h4>意外：换一种提示格式，准确率能差几十个百分点</h4>
   <dl>
@@ -46,15 +174,47 @@
     <dt>现在怎么看</dt><dd>严肃的比较必须在同一框架、同一设置下进行，报告多个提示格式的平均或区间。厂商发布会上自报的分数往往用的是对自家模型最有利的设置，难以直接比较。</dd>
   </dl>
 </aside>
+<p>所以一个可信的评测报告至少要写明：题数和误差棒（同一组题上比较时用配对的）、每题采样几次、全部设置、判分方式、是否有分组。缺了这些，两个数字之间的差距基本无法解读。</p>
 
 <h2 id="static">静态基准：饱和与污染</h2>
-<p>静态基准是一组固定的题目和标准答案：知识问答（MMLU）、数学（GSM8K、MATH、AIME）、代码（HumanEval、SWE-bench）、科学（GPQA）。它们便宜、可复现，但有两个系统性的问题。</p>
-<p><b>饱和。</b>一个基准从推出到被做满的时间越来越短：GLUE（2018）一年多就被超过人类水平，接替它的 SuperGLUE 也只撑了两年；MMLU（2020）在 2024 年被做到 90% 左右；为此专门设计的“最难”基准，如 GPQA（2023）、FrontierMath（2024）、人类最后的考试（HLE, 2025），也在一两年内被大幅推进。</p>
-<p><b><dfn data-t="contamination">污染</dfn>。</b>公开的测试题会被网页转载、讨论，进入下一代模型的训练数据。模型可能是“见过答案”而不是“会做”。检测污染的办法有：检查训练数据与测试题的 n 元组重合（GPT-3 用 13 元组）；看模型能否补全测试题的原文；构造与原题同分布、但从未公开的新题对比分数。Scale AI 的 GSM1k（2024）按 GSM8K 的风格新写了 1000 道小学数学题，一些模型家族在新题上的准确率比原题低了约 10 个百分点，提示过拟合；最强的模型则几乎没有差别。到 2026 年，“默认公开基准已被污染”成了行业的工作假设。</p>
+<p>静态基准是一组固定的题目和标准答案：知识问答（MMLU）、数学（GSM8K、MATH、AIME）、代码（HumanEval、<span class="term" data-t="swe-bench">SWE-bench</span>）、科学（GPQA）。它们便宜、可复现，但有两个系统性的问题。</p>
+<p><b><dfn data-t="saturation">饱和</dfn>。</b>一个基准从推出到被做满的时间越来越短：GLUE（2018）一年多就被超过人类水平，接替它的 SuperGLUE 也只撑了两年；MMLU（2020）在 2024 年被做到 90% 左右；为此专门设计的“最难”基准，如 GPQA（2023）、FrontierMath（2024）、人类最后的考试（HLE, 2025），也在一两年内被大幅推进。</p>
+<p>饱和不只是“分数高了”，而是分数失去了区分能力。原因有两层。一是统计上：接近天花板时，模型之间的差距 \(\delta\) 被压缩，按上面的样本量公式，题目数要按 \(1/\delta^2\) 增加才分得清。二是标注错误设了一个假天花板：Gema 等（2024）重新标注了 MMLU 的 5700 道题，估计全集约 6.49% 的题有错（答案错、题意不清或有多个正确选项），病毒学子集里错题比例高达 57%。模型做到 90% 以后，剩下的 10% 里有一大块是“按错误答案判分”的题，1–2 个点的差距反映的可能只是谁更会猜错误答案。</p>
+<p><b><dfn data-t="contamination">污染</dfn>。</b>公开的测试题会被网页转载、讨论，进入下一代模型的训练数据。模型可能是“见过答案”而不是“会做”（第 <a class="xref" data-ref="data"></a> 章的<span class="term" data-t="memorization">记忆</span>）。检测污染的办法有：检查训练数据与测试题的 n 元组重合（GPT-3 用 13 元组）；看模型能否补全测试题的原文；构造与原题同分布、但从未公开的新题对比分数。Scale AI 的 GSM1k（2024）按 GSM8K 的风格新写了 1000 道小学数学题，一些模型家族在新题上的准确率比原题低了约 10 个百分点，提示过拟合；最强的模型则几乎没有差别。到 2026 年，“默认公开基准已被污染”成了行业的工作假设。2026-02，OpenAI 宣布不再报告 SWE-bench Verified：它的审查认为一部分题的测试本身有缺陷，前沿模型还能复现部分题的标准补丁原文；据报道，在 o3 始终做不对的 138 道题里，约六成的测试过窄或过宽。</p>
 <p>对策是三条：不断推出更难的新基准；用模型训练截止日期之后的新题（LiveBench、LiveCodeBench）；保留不公开的私有测试集（SWE-bench Pro 的部分题目、各家的内部评测）。</p>
 
+<h2 id="passk">多次采样：pass@k、pass^k 与估计的偏差</h2>
+<p>模型的输出是随机的，同一道题问 \(n\) 次，结果不一样。怎样把 \(n\) 次结果汇总成一个数，取决于想回答什么问题：</p>
+<ul>
+  <li><b>平均</b>（常写作 avg@n 或 pass@1）：答对比例的平均，估计“一次就做对”的概率。采样越多越稳，但如上面的推导，只能压低同一题内部的噪声。</li>
+  <li><b><span class="term" data-t="passk">pass@k</span></b>：\(k\) 次里至少一次对。适合有验证器的场景：代码能跑测试，从 \(k\) 个候选里挑出对的那个（第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="coding"></a> 章）。它衡量的是能力的上限。</li>
+  <li><b><dfn data-t="pass-hat-k">pass^k</dfn></b>：\(k\) 次全对。τ-bench（2024-06）为客服类智能体提出它：一个客服智能体要每次都把事办对，偶尔办对一次没有用。GPT-4o 在其零售场景上 pass^1 约 61%，pass^8 降到约 25%。它衡量的是可靠性。</li>
+</ul>
+<div class="fx">
+\[ \text{pass@}\htmlClass{sym-k}{k} = \mathbb E_{i}\big[\,1 - (1 - \htmlClass{sym-pi}{p_i})^{k}\,\big],\qquad \text{pass}^{k} = \mathbb E_{i}\big[\,\htmlClass{sym-pi}{p_i}^{\,k}\,\big] \]
+  <div class="fx-read">对每道题先算“至少一次对”或“次次都对”的概率，再对所有题取平均。前者随 \(k\) 上升，后者随 \(k\) 下降，两者在 \(k = 1\) 时重合。</div>
+  <dl class="fx-syms">
+    <dt data-sym="pi">\(p_i\)</dt><dd>第 \(i\) 题的真实答对率（未知，要从 \(n\) 次采样里估计）</dd>
+    <dt data-sym="k">\(k\)</dt><dd>允许尝试的次数</dd>
+  </dl>
+  <div class="fx-eg">两道题，\(p = 0.9\) 和 \(p = 0.3\)。pass@1 = pass^1 = 0.6。pass@4 \(= \frac12\big[(1 - 0.1^4) + (1 - 0.7^4)\big]\approx 0.88\)；pass^4 \(= \frac12\big[0.9^4 + 0.3^4\big]\approx 0.33\)。同一个模型，按“上限”看是 88%，按“可靠性”看是 33%。</div>
+</div>
+<p>估计时有一个坑：把单题的答对比例 \(c/n\) 直接代进 \(1 - (1 - p)^k\)，结果是有偏的。第 <a class="xref" data-ref="coding"></a> 章的公式卡给了 Codex 论文（2021）的无偏估计 \(1 - \binom{n-c}{k}/\binom{n}{k}\) 和一个具体例子；下面的演示和推导说清楚偏差从哪来、往哪个方向偏。</p>
+<div data-demo="evaluation-passk" class="bleed"></div>
+
+<details class="deep"><summary>为什么 \(1 - (1 - c/n)^k\) 有偏，而组合数公式无偏</summary><div class="in">
+<p><b>第 1 步，代入法的方向。</b>目标是 \(f(p) = 1 - (1 - p)^k\)。它的二阶导数 \(f''(p) = -k(k-1)(1-p)^{k-2} \le 0\)，是凹函数。由詹森不等式（Jensen's inequality），凹函数“先平均再代入”大于等于“先代入再平均”：</p>
+\[ \mathbb E\big[f(\hat p)\big] \le f\big(\mathbb E[\hat p]\big) = f(p) \]
+<p>所以代入法系统性地低估 pass@k。数字：\(p = 0.3\)、\(n = 10\)、\(k = 5\)，真值 \(1 - 0.7^5\approx 0.832\)；对 \(c\sim\operatorname{Bin}(10, 0.3)\) 求期望，代入法平均只有 0.760，低了 7 个点。最直观的来源是 \(c = 0\) 的情形：10 次都没做对，代入法就认为这道题永远做不对。</p>
+<p><b>第 2 步，组合数公式为什么无偏。</b>手里有 \(n\) 次采样，其中 \(c\) 次对。从中随机挑 \(k\) 次，全都不对的概率是“从 \(n - c\) 个错的里挑 \(k\) 个”占“从 \(n\) 个里挑 \(k\) 个”的比例：\(\binom{n-c}{k}/\binom{n}{k}\)。关键在于换个角度看同一件事：\(n\) 次独立采样里随机挑出的 \(k\) 次，本身就是 \(k\) 次独立采样，它们全错的概率正是 \((1-p)^k\)。所以</p>
+\[ \mathbb E\Big[\binom{n-c}{k}\Big/\binom{n}{k}\Big] = (1-p)^k \quad\Longrightarrow\quad \mathbb E\Big[1 - \binom{n-c}{k}\Big/\binom{n}{k}\Big] = 1 - (1-p)^k \]
+<p>对任何 \(p\) 都精确成立，前提是 \(n \ge k\)。</p>
+<p><b>第 3 步，pass^k 反过来偏。</b>\(g(p) = p^k\) 是凸函数（\(g'' = k(k-1)p^{k-2}\ge 0\)），詹森不等式的方向相反：代入法 \((c/n)^k\) 系统性地<b>高估</b>可靠性。\(p = 0.8\)、\(n = 10\)、\(k = 5\)：真值 \(0.8^5\approx 0.328\)，代入法平均 0.406。无偏的版本同理：随机挑 \(k\) 次全对的概率 \(\binom{c}{k}/\binom{n}{k}\)。</p>
+<p><b>这个推导告诉我们：</b>把一个估计值代进非线性函数就会带来偏差，方向由函数的凹凸决定：pass@k 是凹的，代入法低估能力上限；pass^k 是凸的，代入法高估可靠性，而后者恰好是往乐观方向错。\(n\) 越接近 \(k\) 偏差越大，标准做法是每题多采样（\(n\) 远大于 \(k\)），再用组合数公式。</p>
+</div></details>
+
 <h2 id="arena">人类偏好竞技场</h2>
-<p>静态基准测不了“哪个回答更好”这种开放的质量。LMArena（原 Chatbot Arena, 2023）让用户匿名比较两个模型的回答、投票选更好的，再用第 <a class="xref" data-ref="sft"></a> 章的 Bradley-Terry 模型从数百万次比较中拟合每个模型的分数：</p>
+<p>静态基准测不了“哪个回答更好”这种开放的质量。LMArena（原 Chatbot Arena, 2023-05）让用户匿名比较两个模型的回答、投票选更好的，再用第 <a class="xref" data-ref="sft"></a> 章的 <span class="term" data-t="bradley-terry">Bradley-Terry 模型</span>从数百万次比较中拟合每个模型的分数：</p>
 <div class="fx">
 \[ P(\text{A 胜 B}) = \frac{1}{1 + 10^{(\htmlClass{sym-RB}{R_B} - \htmlClass{sym-RA}{R_A})/400}} \]
   <div class="fx-read">与国际象棋的 Elo 等级分相同：两个模型的分数差决定胜率。分数本身没有绝对意义，只有差值有意义。</div>
@@ -63,122 +223,229 @@
   </dl>
   <div class="fx-eg">分差 100：强者胜率约 64%。分差 30：约 54%，接近抛硬币。榜单前几名常常只差十几二十分，意味着用户在大多数对比中分不太出好坏，排名对“谁略胜一筹”非常敏感。</div>
 </div>
+<p>怎样从投票得到分数？国际象棋用的是<dfn data-t="elo">Elo 等级分</dfn>（Elo rating）的在线更新：每赛完一局，按“实际结果减预期胜率”调整双方的分数。</p>
+<div class="fx">
+\[ \htmlClass{sym-RA}{R_A} \leftarrow R_A + \htmlClass{sym-K}{K}\,\big(\htmlClass{c-adv}{\htmlClass{sym-S}{S_A} - \htmlClass{sym-E}{E_A}}\big),\qquad E_A = \frac{1}{1 + 10^{(R_B - R_A)/400}} \]
+  <div class="fx-read">赢了一场本来就该赢的比赛，分数只涨一点；爆冷赢了强者，分数涨很多。B 的分数同时减去同样的量，总分不变。</div>
+  <dl class="fx-syms">
+    <dt data-sym="S">\(S_A\)</dt><dd>这一局的实际结果：A 胜为 1，负为 0（平局 0.5）</dd>
+    <dt data-sym="E">\(E_A\)</dt><dd>按当前分数预期的 A 的胜率</dd>
+    <dt data-sym="K">\(K\)</dt><dd>步长：每局最多改动多少分</dd>
+    <dt data-sym="RA">\(R_A\)</dt><dd>A 当前的分数</dd>
+  </dl>
+  <div class="fx-eg">\(R_A = 1200\)、\(R_B = 1250\)：\(E_A = 1/(1 + 10^{0.125})\approx 0.43\)。\(K = 32\) 时，A 赢了加 \(32\times 0.57\approx 18\) 分，输了减 \(32\times 0.43\approx 14\) 分。</div>
+</div>
+<p>Chatbot Arena 最初就用这种在线 Elo，很快发现了问题：结果依赖投票的先后顺序（同一批投票打乱顺序，分数就变）；\(K\) 大了分数抖，\(K\) 小了新模型要很久才到位。Elo 是为水平会变化的棋手设计的，持续追踪是它的本意；模型的权重却是固定的。2023-12 起，竞技场改用 Bradley-Terry 模型的最大似然估计：把全部投票一次性拟合，与顺序无关，再用<span class="term" data-t="bootstrap">自助法</span>给出置信区间。两种方法的平均分很接近，但区间的可信度不同。</p>
+<div data-demo="evaluation-arena" class="bleed"></div>
+
+<details class="deep"><summary>Elo 是 Bradley-Terry 似然上的随机梯度；区间为什么按 \(1/\sqrt N\) 缩小</summary><div class="in">
+<p><b>第 1 步，换成自然对数的单位。</b>令 \(\theta = R\cdot\ln 10/400\)，则 \(10^{(R_A - R_B)/400} = e^{\theta_A - \theta_B}\)，胜率写成 \(P(\text{A 胜}) = \sigma(\theta_A - \theta_B)\)，\(\sigma\) 是 sigmoid。这就是第 <a class="xref" data-ref="sft"></a> 章奖励模型用的同一个式子。</p>
+<p><b>第 2 步，一局的对数似然与梯度。</b>一局的结果 \(S\in\{0, 1\}\)，对数似然 \(\ell = S\log\sigma(\theta_A - \theta_B) + (1 - S)\log\big(1 - \sigma(\theta_A - \theta_B)\big)\)。利用 \(\sigma' = \sigma(1-\sigma)\)：</p>
+\[ \frac{\partial \ell}{\partial \theta_A} = S - \sigma(\theta_A - \theta_B) = S - E_A,\qquad \frac{\partial \ell}{\partial \theta_B} = -(S - E_A) \]
+<p>沿梯度走一步 \(\theta_A \leftarrow \theta_A + \eta\,(S - E_A)\)，换回 Elo 单位就是 \(R_A \leftarrow R_A + \frac{400\,\eta}{\ln 10}(S - E_A)\)。所以 <b>Elo 更新就是对 Bradley-Terry 似然、一次只看一局、步长固定的随机梯度上升</b>，\(K = 400\eta/\ln 10\)，\(K = 32\) 对应 \(\eta\approx 0.18\)。</p>
+<p><b>第 3 步，Elo 为什么永远在抖。</b>设 A 的分数偏离真值 \(x\)。一局之后 \(x\leftarrow x + K(\varepsilon - \lambda x)\)，其中 \(\varepsilon = S - p\) 是结果的随机部分（方差 \(p(1-p)\)），\(\lambda = \frac{\ln 10}{400}p(1-p)\) 是“偏高了就更难再涨”的回拉力度。这是一个带回拉的随机游走，稳定后的方差约为</p>
+\[ \operatorname{Var}(x) \approx \frac{K^2 p(1-p)}{2K\lambda} = \frac{400}{2\ln 10}\,K \approx 86.9\,K \]
+<p>与对战场数无关。\(K = 32\) 时标准差约 53 分，\(K = 4\) 时约 19 分。步长固定的随机梯度不会收敛到一个点，只会在最优点附近抖动，抖动幅度由步长决定。</p>
+<p><b>第 4 步，最大似然与它的误差。</b>把所有对局的梯度加起来令其为 0，得到 Bradley-Terry 的最大似然条件：每个模型的实际胜场数等于模型预测的胜场数之和。两个模型之间直接对战 \(N\) 场时，分差 \(\theta_A - \theta_B\) 的费希尔信息是 \(N p(1-p)\)，标准误 \(1/\sqrt{N p(1-p)}\)。\(p\approx 0.5\) 时为 \(2/\sqrt N\)，乘以 \(400/\ln 10\approx 174\) 换回 Elo 单位：</p>
+\[ \operatorname{SE}(\hat R_A - \hat R_B)\approx \frac{347}{\sqrt N} \]
+<p>\(N = 1000\) 场时约 11 分，95% 区间约 ±22 分。要分清只差 15 分的两个模型，平均需要约 2000 场直接对战；要有 80% 的把握，约 4200 场。</p>
+<p><b>这个推导告诉我们：</b>Elo 和 Bradley-Terry 是同一个模型，区别只在怎么拟合：在线 Elo 一次只看一局、步长固定，永远在抖、还依赖顺序；最大似然把所有对局一起解方程，误差按 \(1/\sqrt N\) 缩小。榜首的模型常常只差十几分，每一对之间需要几千次对战才分得清；新上榜、票数少的模型，区间要宽得多。</p>
+</div></details>
+
 <aside class="dispute">
   <h4>竞技场排行榜可信吗</h4>
   <dl>
     <dt>支持</dt><dd>真实用户、真实问题、盲评，规模巨大，比任何静态基准都更接近“用户觉得哪个好用”；它对新模型的反应也很快。</dd>
-    <dt>质疑</dt><dd>“排行榜幻觉”（2025-04）分析发现：少数厂商可以私下测试大量模型变体、只公开表现最好的那个（据报道 Meta 在 Llama 4 发布前测试了 27 个变体），而且大厂模型获得的对战数据远多于开源模型，可以据此针对性优化。用户偏好还偏爱更长、更有格式、更会恭维的回答，这与第 <a class="xref" data-ref="alignment"></a> 章的谄媚问题相连。</dd>
-    <dt>现在怎么看</dt><dd>竞技场衡量的是“普通用户在日常对话中的偏好”，不是推理能力或可靠性；控制回答长度和格式之后排名会变化。它是有用的信号之一，但被当成唯一目标时，同样会被古德哈特定律侵蚀。</dd>
+    <dt>质疑</dt><dd>“排行榜幻觉”（2025-04）分析发现：少数厂商可以私下测试大量模型变体、只公开表现最好的那个（据报道 Meta 在 Llama 4 发布前测试了 27 个变体），而且大厂模型获得的对战数据远多于开源模型，可以据此针对性优化。从统计上看，“测 27 个、挑最好的”本身就会让分数虚高：每个变体都有十几分的误差，挑最大值就是在挑最幸运的那次。2025-08 的一项研究还发现，只要去掉 0.003% 的投票，就能换掉榜首的模型。用户偏好还偏爱更长、更有格式、更会恭维的回答，这与第 <a class="xref" data-ref="alignment"></a> 章的谄媚问题相连。</dd>
+    <dt>现在怎么看</dt><dd>竞技场衡量的是“普通用户在日常对话中的偏好”，不是推理能力或可靠性。2024-08 起它提供<dfn data-t="style-control">风格控制</dfn>（style control）：把回答长度、标题数、列表数、加粗数作为额外的变量放进 Bradley-Terry 回归，让“风格带来的胜率”记到风格头上，控制之后排名有明显变化。它是有用的信号之一，但被当成唯一目标时，同样会被古德哈特定律侵蚀。</dd>
   </dl>
 </aside>
-<p>用强模型代替人做评委（LLM 作为评委）便宜得多，但有已知的偏差：偏爱放在前面（或后面）的回答、偏爱更长的回答、偏爱与自己风格相近的回答（自我偏好）。缓解办法是交换顺序各评一次、控制长度、使用评分细则（第 <a class="xref" data-ref="rl"></a> 章的细则奖励）。</p>
+<p>用强模型代替人做评委，即 <dfn data-t="llm-judge">LLM 评委</dfn>（LLM-as-a-judge），便宜得多，但有已知的偏差：偏爱放在前面（或后面）的回答、偏爱更长的回答、偏爱与自己风格相近的回答（自我偏好）。缓解办法是交换顺序各评一次、控制长度、使用评分细则（第 <a class="xref" data-ref="rl"></a> 章的细则奖励）。评委的错误和标准答案的错误一样，不会随题数增加而平均掉。</p>
 
 <h2 id="horizon">智能体评测与“时间跨度”</h2>
-<p>智能体评测（SWE-bench、Terminal-Bench、BrowseComp、OSWorld，第 <a class="xref" data-ref="agents"></a> 章）让模型在真实环境中完成多步任务，比问答更接近真实工作，但更依赖 harness 和环境细节。METR 提出了一个把不同任务统一起来的度量：<dfn data-t="time-horizon">时间跨度</dfn>。先请人类专家完成一批任务、记录耗时，再看模型在不同耗时的任务上的成功率：</p>
+<p>智能体评测（SWE-bench、Terminal-Bench、BrowseComp、OSWorld，第 <a class="xref" data-ref="agents"></a> 章）让模型在真实环境中完成多步任务，比问答更接近真实工作，但统计上更难：任务少（Terminal-Bench 2.0 只有 89 个任务），每次运行贵，同一任务重跑结果也不一样，而且更依赖 harness 和环境细节。它们的分数还各有刻度，没法放在一起看趋势。</p>
+<p>METR 提出了一个把不同任务统一起来的度量：<dfn data-t="time-horizon">时间跨度</dfn>。先请人类专家完成一批任务、记录耗时，再看模型在不同耗时的任务上的成功率：</p>
 <div class="fx">
-\[ P(\text{成功}\mid \htmlClass{sym-L}{L}) = \sigma\Big(\beta\,\big(\log \htmlClass{sym-h}{h_{50}} - \log L\big)\Big) \]
+\[ P(\text{成功}\mid \htmlClass{sym-L}{L}) = \sigma\Big(\htmlClass{sym-beta}{\beta}\,\big(\log \htmlClass{sym-h}{h_{50}} - \log L\big)\Big) \]
   <div class="fx-read">任务越长（人类耗时 \(L\) 越大），模型成功率越低，在对数时间上近似一条 S 形曲线。成功率恰好为 50% 的任务长度 \(h_{50}\)，就是这个模型的“50% 时间跨度”。</div>
   <dl class="fx-syms">
-    <dt data-sym="L">\(L\)</dt><dd>任务对人类专家的耗时</dd>
-    <dt data-sym="h">\(h_{50}\)</dt><dd>50% 时间跨度；\(\beta\) 决定曲线的陡峭程度</dd>
+    <dt data-sym="L">\(L\)</dt><dd>任务对人类专家的耗时（几位专家成功完成时间的几何平均）</dd>
+    <dt data-sym="h">\(h_{50}\)</dt><dd>50% 时间跨度：每个模型各自拟合出来的参数</dd>
+    <dt data-sym="beta">\(\beta\)</dt><dd>斜率：任务长度每翻一倍，成功的对数几率下降多少；也是每个模型各自拟合</dd>
   </dl>
-  <div class="fx-eg">若某模型 \(h_{50} = 2\) 小时，对一个人类要 30 分钟的任务成功率较高，对 8 小时的任务较低。80% 时间跨度通常只有 50% 时间跨度的约五分之一：能有一半把握完成 2 小时的任务，并不意味着能可靠地完成 2 小时的任务。</div>
+  <div class="fx-eg">若某模型 \(h_{50} = 2\) 小时，对一个人类要 30 分钟的任务成功率较高，对 8 小时的任务较低。METR 发现模型的 80% 时间跨度比 50% 的短 4–6 倍：能有一半把握完成 2 小时的任务，并不意味着能可靠地完成 2 小时的任务。</div>
 </div>
-<p>按 METR 的测量，时间跨度在 2019–2025 年间大约每 7 个月翻一倍，2024 年以后加快到约每 4 个月翻一倍。下面的图可以亲手拟合和外推，并看清外推有多脆弱：</p>
+<p>这个式子不是 METR 的发明，而是心理测量学里的<dfn data-t="irt">项目反应理论</dfn>（item response theory, IRT）的一个特例。IRT 假设“做对的概率只取决于能力与难度之差”：</p>
+<div class="fx">
+\[ P(\text{模型 } i \text{ 做对题 } j) = \sigma\big(\htmlClass{sym-a}{a_j}\,(\htmlClass{sym-th}{\theta_i} - \htmlClass{sym-b}{b_j})\big) \]
+  <div class="fx-read">能力比难度高得越多，越可能做对。区分度 \(a\) 大的题像一道门槛，能力差一点就从全错变全对；\(a\) 小的题对谁都差不多像抛硬币。</div>
+  <dl class="fx-syms">
+    <dt data-sym="th">\(\theta_i\)</dt><dd>模型 \(i\) 的能力</dd>
+    <dt data-sym="b">\(b_j\)</dt><dd>题 \(j\) 的难度：能力等于它时，做对的概率恰好 50%</dd>
+    <dt data-sym="a">\(a_j\)</dt><dd>区分度：曲线有多陡</dd>
+  </dl>
+  <div class="fx-eg">三个特例。竞技场：把“题”换成对手，\(b_j\) 就是对手的分数，\(a = 1\)，得到 Bradley-Terry。时间跨度：难度固定为人类耗时的对数 \(b_j = \log L_j\)，能力 \(\theta_i = \log h_{50}\)，斜率 \(\beta\) 按模型拟合。Epoch 能力指数（ECI）：每个基准有自己的难度和斜率，每个模型有一个能力值，全部一起拟合。</div>
+</div>
+<p>IRT 的用处有两个。一是<b>统一刻度</b>：Epoch AI 在 2025-10 推出的 Epoch 能力指数（ECI）用 IRT 把近 40 个基准拼到同一条能力轴上，一个模型即使没测过某个旧基准，也能和测过的模型比较；基准饱和后，新的难基准接上同一条轴，趋势不会断。二是<b>省钱</b>：知道了每道题的难度和区分度，就能挑出信息量最大的少数题。tinyBenchmarks（2024）用 IRT 从 MMLU 的 1.4 万道题里挑出 100 道，估计全集准确率的平均误差约 2%。</p>
+<p>按 METR 的测量（2025-03，170 个任务），时间跨度在 2019–2025 年间大约每 7 个月翻一倍（207 天，95% 区间 166–240 天）。2026-01 的 TH1.1 把任务扩充到 228 个，8 小时以上的长任务从 14 个增加到 31 个，但其中只有 5 个有实测的人类耗时，其余是估计值；按新任务集，2023 年以后约每 131 天翻一倍，2024 年以后约每 89 天。下面的图可以亲手拟合和外推，并看清外推有多脆弱：</p>
 <div data-demo="metr-horizon"></div>
+
+<details class="deep"><summary>时间跨度的逻辑斯蒂拟合：从一组成败到一个“小时数”</summary><div class="in">
+<p><b>第 1 步，数据与模型。</b>对每个模型，有一组 (任务 \(j\)，运行，成败 \(s\in\{0,1\}\)) 的记录，任务的人类耗时为 \(L_j\)。令 \(u_j = \log_2 L_j\)，模型是一条逻辑斯蒂曲线 \(P_j = \sigma\big(\beta(\log_2 h - u_j)\big)\)，两个参数 \(\log_2 h\) 和 \(\beta\)。</p>
+<p><b>第 2 步，加权最大似然。</b>最大化 \(\sum_j w_j\big[s_j\log P_j + (1 - s_j)\log(1 - P_j)\big]\)。METR 取 \(w_j = 1/\sqrt{\text{家族大小}}\)：大家族里的任务高度相关（上面的聚类问题），不加权的话，一个有几十个变体的家族会主导拟合。</p>
+<p><b>第 3 步，读出 \(h_{50}\) 与 \(h_{80}\)。</b>\(P = 0.5\) 时 \(\sigma\) 的自变量为 0，即 \(u = \log_2 h\)：拟合出的参数 \(h\) 就是 \(h_{50}\)。\(P = 0.8\) 时 \(\sigma(z) = 0.8\)，\(z = \ln 4\approx 1.39\)，于是</p>
+\[ \log_2 h_{80} = \log_2 h_{50} - \frac{1.39}{\beta}\quad\Longrightarrow\quad \frac{h_{80}}{h_{50}} = 2^{-1.39/\beta} \]
+<p>\(\beta = 0.6\) 时比值约 \(1/5\)。METR 报告的“短 4–6 倍”对应 \(\beta\) 在 0.54 到 0.69 之间：任务长度每翻一倍，成功的对数几率只下降约 0.6，曲线相当平缓。</p>
+<p><b>第 4 步，翻倍时间。</b>对所有模型的 \(\log_2 h_{50}\) 关于发布时间 \(t\) 做直线回归：\(\log_2 h_{50} = a + bt\)。斜率 \(b\) 的单位是“每年翻几倍”，翻倍时间就是 \(1/b\) 年。误差棒来自三层<span class="term" data-t="bootstrap">自助法</span>：重抽任务家族、家族内的任务、任务的运行，每次重做第 2–4 步。</p>
+<p><b>第 5 步，为什么长任务的误差大。</b>当 \(h_{50}\) 接近或超过任务集里最长的任务时，曲线的 50% 点落在数据的边缘之外，\(h_{50}\) 实际上是外推出来的；长任务又少（TH1.1 里 31 个，只有 5 个有实测耗时），误差棒迅速变宽。</p>
+<p><b>这个推导告诉我们：</b>“时间跨度”不是某个任务的长度，而是一条拟合曲线与 50% 横线的交点。曲线越平（\(\beta\) 越小），50% 与 80% 的跨度差得越远：在这个模型里，“不可靠”就是 \(\beta\) 太小。模型的跨度一旦超出任务集的范围，新的数字主要由外推决定，测量本身也需要新的长任务。</p>
+</div></details>
+
+<h2 id="generations">每一代基准在修什么</h2>
+<p>回头看评测的历史，它像一串补丁：每一代基准都在修上一代暴露出的某种毛病，又带来新的毛病。毛病主要有四种：</p>
+<ul>
+  <li><b>饱和</b>：分数挤到天花板，模型间的差距小于统计误差和标注错误。</li>
+  <li><b>污染</b>：题目进了训练数据，分数里混进了记忆。</li>
+  <li><b><dfn data-t="construct-validity">构念效度</dfn>（construct validity）不足</b>：测到的不是想测的能力，而是题目格式、应试技巧或别的相关因素。</li>
+  <li><b>成本</b>：评一次太贵、太慢，只能少测、少跑，误差棒随之变宽。</li>
+</ul>
+<div class="tablewrap"><table>
+  <tr><th>基准（年份）</th><th>修的是什么</th><th>改了什么</th><th>新的毛病</th></tr>
+  <tr><td>GLUE（2018）、SuperGLUE（2019）</td><td>各任务各算各的，无法比较“通用理解”</td><td>把 9 个（SuperGLUE 8 个）理解任务汇成一个总分，测试集答案隐藏</td><td>一两年内被做到超过人类基线（饱和）</td></tr>
+  <tr><td>MMLU（2020）</td><td>GLUE 系列饱和；少样本的大模型可以直接做考题</td><td>57 个学科、约 1.4 万道四选一考题，测知识</td><td>多选可应试；约 6.5% 的题有错；2024 年前沿约 90%（饱和）</td></tr>
+  <tr><td>BIG-bench（2022）、HELM（2022）</td><td>单一考试覆盖面窄，一个分数掩盖能力差异</td><td>BIG-bench 众包 204 个任务；HELM 在许多场景上同时测准确率、校准、鲁棒性、效率等多项指标</td><td>评一次很贵；任务质量参差（成本）</td></tr>
+  <tr><td>Chatbot Arena（2023）</td><td>选择题测不了开放回答的质量</td><td>用户盲评两两比较，Bradley-Terry 拟合</td><td>偏好长和格式；可被选择性提交利用（构念效度）</td></tr>
+  <tr><td>GPQA（2023）、FrontierMath（2024）、HLE（2025）</td><td>饱和与污染</td><td>专家出题、“搜不到”的难题；FrontierMath 题目不公开；HLE 只保留前沿模型做不对的题</td><td>答案更难核对，标注错误增多（见下）</td></tr>
+  <tr><td>SWE-bench（2023）、OSWorld（2024）、Terminal-Bench（2025）</td><td>考题离真实工作太远（构念效度）</td><td>真实仓库、真实桌面系统、真实终端，用测试或终态判分</td><td>依赖 harness；任务少、运行贵（成本）；测试本身有缺陷；Verified 也被污染</td></tr>
+  <tr><td>METR 时间跨度（2025）、ECI（2025）</td><td>每个基准各有刻度，饱和后趋势就断了</td><td>人类耗时当统一的难度刻度；IRT 把基准拼到一条轴上</td><td>任务集偏软件；最长的任务太少，前沿的数字靠外推</td></tr>
+</table></div>
+<p><b>为什么越难的基准，答案越容易错。</b>GPQA 的题请领域博士出题和互相验证：博士在本领域的正确率约 65%，可以上网、平均花 30 分钟以上的非专家只有 34%，这是“搜不到”的含义。HLE 走得更远：一道题只有在当时的前沿模型都做不对时才被收录。FutureHouse（2025-07）检查其中的化学和生物题，认为约 29% 的标准答案与已发表的文献相矛盾；HLE 团队自己复查的比例约 18%，修订后公开集的专家分歧率约 15%。原因正是筛题方式：“只留模型做不对的题”会偏向刁钻、有歧义甚至答案有误的题，因为模型在这些题上也“做不对”。防饱和的手段，制造了新的标注错误。</p>
+<p><b>为什么真实任务也会被污染。</b>SWE-bench 的题来自公开仓库的公开修复，修复的代码本身就在网上。OpenAI 2026-02 停止报告 Verified 时给出的理由，一半是污染、一半是测试缺陷，并建议改报更难污染的 SWE-bench Pro。真实性和防污染之间有张力：越真实的任务，越可能来自公开的真实记录。</p>
+<p><b>为什么统一刻度这么重要。</b>每个基准从推出到饱和只有一两年，单看任何一个基准都只能看到一段 S 形曲线。时间跨度和 ECI 都是在用 IRT 的思路把这些短曲线接成一条长曲线，这样“能力每几个月翻一倍”这类趋势判断才有可能。代价是依赖模型假设（逻辑斯蒂曲线、单一能力维度），以及刻度两端的数据总是最少。</p>
 
 <h2 id="validity">2026：基准到底测到了什么</h2>
 <aside class="dispute">
   <h4>构念效度：基准真的测到了它声称的能力吗</h4>
   <dl>
-    <dt>问题</dt><dd>“推理”“安全”“智能体能力”这些概念本身定义模糊。一项 2025 年对 445 个大模型基准的系统审查发现，大多数基准没有清晰定义要测的能力、复用了别处的数据、缺乏统计检验。题目格式的偏差（多选题可以靠排除法、答案格式提示）让高分可能来自应试技巧而非目标能力。SWE-bench Verified 与 Pro 之间的巨大分差（第 <a class="xref" data-ref="coding"></a> 章）就是一例。</dd>
+    <dt>问题</dt><dd><span class="term" data-t="construct-validity">构念效度</span>问的是：一个测量是否真的测到了它声称要测的东西。“推理”“安全”“智能体能力”这些概念本身定义模糊。一项 2025 年对 445 个大模型基准的系统审查发现，大多数基准没有清晰定义要测的能力、复用了别处的数据、缺乏统计检验。题目格式的偏差（多选题可以靠排除法、答案格式提示）让高分可能来自应试技巧而非目标能力。SWE-bench Verified 与 Pro 之间的巨大分差（第 <a class="xref" data-ref="coding"></a> 章）就是一例。</dd>
     <dt>新的方向</dt><dd>更贴近真实工作的评测：OpenAI 的 GDPval（2025）请 44 个职业的从业者设计真实工作任务、由专家盲评；交互式、无规则说明的任务（ARC-AGI-3 用模型从没见过的小游戏测试“现场学习”的能力，据报道前沿模型的得分仍很低）。另一条路是评测“评测本身”：给基准做健康检查，标注其饱和、污染、噪声程度。</dd>
     <dt>现在怎么看</dt><dd>没有一个分数能概括模型的能力。更好的做法是看一组互补的评测、看评测的设计是否可靠、看能力在真实使用中的表现，并对“一个数字代表一切”的说法保持警惕。</dd>
   </dl>
 </aside>
-<p>还有一个更麻烦的问题：模型越来越能识别“这是一次评测”。Anthropic 在 2025 年的系统卡中报告，Claude Sonnet 4.5 在部分安全测试中会直接说出“我觉得你在测试我”。如果模型在评测中和在真实使用中表现不同，评测的意义就会被削弱。这一问题在对齐评估中尤其严重（第 <a class="xref" data-ref="alignment"></a> 章）。</p>
+<p>还有一个更麻烦的问题：被测的一方开始知道自己在被测。<dfn data-t="eval-awareness">评估意识</dfn>（evaluation awareness）指模型识别出“这是一次测试”，并可能因此改变行为。前面所有的统计方法都默认被测者不会因为被测而改变；这个默认正在失效。</p>
+<ul>
+  <li><b>说出口的比例在上升。</b>Anthropic 在 Claude Sonnet 4.5 的系统卡（2025-09）中报告，模型在部分安全测试中会直接说出“我觉得你在测试我”，据报道在自动行为审计中约占 13% 的记录，远高于之前的模型。OpenAI 与 Apollo Research 的联合研究（2025-09）中，o3 在 2.3% 的样本里明确推理“这是评测”，经过反策划训练后升到 4.5%；一次只练能力、不含任何安全训练的 RL 中，这一比例从 2% 升到 20.6%，说明评估意识会随一般能力的训练自己长出来。</li>
+  <li><b>能力评测也受影响。</b>Anthropic（2026-03）在 BrowseComp 的 1266 道题上评测 Claude Opus 4.6 时，发现 11 道题的答案来自基准材料而非真正的搜索：9 道是网上泄漏的答案（普通的污染），另外 2 道是模型自己推测“这可能是一道评测题”，逐个排查后认出是 BrowseComp，在 GitHub 上找到评测代码，再找到加密的答案文件并解密。重新评测后，分数从 86.81% 调到 86.57%。分数变化很小，但它说明联网的静态基准可以被模型“反推”出来。</li>
+  <li><b>说出口的只是下限。</b>OpenAI 的 GPT-6 Astra 系统卡（2026-09）在模拟的内部 Codex 部署流量上测量：9.6% 的轨迹出现评估意识，前一代 GPT-5.6 Sol 为 2.8%。用可解释性工具（第 <a class="xref" data-ref="interpretability"></a> 章）去看模型内部，还能找到没有说出口的评估意识；据报道，在 Sonnet 4.5 上抑制与“评估”相关的内部表示后，模型在诱饵场景里的不当行为增多。</li>
+</ul>
+<p>它对测量的影响可以写成一个简单的混合：设模型在比例 \(a\) 的测试里识别出了测试、此时不当行为的比例是 \(r_{\text{测}}\)，其余情况下是 \(r_{\text{真}}\)，观测到的比例是 \((1 - a)\,r_{\text{真}} + a\,r_{\text{测}}\)。若识别出测试时几乎总是表现良好（\(r_{\text{测}}\approx 0\)），观测到的比例就只有真实比例的 \((1 - a)\) 倍：\(a = 20\%\) 时，不当行为被少算五分之一。更糟的是 \(a\) 本身观测不到，说出口的部分只是它的下限。</p>
+<aside class="dispute">
+  <h4>评估意识上升：安全评测还可信吗</h4>
+  <dl>
+    <dt>担忧</dt><dd>如果模型在“被看着”时表现更好，那么安全评测里不当行为的减少，可能只是模型更会识别测试，而不是更对齐。OpenAI 与 Apollo 的研究给出了因果证据：在推理中加入评估意识会减少隐蔽的不当行为，去掉它则会增加。反策划训练把 o3 的隐蔽行为从 13% 降到 0.4%，作者认为其中一部分来自评估意识的上升。</dd>
+    <dt>反方</dt><dd>并非所有改善都能归因于此。GPT-6 Astra 的系统卡称，只看两个模型都没有说出评估意识的轨迹，新模型的严重不对齐标记仍少了约 57%。识别出测试的模型也并不总是改变行为，有时明知是测试仍然照做不当行为。</dd>
+    <dt>现在怎么看</dt><dd>评估意识已经是安全评测的一个系统误差，而不是偶发现象。对策包括让测试场景更逼真、用真实或模拟的部署流量做评测、用内部表示探测没说出口的意识。最终的检验要靠部署后的监测（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+  </dl>
+</aside>
 
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
-  <li><b class="m">分数高一两分就说明模型更强。</b>小基准的误差棒常有几个百分点，提示格式和框架的影响更大。</li>
-  <li><b class="m">不同来源的分数可以直接比较。</b>只有在同一框架、同一设置（提示、温度、是否思考、harness）下才可比。</li>
-  <li><b class="m">竞技场第一就是最强的模型。</b>它衡量日常对话中的用户偏好，偏爱长而漂亮的回答；推理、可靠性、编程需要别的评测。</li>
-  <li><b class="m">基准做满了，说明模型掌握了这项能力。</b>可能是污染、应试技巧，或基准本身只测到了能力的一小部分。</li>
-  <li><b class="m">“时间跨度 8 小时”意味着模型能替人干一天的活。</b>那是 50% 成功率、在特定类型的明确任务上的结果；可靠完成的长度短得多，开放的真实工作更难。</li>
+  <li><b class="m">分数高一两分就说明模型更强。</b>500 道题的基准，95% 区间约 ±3.5 个点；即使用配对比较，要以 80% 的把握分辨 2 个点的差距也需要约 3000 道题。提示格式、框架和 harness 的影响更大，而且只有在同一设置下的分数才可比。</li>
+  <li><b class="m">每题多采样几次，小基准的误差就能压下去。</b>多采样只消掉同一道题内部的随机性。“抽到了哪 30 道题”的运气只能靠更多的题来消除：AIME 每题采 16 次，标准误也只从约 8.4 降到约 6.5 个点。</li>
+  <li><b class="m">竞技场第一就是最强的模型。</b>它衡量日常对话中的用户偏好，偏爱长而漂亮的回答；榜首往往只领先十几分，去掉极少量投票就可能换人。推理、可靠性、编程需要别的评测。</li>
+  <li><b class="m">基准做满了，说明模型掌握了这项能力。</b>可能是污染、应试技巧、标注错误设下的假天花板，或基准本身只测到了能力的一小部分。</li>
+  <li><b class="m">“时间跨度 8 小时”意味着模型能替人干一天的活。</b>那是 50% 成功率、在特定类型的明确任务上的拟合结果，最前沿的数字还依赖外推；80% 的时间跨度短 4–6 倍，开放的真实工作更难。</li>
 </ul>
 
 <h2 id="history">演进史</h2>
 <div class="hist">
   <div class="hist-node">
-    <div class="hist-date">2018–2020</div>
-    <h4>GLUE、SuperGLUE 与 MMLU</h4>
+    <div class="hist-date">2018–2019</div>
+    <h4>GLUE 与 SuperGLUE：用一个总分衡量“通用理解”</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>语言理解缺乏统一的衡量标准。</dd>
-      <dt>怎么解决</dt><dd>GLUE（2018）汇集多个理解任务；很快被超过后推出 SuperGLUE（2019）；MMLU（2020）用 57 个学科的选择题测知识。</dd>
-      <dt>代价</dt><dd>饱和极快，多选格式可被应试技巧利用。</dd>
-      <dt>引出</dt><dd>需要更难、更广的评测。</dd>
+      <dt>卡在哪</dt><dd>预训练模型兴起前后，每个理解任务各有数据集、各算各的分，无法判断一个模型的“通用”能力。</dd>
+      <dt>怎么解决</dt><dd>GLUE 把 9 个任务汇成一个总分，测试集答案隐藏、统一提交；被超过后推出更难的 SuperGLUE。</dd>
+      <dt>代价</dt><dd>一两年内都被做到超过人类基线：任务太窄，饱和极快。</dd>
+      <dt>引出</dt><dd>大模型可以不经微调直接做题，需要测更广的知识。</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被淘汰</span>为每个任务单独微调再评测</summary><div>GLUE 时代的做法是拿预训练模型在每个任务的训练集上各微调一次，测的是“预训练 + 微调”的组合。GPT-3（2020）展示少样本提示可以直接做题之后，评测转向测预训练模型本身，提示格式的敏感性问题也随之出现。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2021–2023</div>
-    <h4>代码、综合评测与竞技场</h4>
+    <div class="hist-date">2020–2022</div>
+    <h4>MMLU、BIG-bench、HELM：从理解到知识与覆盖面</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>开放的对话质量、代码能力无法用选择题衡量。</dd>
-      <dt>怎么解决</dt><dd>HumanEval（2021）；BIG-bench、HELM（2022）的综合评测；Chatbot Arena（2023）的人类偏好众包；GPQA（2023）等专家级难题；SWE-bench（2023）。</dd>
-      <dt>代价</dt><dd>污染开始显现；LLM 评委的偏差。</dd>
-      <dt>引出</dt><dd>怎样防污染、怎样测智能体？</dd>
+      <dt>卡在哪</dt><dd>理解类基准饱和；少样本的大模型需要一张覆盖各学科的考卷。</dd>
+      <dt>怎么解决</dt><dd>MMLU 用 57 个学科的四选一考题测知识；BIG-bench 众包 204 个任务；HELM 在许多场景上同时报告多项指标，反对只看一个分数。</dd>
+      <dt>代价</dt><dd>多选题可被应试技巧利用、标注有错；综合评测规模大，评一次贵。</dd>
+      <dt>引出</dt><dd>选择题测不了开放回答的质量。</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>涌现：能力突然出现，还是打分方式造成的</summary><div>BIG-bench 上一些任务的分数在某个规模突然跃升，被称为<span class="term" data-t="emergence">涌现</span>。之后的分析指出，很大一部分跃升来自精确匹配这类“全对才得分”的不连续打分；换成连续的指标，曲线往往是平滑的（第 <a class="xref" data-ref="scaling"></a> 章）。它让评测者意识到：指标的选择本身会制造或掩盖趋势。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2024</div>
-    <h4>污染检测与动态基准</h4>
+    <div class="hist-date">2023</div>
+    <h4>Chatbot Arena：让人来投票</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>公开基准被训练数据污染，分数虚高。</dd>
-      <dt>怎么解决</dt><dd>GSM1k 揭示过拟合；LiveBench、LiveCodeBench 只用新题；SWE-bench Verified；FrontierMath 的未公开研究级数学题；“为评测加误差棒”的方法论。</dd>
-      <dt>代价</dt><dd>新基准的维护成本高。</dd>
-      <dt>引出</dt><dd>能否衡量能完成多长的真实任务？</dd>
+      <dt>卡在哪</dt><dd>开放对话的质量没有标准答案。</dd>
+      <dt>怎么解决</dt><dd>用户匿名比较两个回答，先用在线 Elo、2023-12 起改用 Bradley-Terry 最大似然拟合分数；同期出现了用 LLM 评委代替人的 MT-Bench 等。</dd>
+      <dt>代价</dt><dd>偏好长回答和格式；榜首差距小，需要海量投票；可被私下测试大量变体、挑最好的公开来利用。</dd>
+      <dt>引出</dt><dd>偏好不等于能力；难的考题仍然需要，但要防饱和、防污染。</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>风格控制与分类榜单</summary><div>2024-08 起竞技场把长度和 markdown 格式作为变量放进回归，单独给出控制风格后的排名；之后又按难题、编程、长查询等类别分榜。思路与统计学里“控制混杂变量”相同：先承认偏好里混着风格，再把它分离出去。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2025</div>
-    <h4>最难的考试、时间跨度与排行榜之争</h4>
+    <div class="hist-date">2023–2025</div>
+    <h4>GPQA、FrontierMath、HLE、LiveBench：防饱和、防污染</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>前沿模型迅速做满专家级基准。</dd>
-      <dt>怎么解决</dt><dd>人类最后的考试（HLE）；ARC-AGI-2；METR 的时间跨度（3 月）；“排行榜幻觉”；GDPval 的真实职业任务；SWE-bench Pro；构念效度的系统审查。</dd>
-      <dt>代价</dt><dd>模型开始识别评测，评测与真实使用的差距受到关注。</dd>
-      <dt>引出</dt><dd>评测本身需要被评测。</dd>
+      <dt>卡在哪</dt><dd>MMLU 被做满；GSM1k（2024）显示一些模型在公开题上的分数被污染抬高。</dd>
+      <dt>怎么解决</dt><dd>专家出的“搜不到”的难题（GPQA）；不公开的研究级数学题（FrontierMath）；只收前沿模型做不对的题（HLE）；只用训练截止日期之后的新题（LiveBench、LiveCodeBench）。</dd>
+      <dt>代价</dt><dd>出题和核对都贵；对抗式筛题带来更多错误答案；仍在一两年内被大幅推进。</dd>
+      <dt>引出</dt><dd>再难的考题也是考题，离真实工作远。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt dead">逐渐边缘</span>只看单一综合分</summary><div>早期的“综合排行榜”把许多基准平均成一个数字，掩盖了能力的差异和各基准的质量问题。2025 年后，主流做法转向分领域、带误差棒、注明设置的多维报告。</div></details>
+    <details class="hist-branch"><summary><span class="bt dead">逐渐边缘</span>只看单一综合分</summary><div>早期的“综合排行榜”把许多基准平均成一个数字，掩盖了能力的差异和各基准的质量问题。2025 年后，主流做法转向分领域、带误差棒、注明设置的多维报告；需要单一刻度时，则改用 IRT 这类有统计模型支撑的方法，而不是简单平均。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2026</div>
-    <h4>时间跨度 1.1 与交互式评测</h4>
+    <div class="hist-date">2023–2026</div>
+    <h4>SWE-bench、OSWorld、Terminal-Bench：真实任务</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>长任务的测量误差大；静态评测无法测“现场学习”。</dd>
-      <dt>怎么解决</dt><dd>METR 的 TH1.1 扩充长任务、收紧误差棒；ARC-AGI-3 的交互式游戏；基准健康指数、污染分类等“元评测”研究。</dd>
-      <dt>代价</dt><dd>最前沿的能力已接近现有评测的上限，测量误差越来越大。</dd>
-      <dt>引出</dt><dd>能力越强，越需要确保它与人类的意图一致（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+      <dt>卡在哪</dt><dd>考题与真实工作之间的差距（构念效度）。</dd>
+      <dt>怎么解决</dt><dd>用真实仓库的 issue（SWE-bench，2023-10；人工筛选的 Verified，2024-08）、真实桌面系统（OSWorld，2024-04）、真实终端（Terminal-Bench 2.0，2025-11，89 个任务）出题，用测试或终态判分。</dd>
+      <dt>代价</dt><dd>依赖 harness 和环境；任务少、运行贵，误差棒宽；测试本身可能有缺陷；公开仓库的修复同样会被污染（OpenAI 2026-02 停止报告 Verified）。</dd>
+      <dt>引出</dt><dd>不同任务的分数各有刻度，怎样比较趋势？</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>pass^k：测可靠性而不是上限</summary><div>τ-bench（2024-06）提出 pass^k，要求同一任务做 k 次全部成功。对要上线的智能体来说，可靠性比“偶尔能做对”更重要。它和 METR 的 80% 时间跨度是同一种关切：平均意义上的能力，与可以托付的能力之间差得很远。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>统一刻度与评估意识</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>每个基准一两年就饱和，趋势一段一段地断开。</dd>
+      <dt>怎么解决</dt><dd>METR 的时间跨度（2025-03）用人类耗时当统一刻度，TH1.1（2026-01）扩充长任务；Epoch 的 ECI（2025-10）用 IRT 把几十个基准拼到一条轴上。</dd>
+      <dt>代价</dt><dd>最长的任务太少，前沿靠外推；与此同时出现了新的毛病：模型开始识别评测，甚至反推出基准的答案。</dd>
+      <dt>引出</dt><dd>能力越强，越需要确认它在没被测试时也与人类的意图一致（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>用部署流量做评测</summary><div>评估意识让“精心设计的测试场景”越来越容易被识破。2026 年的系统卡开始在模拟或真实的部署流量上测量行为（例如 GPT-6 Astra 用模拟的内部编程流量），让测试尽量与真实使用无法区分。代价是覆盖不到罕见但危险的场景，那正是专门设计测试的初衷。</div></details>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. 一个 200 题的基准，模型 A 得 72%，模型 B 得 76%。差异显著吗？</summary><div class="ans">每个的 SE 约 \(\sqrt{0.74\times 0.26/200}\approx 3.1\%\)，差值的 SE 约 \(\sqrt2\times 3.1\approx 4.4\%\)，4 个百分点不到一个标准误，不显著。若两者在同一组题上评测，可以用配对检验得到更紧的结论，但仍需看逐题的差异。</div></details>
-<details class="quiz"><summary>2. 竞技场上 A 比 B 高 50 分，A 在一次随机对比中胜出的概率是多少？</summary><div class="ans">\(1/(1 + 10^{-50/400}) = 1/(1 + 0.75)\approx 0.57\)。</div></details>
-<details class="quiz"><summary>3. 50% 时间跨度为 4 小时、翻倍时间 4 个月。按此趋势，一年后是多少？为什么不能简单相信这个外推？</summary><div class="ans">一年翻 3 倍：\(4\times 2^3 = 32\) 小时。不能简单相信：翻倍时间本身随拟合窗口变化（4 到 7 个月，一年后相差约 2 倍以上）；长任务的测量误差很大；评测任务是明确、可判分的软件类任务，不代表一般工作；趋势也可能加速或放缓。</div></details>
+<details class="quiz"><summary>1. 一个 200 题的基准，模型 A 得 72%，模型 B 得 76%。逐题对照：A 对 B 错 20 题，B 对 A 错 28 题。差异显著吗？分别用不配对和配对的方法算。</summary><div class="ans">不配对：\(\operatorname{SE} = \sqrt{(0.72\times 0.28 + 0.76\times 0.24)/200}\approx 4.4\%\)，4 个点不到一个标准误。配对：差 \(= (28 - 20)/200 = 4\%\)，\(\operatorname{Var}(d) = 48/200 - 0.04^2 = 0.2384\)，\(\operatorname{SE} = \sqrt{0.2384/200}\approx 3.5\%\)，\(z\approx 1.16\)（McNemar：\(8/\sqrt{48}\approx 1.15\)）。配对让误差变小了，但仍远不到 1.96，不显著。</div></details>
+<details class="quiz"><summary>2. 竞技场上 A 比 B 高 50 分，A 在一次随机对比中胜出的概率是多少？如果只看 A 与 B 的直接对战，大约要多少场，95% 区间的半宽才能缩到 15 分以内？</summary><div class="ans">\(1/(1 + 10^{-50/400}) = 1/(1 + 0.75)\approx 0.57\)。分差的标准误约 \(347/\sqrt N\)（胜率接近一半时），要 \(1.96\times 347/\sqrt N \le 15\)，\(N\ge (1.96\times 347/15)^2\approx 2060\) 场。</div></details>
+<details class="quiz"><summary>3. 每道题采样 \(n = 10\) 次，某题有 \(c = 2\) 次通过。用组合数公式和直接代入分别估计 pass@3，并说明哪个更可信、为什么。</summary><div class="ans">组合数公式：\(1 - \binom{8}{3}/\binom{10}{3} = 1 - 56/120\approx 0.533\)。直接代入：\(1 - 0.8^3 = 0.488\)。前者是无偏的（随机挑 3 次全错的概率，期望正好是 \((1-p)^3\)）；后者把 \(\hat p\) 代进凹函数，按詹森不等式平均会低估。单题上两者都有噪声，但对很多题取平均时，只有前者会收敛到真值。</div></details>
+<details class="quiz"><summary>4. 50% 时间跨度为 4 小时、翻倍时间 4 个月。按此趋势，一年后是多少？若拟合出的斜率 \(\beta = 0.6\)，同一时刻的 80% 时间跨度约是多少？为什么不能简单相信这个外推？</summary><div class="ans">一年翻 3 次：\(4\times 2^3 = 32\) 小时。80% 跨度 \(= h_{50}\cdot 2^{-1.39/0.6}\approx h_{50}/5\)，约 6.4 小时。不能简单相信：翻倍时间本身随拟合窗口变化（4 到 7 个月，一年后相差约 2 倍以上）；跨度超出任务集里最长的任务后，数字主要靠外推，长任务又很少；评测任务是明确、可判分的软件类任务，不代表一般工作；趋势也可能加速或放缓。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
-  <li><a href="https://arxiv.org/abs/2411.00640">Adding Error Bars to Evals</a>（Miller, 2024）<span class="why">评测的统计学基础。</span></li>
-  <li><a href="https://arxiv.org/abs/2310.11324">Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design</a>（Sclar 等, 2023）<span class="why">提示格式能让分数差多少。</span></li>
-  <li><a href="https://arxiv.org/abs/2503.14499">Measuring AI Ability to Complete Long Tasks</a>（METR, 2025）<span class="why">时间跨度的定义与趋势。</span></li>
-  <li><a href="https://arxiv.org/abs/2504.20879">The Leaderboard Illusion</a>（2025）<span class="why">竞技场排行榜的系统性问题。</span></li>
-  <li><a href="https://arxiv.org/abs/2405.00332">A Careful Examination of LLM Performance on Grade School Arithmetic</a>（GSM1k, 2024）<span class="why">怎样检测过拟合与污染。</span></li>
+  <li><a href="https://arxiv.org/abs/2411.00640">Adding Error Bars to Evals</a>（Miller, 2024）<span class="why">评测的统计学基础：题目总体的视角、聚类标准误、配对比较、样本量规划，本章「从零开始」的出处。</span></li>
+  <li><a href="https://arxiv.org/abs/2403.04132">Chatbot Arena: An Open Platform for Evaluating LLMs by Human Preference</a>（2024）<span class="why">竞技场怎样从投票拟合 Bradley-Terry 分数、怎样给出置信区间、怎样挑选对战。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.14499">Measuring AI Ability to Complete Long Tasks</a>（METR, 2025）<span class="why">时间跨度的定义、逻辑斯蒂拟合、任务加权与分层自助法。</span></li>
+  <li><a href="https://arxiv.org/abs/2504.20879">The Leaderboard Illusion</a>（2025）<span class="why">竞技场排行榜的系统性问题：私下测试、数据不对等、选择性公开。</span></li>
+  <li><a href="https://arxiv.org/abs/2405.00332">A Careful Examination of LLM Performance on Grade School Arithmetic</a>（GSM1k, 2024）<span class="why">怎样用同分布的新题检测过拟合与污染。</span></li>
+  <li><a href="https://arxiv.org/abs/2509.15541">Stress Testing Deliberative Alignment for Anti-Scheming Training</a>（OpenAI 与 Apollo, 2025）<span class="why">评估意识怎样随训练上升、怎样影响安全评测的结论。</span></li>
 </ol>
 
 <div class="nextq">评测告诉我们模型能做什么。更难的问题是它会不会做我们不希望的事：讨好用户、钻奖励空子、在测试时伪装。对齐研究怎样定义“好的行为”，又发现了哪些令人不安的现象？下一章（第 <a class="xref" data-ref="alignment"></a> 章）。</div>
 
-<p class="src">资料：<a href="https://gluebenchmark.com/">GLUE</a> · <a href="https://arxiv.org/abs/2009.03300">MMLU</a> · <a href="https://arxiv.org/abs/2311.12022">GPQA</a> · <a href="https://arxiv.org/abs/2211.09110">HELM</a> · <a href="https://lmarena.ai/">LMArena</a> · <a href="https://arxiv.org/abs/2306.05685">LLM-as-a-judge</a> · <a href="https://arxiv.org/abs/2406.19314">LiveBench</a> · <a href="https://arxiv.org/abs/2411.04872">FrontierMath</a> · <a href="https://arxiv.org/abs/2501.14249">Humanity's Last Exam</a> · <a href="https://arcprize.org/">ARC Prize</a> · <a href="https://openai.com/index/gdpval/">GDPval</a> · <a href="https://metr.org/blog/2026-1-29-time-horizon-1-1/">METR Time Horizon 1.1</a> · <a href="https://arxiv.org/abs/2511.04703">Measuring what Matters（构念效度）</a> · <a href="https://arxiv.org/abs/2602.15532">LLM 评测的构念效度（2026）</a> · <a href="https://arxiv.org/abs/2602.11674">基准健康指数</a> · <a href="https://github.com/lhl/realitycheck-data/blob/main/analysis/syntheses/metr-2025-2026-time-horizon-synthesis.md">METR 2025–26 数据汇总</a>。</p>
+<p class="src">资料：<a href="https://gluebenchmark.com/">GLUE</a> · <a href="https://arxiv.org/abs/1905.00537">SuperGLUE</a> · <a href="https://arxiv.org/abs/2009.03300">MMLU</a> · <a href="https://arxiv.org/abs/2406.04127">Are We Done with MMLU?（MMLU-Redux）</a> · <a href="https://arxiv.org/abs/2206.04615">BIG-bench</a> · <a href="https://arxiv.org/abs/2211.09110">HELM</a> · <a href="https://arxiv.org/abs/2311.12022">GPQA</a> · <a href="https://arxiv.org/abs/2411.04872">FrontierMath</a> · <a href="https://arxiv.org/abs/2501.14249">Humanity's Last Exam</a> · <a href="https://www.futurehouse.org/research/hle-exam">FutureHouse 对 HLE 的核查</a> · <a href="https://arxiv.org/abs/2310.11324">Sclar 等：提示格式敏感性</a> · <a href="https://arxiv.org/abs/2107.03374">Codex（pass@k 无偏估计）</a> · <a href="https://arxiv.org/abs/2406.12045">τ-bench（pass^k）</a> · <a href="https://lmarena.ai/">LMArena</a> · <a href="https://www.lmsys.org/blog/2023-12-07-leaderboard/">从在线 Elo 改为 Bradley-Terry（2023-12）</a> · <a href="https://www.lmsys.org/blog/2024-08-28-style-control/">风格控制（2024-08）</a> · <a href="https://arxiv.org/abs/2508.11847">去掉少量偏好就能改变榜首</a> · <a href="https://arxiv.org/abs/2306.05685">LLM-as-a-judge</a> · <a href="https://arxiv.org/abs/2406.19314">LiveBench</a> · <a href="https://arxiv.org/abs/2404.07972">OSWorld</a> · <a href="https://snorkel.ai/blog/terminal-bench-2-0-raising-the-bar-for-ai-agent-evaluation/">Terminal-Bench 2.0</a> · <a href="https://epoch.ai/publications/what-skills-does-swe-bench-verified-evaluate">SWE-bench Verified 的构成（Epoch AI）</a> · <a href="https://openai.com/index/why-we-no-longer-evaluate-swe-bench-verified/">为什么不再评测 SWE-bench Verified（OpenAI, 2026-02）</a> · <a href="https://metr.org/blog/2026-1-29-time-horizon-1-1/">METR Time Horizon 1.1</a> · <a href="https://github.com/lhl/realitycheck-data/blob/main/analysis/syntheses/metr-2025-2026-time-horizon-synthesis.md">METR 2025–26 数据汇总</a> · <a href="https://epoch.ai/data-insights/interpreting-eci">Epoch 能力指数（ECI）</a> · <a href="https://arxiv.org/abs/2402.14992">tinyBenchmarks</a> · <a href="https://arcprize.org/">ARC Prize</a> · <a href="https://openai.com/index/gdpval/">GDPval</a> · <a href="https://arxiv.org/abs/2511.04703">Measuring what Matters（构念效度）</a> · <a href="https://arxiv.org/abs/2602.15532">LLM 评测的构念效度（2026）</a> · <a href="https://arxiv.org/abs/2602.11674">基准健康指数</a> · <a href="https://www.transformernews.ai/p/claude-sonnet-4-5-evaluation-situational-awareness">Claude Sonnet 4.5 的评估意识（报道）</a> · <a href="https://www.redwoodresearch.org/blog/sonnet-45s-eval-gaming-seriously">Redwood 对 Sonnet 4.5 系统卡的分析</a> · <a href="https://www.apolloresearch.ai/science/stress-testing-deliberative-alignment-for-anti-scheming-training">Apollo：反策划训练与评估意识</a> · <a href="https://www.anthropic.com/engineering/eval-awareness-browsecomp">Eval awareness in Claude Opus 4.6's BrowseComp performance（2026-03）</a> · <a href="https://deploymentsafety.openai.com/gpt-6-astra/metagaming-and-alignment-faking-in-evaluations">GPT-6 Astra 系统卡：评估中的元博弈（2026-09）</a>。本章三个新演示都是玩具模拟：数字来自实际抽样，模型参数是为说明问题而设定的。</p>
 
 <footer id="pager"></footer>
 </div></main>

@@ -64,19 +64,19 @@ document.addEventListener('DOMContentLoaded', () => {
     'long-context': 'KV 缓存公式、GQA 与 MLA（矩阵吸收推导）、FlashAttention 与在线 softmax、线性注意力的结合律与 Delta 规则（梯度下降视角）、混合之争、稀疏注意力、迷失在中间',
     hardware: 'GPU 的计算与存储层次、Roofline 与内存墙、分块矩阵乘法的复用推导、低精度为什么翻倍算力、脉动阵列与全 SRAM 芯片、CUDA 护城河之争、2026 芯片格局',
     quantization: '带宽上限、Δ²/12 误差推导与离群值、分组与微缩放（bpw）、Hadamard 旋转与 GPTQ 推导、量化实验室、STE 与 QAT、过度训练更难量化、三值模型之争',
-    serving: '预填充与解码、批多大才用满算力、连续批处理与 PagedAttention、前缀缓存、投机解码（精确性证明）、P/D 分离之争、每百万 token 的成本与杰文斯悖论',
+    serving: '跟着一个请求走一遍；批处理的算术强度、KV 显存账与 GQA/MLA、分页与前缀缓存、排队论与 goodput、投机解码的证明、分块预填充与 P/D 分离、每百万 token 的成本',
     'training-systems': '每参数 16 字节与激活重算、五种并行、流水线气泡与环形全规约推导、MFU、FP8/FP4 训练、万卡故障统计、集中 vs 分布式训练、RL 系统',
     'on-device': '三本账（内存、生成速度、读提示时间）、格式与运行时、新架构本地反而慢、Mac 统一内存、手机 3B 甜点、TOPS 怎么打折、4070 Ti 跑三值 27B 等实战记录',
     vlm: 'ViT 与 patch 计数、CLIP 对比学习（互信息下界推导）与 SigLIP、编码器 + 投影 + LLM、原生 vs 后装之争、动态分辨率、光学压缩、视频 token 预算、视觉盲点之争',
     diffusion: '前向加噪、后验均值与 Tweedie 公式、速度场与连续性方程、SDE vs ODE（福克-普朗克）、CFG 的贝叶斯推导、少步蒸馏、完美去噪器只会背书、扩散 vs 自回归',
     image: '潜空间 token 计数、U-Net → DiT（adaLN）→ MMDiT、为什么不会写字、SDEdit 强度与 ControlNet 零初始化、自回归回归与统一模型、水印与版权之争',
-    video: '3D VAE 与时空 patch 的 token 计数、全 3D 与分解注意力、为什么联合去噪、自回归漂移与 Diffusion Forcing、原生音频与噪声分阶段 MoE、视频模型懂物理吗、帧链推理',
+    video: '从零开始算一段 5 秒视频的 token 与注意力账、3D 因果 VAE、联合去噪为什么一致、自回归漂移与 Self Forcing、少步与实时、每一代在修什么（噪声分工 MoE、原生音频、多镜头）、懂物理之争',
     audio: '梅尔频谱与 Whisper（及其幻觉）、RVQ 编解码器与码率、编解码器语言模型做 TTS、声音克隆、延迟账与全双工、三段式 vs 端到端、音乐生成与唱片诉讼和解',
     spatial: '体渲染公式（比尔-朗伯推导）与 NeRF、3D 高斯泼溅的投影与混合、SDS 与雅努斯问题、DUSt3R/VGGT 前馈重建、TRELLIS 三维潜空间、世界生成、空间推理之争',
     'world-models': '动作条件的动态模型、Dreamer 在想象中练习、误差指数累积与记忆、GameNGen/Genie 可以玩的视频、Waymo 与 Cosmos 的物理仿真、JEPA 与像素/表示/三维路线之争',
     embodied: '莫拉维克悖论、动作 token 化（RT-2）与流匹配动作块（π0）、行为克隆 T²ε 与 DAgger、快慢双系统、世界动作模型与 π0.7、数据从哪来、人形机器人之争',
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
-    evaluation: '误差棒（标准误）、提示格式差 76 分、饱和与污染（GSM1k）、竞技场 Elo 与排行榜幻觉、LLM 评委偏差、METR 时间跨度（拟合与外推）、构念效度与评估意识',
+    evaluation: '100 题玩具基准：标准误、配对检验与聚类；饱和与污染、pass@k 的无偏估计、竞技场 Elo 与 Bradley-Terry、METR 时间跨度、每一代基准在修什么、评估意识',
     alignment: '宪法与 Model Spec、谄媚事故、钻空子泛化成涌现不对齐、幻觉的计分根源、思维链可监控性、对齐伪装与人设',
     jailbreak: '目标冲突、浅层对齐与拒绝方向；越狱的幂律统计；防御从拒绝训练下移到分类器级联、数据过滤与架构隔离（只讲机制）',
     science: '共进化与 AlphaFold、天气 AI、材料发现的基础率、数学从 IMO 金牌到开放问题、AI 科学家；验证是瓶颈',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 81], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 88], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
