@@ -45,7 +45,7 @@
     { s: 'alignment', t: '对齐', st: 'new' },
     { s: 'jailbreak', t: '越狱与防御', st: 'new' },
     { part: '八 · 应用与社会' },
-    { s: 'science', t: 'AI for Science 与数学', st: 'todo' },
+    { s: 'science', t: 'AI for Science 与数学', st: 'new' },
     { s: 'industry', t: '产业、算力经济与治理', st: 'todo' },
     { part: '收尾' },
     { s: 'frontier', t: '前沿地图与开放问题', st: 'old' },

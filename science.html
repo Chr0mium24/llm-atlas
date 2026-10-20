@@ -12,21 +12,186 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>AI for Science 与数学</h1>
-  <p class="lede">有验证器的领域进展最快：数学有 Lean，生物有实验。</p>
+  <h1>AI for Science 与数学：进展快慢取决于验证</h1>
+  <p class="lede">AlphaFold 拿了诺贝尔奖，天气预报模型跑赢了最好的数值预报，AI 在 2025 年拿到 IMO 金牌，2026 年开始解决真正的开放问题。这一章先讲 AlphaFold 怎样从进化记录里读出蛋白质结构，再看天气、材料、数学、“AI 科学家”。贯穿全章的问题是：<b>一个领域的进展快慢，主要取决于“验证一个答案”要花多少成本</b>。数学有 Lean 当即时、零误差的验证器，所以跑在最前面；湿实验科学要等几周、花几万美元，AI 生成的“发现”大部分还没人来得及验证。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.7）。</div>
+<div class="bridge">第 <a class="xref" data-ref="rl"></a> 章说过，强化学习在“能自动判断对错”的任务上进展最快（可验证奖励）。科学研究把这条规律放大了：生成假设、证明、候选分子已经很便宜，<b>验证</b>成了真正的瓶颈。上一章是“怎样防止模型做坏事”，这一章是“怎样确认模型做的好事是真的”。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>注意力：第 <a class="xref" data-ref="attention"></a> 章；扩散模型（AlphaFold 3、GenCast 都用它）：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>可验证奖励、测试时搜索：第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="reasoning"></a> 章；智能体：第 <a class="xref" data-ref="agents"></a> 章</li>
+    <li>竞技场式的 Elo 打分：第 <a class="xref" data-ref="evaluation"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="protein">AlphaFold：从进化记录里读出结构</h2>
+<p>蛋白质是一串氨基酸，折叠成特定的三维形状后才能工作。可能的形状多到天文数字（列文塔尔悖论），实验测定一个结构往往要几个月到几年。从 1994 年起，每两年一次的 CASP 竞赛用尚未公开的实验结构检验预测方法，进展缓慢；2020 年的 CASP14，AlphaFold 2 的精度第一次接近实验测定水平。</p>
+<p>关键线索来自进化。把同一个蛋白在成千上万个物种中的版本对齐，得到<dfn data-t="msa">多序列比对</dfn>（MSA）：每一行是一个物种的序列，每一列是同一个位置。如果两个位置在三维结构中紧挨着，一个位置的突变破坏了它们的配合，往往需要另一个位置随之突变来补偿，否则蛋白就失去功能、被自然选择淘汰。于是这两列会“一起变”，这叫<dfn data-t="coevolution">共进化</dfn>。把哪些列一起变找出来，就得到了一张“谁和谁挨着”的接触图，结构的大半就确定了。</p>
+<div class="fx">
+\[ \mathrm{MI}_{ij} = \sum_{a,b} \htmlClass{sym-f}{f_{ij}(a,b)}\,\log\frac{f_{ij}(a,b)}{\htmlClass{sym-fi}{f_i(a)\,f_j(b)}} \]
+  <div class="fx-read">衡量第 \(i\) 列和第 \(j\) 列“一起变”的程度：如果两列互不相关，残基组合 \((a,b)\) 出现的频率应该等于各自频率的乘积，比值是 1，对数是 0；越偏离独立，互信息越大。</div>
+  <dl class="fx-syms">
+    <dt data-sym="f">\(f_{ij}(a,b)\)</dt><dd>比对中第 \(i\) 列是 \(a\)、第 \(j\) 列是 \(b\) 的序列比例</dd>
+    <dt data-sym="fi">\(f_i(a)\,f_j(b)\)</dt><dd>假如两列独立时，这种组合应有的比例</dd>
+  </dl>
+  <div class="fx-eg">一个位置是正电荷时，与它接触的位置几乎总是负电荷，反之亦然：组合 \((+,-)\) 和 \((-,+)\) 远比独立时多，\((+,+)\) 几乎没有，互信息就高。问题是，互信息分不清<b>直接</b>和<b>间接</b>：A 和 B 接触、B 和 C 接触，A 和 C 即使相隔很远，也会因为都跟着 B 变而显得相关。</div>
+</div>
+<div data-demo="msa-coevolution"></div>
+<details class="deep"><summary>推导：全局模型为什么能去掉间接相关</summary><div class="in">
+<p>用一条最简单的链说明。设三个量依次依赖：\(x_2\) 由 \(x_1\) 决定（加噪声），\(x_3\) 由 \(x_2\) 决定（加噪声），\(x_1\) 和 \(x_3\) 没有直接联系。联合分布按依赖关系分解：</p>
+\[ p(x_1,x_2,x_3) = p(x_1)\,p(x_2\mid x_1)\,p(x_3\mid x_2) \]
+<p>取高斯的情形，对数密度是各因子的二次型之和：第一项只含 \(x_1^2\)，第二项只含 \(x_1, x_2\)，第三项只含 \(x_2, x_3\)。展开后<b>没有 \(x_1x_3\) 交叉项</b>。而高斯分布的对数密度是 \(-\tfrac12\mathbf x^\top\Theta\,\mathbf x\)，\(x_1x_3\) 的系数正是 \(\Theta_{13}\)，所以</p>
+\[ \Theta = \Sigma^{-1} = \begin{pmatrix} * & * & 0\\ * & * & *\\ 0 & * & * \end{pmatrix},\qquad \text{但 } \Sigma_{13} = \operatorname{Cov}(x_1,x_3) \neq 0 \]
+<p>协方差（以及互信息）看的是 \(\Sigma\)：\(x_1\) 与 \(x_3\) 通过 \(x_2\) 相关。逆协方差看的是 \(\Theta\)：在其他变量都已知的条件下，两者是否还相关，对间接相关给出 0。</p>
+<p>“直接耦合分析”（DCA, 2011）把这个思想推广到 20 种氨基酸：假设序列的概率是 \(P(s)\propto\exp\big(\sum_i h_i(s_i)+\sum_{i&lt;j}J_{ij}(s_i,s_j)\big)\)，只有直接接触的位置之间才有耦合 \(J_{ij}\)；在高斯近似下，\(J\) 就是协方差矩阵的逆取负。演示里的“全局模型”就是这样算的。</p>
+<p><b>这个推导告诉我们：</b>“相关”和“直接作用”的区别，就是协方差与逆协方差的区别。要找出直接作用，必须同时考虑所有变量，而不是一对一对地看。AlphaFold 2 没有显式求逆，但它的 Evoformer 在比对的行（物种）和列（位置）上反复做注意力，并在“位置对”的表示上做三角形更新（如果 i 靠近 j、j 靠近 k，i 和 k 的距离就受约束），相当于学会了一种更强的全局推断。</p>
+</div></details>
+<p>AlphaFold 2（2021）把比对和“位置对”两种表示交给 Evoformer 反复更新，再由结构模块直接输出原子坐标，并给每个残基一个置信度。DeepMind 随后公开了 2 亿多个预测结构，覆盖几乎所有已知蛋白。2024 年的 AlphaFold 3 把结构模块换成了<b>扩散模型</b>（第 <a class="xref" data-ref="diffusion"></a> 章），直接对原子坐标去噪，能预测蛋白与 DNA、RNA、小分子药物的复合物；同年，诺贝尔化学奖一半授予 Hassabis 和 Jumper（结构预测），一半授予 David Baker（计算蛋白设计）。</p>
+<p>另一条路线完全不用比对：ESM 系列把氨基酸序列当文本，训练一个大语言模型，进化信息被压缩进了权重；2024 年的 ESM3 生成了一种与已知荧光蛋白只有 58% 相同的新荧光蛋白。设计方向上，RFdiffusion（2023）用扩散模型直接生成能结合指定靶点的新蛋白骨架。</p>
+
+<h2 id="weather">天气：没学过方程的模型</h2>
+<aside class="dispute surprise">
+  <h4>意外：不解物理方程，反而预报得更准</h4>
+  <dl>
+    <dt>原以为</dt><dd>天气预报要在超级计算机上数值求解大气的流体力学方程，这是几十年物理建模的积累，机器学习最多做些后处理。</dd>
+    <dt>实际发现</dt><dd>Google DeepMind 的 GraphCast（2023）只从 40 年的历史再分析数据中学习“6 小时后的大气是什么样”，在一块 TPU 上一分钟内给出 10 天预报，在 90% 的检验指标上优于欧洲中期天气预报中心（ECMWF）的高分辨率确定性预报。GenCast（2024）用扩散模型生成整套集合预报，在 97% 的指标上优于 ECMWF 的集合预报。2025 年 2 月，ECMWF 让自己的 AI 模型投入业务运行。</dd>
+    <dt>为什么</dt><dd>大气是被观测得最充分的物理系统之一：几十年、每天几次、覆盖全球的格点数据，足够让模型学到动力学的统计规律；推理时也不需要像数值方法那样用很小的时间步长迭代。</dd>
+    <dt>现在怎么看</dt><dd>AI 模型并没有取代物理：它的训练数据（再分析）和每次预报的初始场，仍来自物理模型与资料同化；对训练数据中罕见的极端事件，外推能力仍有疑问。2025 年开始出现直接从原始观测出发、端到端的预报系统。</dd>
+  </dl>
+</aside>
+
+<h2 id="materials">材料：生成容易，确认难</h2>
+<p>2023 年，DeepMind 的 GNoME 宣布预测了 220 万种新晶体，其中约 38 万种被认为热力学稳定；同期发表的伯克利 A-Lab 用机器人在 17 天里合成了 58 个目标中的 41 个。随后材料学家的审查泼了冷水：抽查发现许多“新材料”其实已知、不太可信或没有用途；A-Lab 的自动物相鉴定也被指出存在错误，部分化合物并非声称的那种。这不是说生成无用，而是说明：<b>当生成的速度远超验证的速度，宣布出来的“发现”里有多少是真的，取决于验证有多可靠</b>。</p>
+<div class="fx">
+\[ P(\text{真}\mid\text{通过筛选}) = \frac{\htmlClass{sym-p}{p}\cdot\mathrm{TPR}}{\htmlClass{sym-p}{p}\cdot\mathrm{TPR} + (1-\htmlClass{sym-p}{p})\cdot\htmlClass{c-adv}{\mathrm{FPR}}} \]
+  <div class="fx-read">候选中只有比例 \(p\) 是真的。筛选能认出其中比例 TPR 的真货，但也会把比例 FPR 的假货误放过去。通过筛选的里面有多少是真的？当 \(p\) 很小时，哪怕 <span style="color:var(--s2)">误放率</span> 不大，假货的绝对数量也会淹没真货。</div>
+  <dl class="fx-syms">
+    <dt data-sym="p">\(p\)</dt><dd>候选（假设、材料、证明）中真正成立的比例，即“基础率”</dd>
+  </dl>
+  <div class="fx-eg">\(p = 1\%\)，TPR \(= 90\%\)，FPR \(= 5\%\)：通过筛选的里面只有约 15% 是真的。如果验证器是 Lean 这样的形式化检查（FPR 实际为 0），通过的就几乎全是真的，与 \(p\) 多小无关。这就是数学跑得最快的原因：AI 可以大量生成，只把通过机器检查的拿出来。湿实验、同行评审、模型评审的 FPR 都不是 0。</div>
+</div>
+
+<h2 id="math">数学：从奥赛到开放问题</h2>
+<p>数学的特殊之处是可以<dfn data-t="formal-proof">形式化证明</dfn>：用 Lean 这样的证明助手把每一步推理写成程序，由一个很小的内核机械地检查，检查通过就不可能出错（除非命题本身被写错了）。这给了强化学习完美的奖励信号。进展沿着三条线展开：</p>
 <ul>
-  <li>AlphaFold 与蛋白质结构</li>
-  <li>AlphaProof：Lean 形式化 + RL</li>
-  <li>IMO 2025：自然语言证明拿到金牌分数</li>
-  <li>AI 科研助手：Co-Scientist、AI Scientist</li>
-  <li>可验证性：为什么数学快、湿实验慢</li>
+  <li><b>程序搜索</b>：答案能被自动打分的问题（构造一个更大的集合、更少的乘法次数），让语言模型生成程序、评估器打分、进化式迭代。FunSearch（2023）在帽集问题上找到更大的构造，是语言模型第一次在开放问题上做出新发现；AlphaEvolve（2025）找到只用 48 次乘法的 4×4 复矩阵乘法张量分解（打破 1969 年 Strassen 方法的 49 次），把 11 维接吻数的下界从 592 提到 593，还帮 Google 的数据中心调度省下约 0.7% 的算力。</li>
+  <li><b>形式化 + 强化学习</b>：AlphaGeometry（2024）用合成数据训练，解决了大多数奥赛几何题；AlphaProof 把约一百万道题自动翻译成 Lean，用 AlphaZero 式的强化学习训练，考试时还对题目的变体继续训练。2024 年 IMO，两者合计 28/42 分，达到银牌水平，但题目由人工翻译成 Lean，个别题用了三天。</li>
+  <li><b>自然语言推理</b>：2025 年 IMO，Gemini Deep Think 在 4.5 小时考试时限内用自然语言写出证明，得到 35/42 分的金牌成绩，由 IMO 官方评分；OpenAI 的实验模型同样得 35 分（由前奖牌得主评分）；Harmonic 的 Aristotle 则以 Lean 形式化证明达到金牌水平。</li>
+</ul>
+<p>2026 年，前沿从奥赛题转向研究问题（以下多为各公司公布、媒体报道，审查仍在进行）：</p>
+<ul>
+  <li><b>1 月</b>：GPT-5.2 Pro 写出证明、Aristotle 形式化到 Lean，解决了几道埃尔德什问题。陶哲轩认为 #728 是第一道“基本自主”、且不在已有文献中的解答，同时提醒这些是“最低垂的果实”：多年未解多半是因为没人认真做，而不是太难。（2025 年 10 月曾有 OpenAI 高管宣称 GPT-5“解决了 10 道埃尔德什问题”，实际是模型找到了早已发表的文献，被问题库维护者斥为严重误导。）</li>
+  <li><b>2 月起</b>：11 位数学家发起 First Proof 挑战，每轮出 10 道研究级引理。第一轮各模型给出的“证明”看起来都很自信，只有 2 道正确；6 月一轮最好成绩 6–7 道；10 月一轮，一个让多个智能体互相检查的系统解出 9 道，基于最强开源模型的系统一道未解（据《科学美国人》报道）。</li>
+  <li><b>5 月</b>：OpenAI 宣布内部模型否定了埃尔德什 1946 年提出的平面单位距离猜想，由数位知名数学家核查（据 OpenAI 及媒体报道）。</li>
+  <li><b>10 月</b>：OpenAI 一次性公开了 722 份由未发布的内部模型写成的数学手稿，声称在 372 个开放问题上取得进展，其中包括若干著名猜想的特例；只有一部分附 Lean 形式化，均未经同行评审，一天后就因一个符号错误撤回了 3 份。数学界反应两极：有人称之为数学史上最重要的时刻，有人批评这是把“凌乱的初稿”丢给数学界去收拾（据《科学》《自然》报道）。</li>
+</ul>
+<aside class="dispute">
+  <h4>自然语言还是形式化</h4>
+  <dl>
+    <dt>形式化派</dt><dd>只有机器检查过的证明才可信，形式化也为强化学习提供了零噪声的奖励；当 AI 能批量生成证明时，人类审稿根本跟不上，形式化是唯一能规模化的验证方式。</dd>
+    <dt>自然语言派</dt><dd>数学文献几乎全是自然语言，训练数据多出几个数量级；Lean 的数学库只覆盖了现代数学的一部分，很多研究问题连“命题”都还写不进去；2025 年的 IMO 金牌和 2026 年的多数研究级结果都是先用自然语言得到的。</dd>
+    <dt>现在怎么看</dt><dd>两条路在合流：模型用自然语言探索和写证明，再由专门的系统自动形式化、在 Lean 里检查（2026 年 1 月的埃尔德什问题就是这样完成的）。剩下的风险在“命题是否被正确形式化”：证明可以被机器保证，命题的含义仍要靠人来确认。</dd>
+  </dl>
+</aside>
+
+<h2 id="scientist">AI 科学家：从提出假设到设计实验</h2>
+<p>更进一步，是让 AI 走完整个科研循环。Sakana 的 AI Scientist（2024）从选题、写代码、跑实验到写论文全自动完成；它的第二版有一篇论文通过了 ICLR 2025 一个研讨会的同行评审（按事先约定撤回）。Google 的 Co-Scientist 让多个智能体生成、互相批评假设，再用类似竞技场的 Elo 锦标赛排序（第 <a class="xref" data-ref="evaluation"></a> 章）；FutureHouse 的 Robin 把文献检索、实验设计和数据分析智能体串起来。两者 2026 年 5 月背靠背发表在《自然》：Co-Scientist 为急性髓系白血病和肝纤维化提出了候选药物，在细胞和类器官实验中得到验证；Robin 为干性黄斑变性找到了一个已获批的青光眼药物作为候选。</p>
+<p>需要看清边界：两者做的都是“老药新用”而不是全新分子，验证停留在细胞或类器官层面，所有实验都由人和仪器完成。AI 压缩的是文献阅读、假设生成、数据分析的认知劳动（Robin 声称把一轮发现周期的数百小时人工压到两小时以内），湿实验这一步的速度和成本没有变，这正是上面“材料”一节那张公式里的瓶颈。</p>
+
+<aside class="dispute">
+  <h4>AI 的“发现”有多少是真的</h4>
+  <dl>
+    <dt>乐观</dt><dd>真正的新结果已经出现：机器检查过的埃尔德什问题解答、经专家核查的单位距离反例、在实验室里验证过的药物候选。形式化工具和自动化实验室会让验证也跟着加速。</dd>
+    <dt>谨慎</dt><dd>宣布的速度远超验证的速度：220 万种材料里有多少有用？722 份手稿谁来审？模型会自信地写出错误证明，会把已有文献当成新发现，评审者的时间是有限的公共资源。没有独立验证的“发现”，按基础率公式，大部分可能是假的。</dd>
+    <dt>现在怎么看</dt><dd>瓶颈已经从“生成”转移到“验证”。可信的成果要么经过形式化检查，要么经过独立复现，要么经过领域专家的公开审查；发布方是否主动标明每个结果处在哪个验证阶段，正在成为新的学术规范问题。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">AlphaFold 解决了蛋白质折叠问题。</b>它预测的是静态结构，不是折叠过程；对动态构象、无序区域、单点突变的影响仍然不准，在无序区域还会“幻觉”出看似合理的结构。</li>
+  <li><b class="m">AI 发现了两百万种新材料。</b>那是预测的稳定结构；真正合成出来、确认新颖且有用的只是极少数。</li>
+  <li><b class="m">AI 解数学题只是在背文献。</b>2026 年已有经机器检查、不在文献中的解答；但反过来，“AI 已能做任何数学研究”也不对：模型常写出自信的错误证明，在表述和引用上仍很弱。</li>
+  <li><b class="m">AI 科学家可以独立完成科研。</b>目前它们提出假设、设计和分析实验，实验仍由人完成，验证的速度没有变。</li>
+  <li><b class="m">天气 AI 已经不需要物理模型。</b>它的训练数据和初始条件仍来自物理模型与资料同化。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2011–2021</div>
+    <h4>从共进化到 AlphaFold 2</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>结构预测几十年进展缓慢，实验测定又慢又贵。</dd>
+      <dt>怎么解决</dt><dd>直接耦合分析从比对中提取接触（2011）；深度学习预测距离图（AlphaFold 1, 2018）；AlphaFold 2 端到端预测结构（2020 年 CASP14，2021 年发表）。</dd>
+      <dt>代价</dt><dd>依赖足够深的同源序列比对；只给静态结构。</dd>
+      <dt>引出</dt><dd>其他科学问题能否同样“从数据学到规律”？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>扩散模型、程序搜索与材料生成</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>从预测走向设计和发现。</dd>
+      <dt>怎么解决</dt><dd>ESMFold 用蛋白语言模型（2022）；RFdiffusion 设计新蛋白（2023）；GraphCast 天气预报（2023）；FunSearch 在开放问题上做出新发现（2023-12）；GNoME 与 A-Lab（2023-11）。</dd>
+      <dt>代价</dt><dd>“发现”的数量和质量开始脱节。</dd>
+      <dt>引出</dt><dd>能不能做真正的数学推理？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>诺贝尔奖与奥赛银牌</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>数学推理需要严格的正确性。</dd>
+      <dt>怎么解决</dt><dd>AlphaGeometry（1 月）；AlphaFold 3 改用扩散（5 月）；ESM3（6 月）；AlphaProof 与 AlphaGeometry 2 达到 IMO 银牌水平（7 月）；AI Scientist（8 月）；诺贝尔化学奖（10 月）；GenCast（12 月）。</dd>
+      <dt>代价</dt><dd>形式化路线依赖人工翻译题目，计算量巨大。</dd>
+      <dt>引出</dt><dd>自然语言推理模型能否直接做到？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>金牌与第一批 AI 科学家</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>从竞赛题走向研究，从单个工具走向完整的科研循环。</dd>
+      <dt>怎么解决</dt><dd>Co-Scientist 预印本（2 月）；ECMWF 的 AI 预报投入运行（2 月）；AlphaEvolve（5 月）；IMO 金牌，自然语言与形式化两条路线同时达到（7 月）；陶哲轩等用 AlphaEvolve 系统地攻关 67 个问题（11 月）。</dd>
+      <dt>代价</dt><dd>“解决了 10 道埃尔德什问题”的乌龙（10 月）暴露了宣传与验证的落差。</dd>
+      <dt>引出</dt><dd>真正的开放问题。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>开放问题，与验证的瓶颈</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>研究级问题需要原创性，结果需要可信的验证。</dd>
+      <dt>怎么解决</dt><dd>机器检查过的埃尔德什问题解答（1 月）；First Proof 挑战三轮成绩从 2/10 到 9/10；Co-Scientist 与 Robin 发表于《自然》（5 月）；单位距离猜想被否定（5 月，据 OpenAI）；722 份数学手稿的集中发布（10 月）。</dd>
+      <dt>代价</dt><dd>审稿与复现的人力成为稀缺资源；最强的模型不对外开放，外部难以检验。</dd>
+      <dt>引出</dt><dd>谁拥有这些能力、花多少钱、由谁来规范？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论中</span>批量发布还是逐篇审查</summary><div>OpenAI 认为一次性公开、标明验证阶段可以加速整个领域；批评者认为这把审查成本转嫁给了数学界，且最强模型不公开，外人无法复现结果的产生过程。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 1000 个 AI 生成的药物假设中有 2% 是真的；一种细胞实验能检出 80% 的真假设，但会把 10% 的假假设误判为有效。通过实验的假设里有多少是真的？</summary><div class="ans">真且通过：\(20\times0.8=16\)；假且通过：\(980\times0.1=98\)。通过的 114 个里只有 \(16/114\approx14\%\) 是真的。所以“AI 发现的候选通过了初筛”离“真的有效”还很远，需要更严格的后续验证。</div></details>
+<details class="quiz"><summary>2. 在演示里，为什么增加序列数不能消除互信息给出的错误接触？</summary><div class="ans">那些不是随机噪声，而是真实存在的统计相关：链上不相邻的两个位置确实一起变化，只不过是通过中间的位置间接地变化。数据越多，这个相关估计得越准，但它依然存在。要去掉它，必须换方法：在给定其他位置的条件下问两者是否还相关（全局模型）。</div></details>
+<details class="quiz"><summary>3. 为什么数学的进展比生物学快？用本章的公式解释。</summary><div class="ans">数学有 Lean 这样的形式化验证器：验证几乎即时、成本极低、误放率为 0。这既让通过检查的结果几乎全为真（基础率公式中 FPR = 0），也给强化学习提供了大量零噪声的奖励（第 <a class="xref" data-ref="rl"></a> 章）。生物学的验证要做实验，慢、贵、有噪声，生成再多也会卡在验证上。</div></details>
+<details class="quiz"><summary>4. 为什么 AlphaFold 对“孤儿蛋白”（几乎没有同源序列）预测得不好？</summary><div class="ans">它的主要线索是比对中的共进化信号，同源序列太少时，统计不出可靠的相关（正如演示中序列很少时一片噪声）。蛋白语言模型把进化信息压缩进了权重，可以部分弥补，但对真正“孤立”的序列仍然较弱。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://www.nature.com/articles/s41586-021-03819-2">Highly accurate protein structure prediction with AlphaFold</a>（Jumper 等, 2021）<span class="why">结构预测的转折点。</span></li>
+  <li><a href="https://www.pnas.org/doi/10.1073/pnas.1111471108">Direct-coupling analysis of residue coevolution</a>（Morcos 等, 2011）<span class="why">直接与间接耦合的区分。</span></li>
+  <li><a href="https://www.nature.com/articles/s41586-024-08252-9">GenCast</a>（Price 等, 2024）<span class="why">扩散模型做集合天气预报。</span></li>
+  <li><a href="https://www.nature.com/articles/s41586-023-06924-6">FunSearch</a>（Romera-Paredes 等, 2023）<span class="why">生成 + 评估器的发现循环。</span></li>
+  <li><a href="https://www.nature.com/articles/s41586-025-09833-y">AlphaProof</a>（2025）<span class="why">形式化 + 强化学习的完整论文。</span></li>
+  <li><a href="https://www.science.org/content/article/openai-just-changed-math-forever-exactly-how-no-one-yet-knows">OpenAI just changed math forever. Exactly how, no one yet knows</a>（《科学》, 2026）<span class="why">数学界如何看待批量发布的 AI 证明。</span></li>
+</ol>
+
+<div class="nextq">这些能力背后是巨额的算力投入、尚未厘清的版权问题和刚开始执行的监管。训练一个前沿模型要花多少钱？推理价格为什么一年降一个数量级？AI 能不能用受版权保护的书训练？下一章（第 <a class="xref" data-ref="industry"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://www.nature.com/articles/s41586-024-07487-w">AlphaFold 3</a> · <a href="https://www.nobelprize.org/prizes/chemistry/2024/press-release/">2024 诺贝尔化学奖</a> · <a href="https://www.science.org/doi/10.1126/science.ade2574">ESMFold</a> · <a href="https://www.science.org/doi/10.1126/science.ads0018">ESM3</a> · <a href="https://www.nature.com/articles/s41586-023-06415-8">RFdiffusion</a> · <a href="https://www.science.org/doi/10.1126/science.adi2336">GraphCast</a> · <a href="https://www.ecmwf.int/en/about/media-centre/news/2025/ecmwfs-ai-forecasts-become-operational">ECMWF AI 预报投入运行</a> · <a href="https://www.nature.com/articles/s41586-023-06735-9">GNoME</a> · <a href="https://www.nature.com/articles/s41586-023-06734-w">A-Lab</a> · <a href="https://pubs.acs.org/doi/10.1021/acs.chemmater.4c00643">对 GNoME 的审查（Cheetham &amp; Seshadri）</a> · <a href="https://www.nature.com/articles/s41586-023-06747-5">AlphaGeometry</a> · <a href="https://deepmind.google/discover/blog/alphaevolve-a-gemini-powered-coding-agent-for-designing-advanced-algorithms/">AlphaEvolve</a> · <a href="https://arxiv.org/abs/2510.01346">Aristotle</a> · <a href="https://arxiv.org/abs/2601.07421">埃尔德什 #728 的 Lean 证明</a> · <a href="https://www.scientificamerican.com/article/first-proof-is-ais-toughest-math-test-yet-the-results-are-mixed/">First Proof（《科学美国人》）</a> · <a href="https://techcrunch.com/2026/05/20/openai-claims-it-solved-an-80-year-old-math-problem-for-real-this-time/">单位距离猜想（TechCrunch）</a> · <a href="https://arxiv.org/abs/2504.08066">AI Scientist v2</a> · <a href="https://doi.org/10.1038/s41586-026-10644-y">Co-Scientist（Nature 2026）</a> · <a href="https://doi.org/10.1038/s41586-026-10652-y">Robin（Nature 2026）</a> · <a href="https://theconversation.com/is-this-the-mathocalypse-why-openais-latest-results-dump-has-left-mathematicians-in-shock-293837">722 份手稿的反响（The Conversation）</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

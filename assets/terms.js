@@ -309,4 +309,9 @@ window.ATLAS_TERMS = {
   'universal-jailbreak': { t: '通用越狱', en: 'universal jailbreak', d: '同一个方法能突破几乎所有请求的越狱。一旦公开任何人都能复制，是防御方最关注的目标。', at: 'jailbreak#what' },
   'shallow-alignment': { t: '浅层对齐', en: 'shallow safety alignment', d: '对齐模型与基座模型的差异集中在回答的前几个 token（“抱歉，我不能……”）；开头一旦被换掉，后续生成接近基座模型（Qi 等, ICLR 2025）。', at: 'jailbreak#why' },
   abliteration: { t: '消融去拒绝', en: 'abliteration', d: '把拒绝方向从模型权重中投影掉，使模型几乎不再拒绝。无需训练，有权重就能做。', at: 'jailbreak#why' },
+
+  // ---- science (science.html)
+  msa: { t: '多序列比对', en: 'multiple sequence alignment (MSA)', d: '把同一个蛋白在许多物种中的序列逐位置对齐：每行一个物种，每列一个位置。AlphaFold 从中读取共进化信号。', at: 'science#protein' },
+  coevolution: { t: '共进化', en: 'coevolution', d: '结构上相互接触的两个位置，一个突变后常需另一个补偿突变，于是在比对中“一起变”。由此可推断哪些位置相邻。', at: 'science#protein' },
+  'formal-proof': { t: '形式化证明', en: 'formal proof (Lean)', d: '用 Lean 等证明助手把推理写成程序，由一个小内核机械检查；通过即不可能出错（除非命题本身写错）。为数学 RL 提供零噪声奖励。', at: 'science#math' },
 };
