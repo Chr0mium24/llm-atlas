@@ -548,4 +548,23 @@ window.ATLAS_TERMS = {
   'retrieval-memory': { t: "检索式记忆", en: "retrieval-based memory", d: "把过去的帧连同相机位置、时间戳存起来，生成新画面时只取回视野重叠最多的几帧放进上下文，让世界模型“记得”离开过的地方。", at: "world-models#memory" },
   'closed-loop-sim': { t: "闭环仿真", en: "closed-loop simulation", d: "被测策略在仿真里行动，仿真按它的动作生成下一刻的传感器数据，策略再做下一个决定；与回放录像的开环测试相对。", at: "world-models#physical" },
   'representation-collapse': { t: "表示塌缩", en: "representation collapse", d: "只要求表示之间可预测时，把所有输入映射成同一个常数是平凡最优解。JEPA 用停止梯度与滑动平均目标、LeJEPA 用分布约束、对比学习用负样本来防止。", at: "world-models#debate" },
+
+  // ---- embodied (upgrade 2026-10-20)
+  'robot-obs': { t: "观测（机器人）", en: "observation", d: "机器人在第 \\(t\\) 步能感知到的全部信息 \\(\\mathbf o_t\\)：多路相机图像、本体感知读数和语言指令。相当于强化学习里的状态，但只看得到世界的一部分。", at: "embodied#e0-task" },
+  proprioception: { t: "本体感知", en: "proprioception", d: "机器人对自身的测量：各关节的角度、速度、力矩，夹爪的开度等。数据量很小（几个到几十个数），但每一步都有。", at: "embodied#e0-task" },
+  'robot-action': { t: "动作（机器人）", en: "action", d: "每个控制步发给机器人的指令 \\(\\mathbf a_t\\)，如各关节的目标角度和夹爪开度，或末端的位移与旋转；由底层控制器负责让电机达到目标。", at: "embodied#e0-task" },
+  'control-frequency': { t: "控制频率", en: "control frequency", d: "每秒发出多少个动作 \\(f\\)。灵巧操作通常几十赫兹（50 赫兹即每 20 毫秒一个动作），人形机器人的平衡控制几百赫兹。", at: "embodied#e0-task" },
+  teleoperation: { t: "遥操作", en: "teleoperation", d: "人通过主手（同构的小机械臂、VR 手柄、数据手套）实时控制机器人完成任务，同时记录每一步的观测和动作，作为模仿学习的示范数据。", at: "embodied#e0-demo" },
+  'end-effector': { t: "末端执行器", en: "end-effector", d: "机械臂末端直接与物体接触的部件，如夹爪、灵巧手。末端空间的动作给出它在三维空间中的位移和旋转，再由逆运动学换算成关节角。", at: "embodied#e0-space" },
+  'multimodal-action': { t: "多峰动作分布", en: "multimodal action distribution", d: "同一个观测下正确的动作不止一种（从左绕或从右绕）。均方误差回归学到的是平均值 \\(\\mathbb E[\\mathbf a\\mid\\mathbf o]\\)，可能哪一种都不是；需要用 token 的 softmax 或扩散、流匹配来表示分布。", at: "embodied#bc" },
+  'covariate-shift': { t: "协变量偏移", en: "covariate shift", d: "训练时的输入分布（专家走过的状态）与部署时的输入分布（策略自己走到的状态）不同。模仿学习中，小误差把机器人带到没见过的状态，误差因此越滚越大；它是暴露偏差在连续控制中的形式。", at: "embodied#bc" },
+  dagger: { t: "DAgger", en: "Dataset Aggregation", d: "让当前策略自己执行，请专家为它实际到达的状态标注正确动作，并入数据集再训练，反复多轮（Ross 等, 2011）。把模仿学习的误差上界从 \\(T^2\\varepsilon\\) 降到 \\(uT\\varepsilon\\)，前提是错误可挽回。", at: "embodied#drift" },
+  'action-chunk': { t: "动作块", en: "action chunk", d: "策略看一次观测，输出接下来一段（如 50 步）的动作再执行。决策次数从 \\(T\\) 降到 \\(T/k\\)，减轻误差累积；代价是两次决策之间无法对变化做出反应（ACT, 2023；π0 一次预测 50 步、执行 25 步）。", at: "embodied#chunk" },
+  'fast-tokenizer': { t: "FAST 动作分词", en: "Frequency-space Action Sequence Tokenization", d: "把动作块逐维做离散余弦变换，系数缩放取整（小系数变 0），按先低频后高频排列，再用 BPE 压成 token（Physical Intelligence, 2025）。叠衬衫任务里 700 个分箱 token 压到 53 个。", at: "embodied#fast" },
+  dct: { t: "离散余弦变换（DCT）", en: "discrete cosine transform", d: "把 \\(H\\) 个采样点写成 \\(H\\) 个不同频率余弦之和的正交变换，\\(C_j\\propto\\sum_n x_n\\cos[\\frac{\\pi}{H}(n+\\frac12)j]\\)。平滑信号的能量集中在前几个低频系数；JPEG 和 FAST 都靠它压缩。", at: "embodied#fast" },
+  'action-expert': { t: "动作专家", en: "action expert", d: "接在视觉语言模型旁边、专门生成连续动作的较小网络（π0 中 3 亿参数），读取骨干各层的表示，用流匹配从噪声生成整个动作块。", at: "embodied#flow" },
+  'dual-system': { t: "双系统（系统 1 / 系统 2）", en: "dual-system architecture", d: "大模型以几赫兹理解场景和指令（系统 2），小网络以上百赫兹把它的输出变成动作（系统 1），两者异步运行。Figure Helix（7–9 赫兹 / 200 赫兹）、GR00T N1（10 / 120 赫兹）采用。", at: "embodied#dual" },
+  'sim-to-real': { t: "仿真到现实的差距", en: "sim-to-real gap", d: "仿真中的摩擦、质量、电机响应、延迟、视觉外观与真实世界的偏差，使仿真里学好的策略到真机上失效。", at: "embodied#sim" },
+  'domain-randomization': { t: "域随机化", en: "domain randomization", d: "训练时每一局随机抽取物理和外观参数 \\(\\xi\\)，优化 \\(\\mathbb E_{\\xi}[J(\\pi;\\xi)]\\)，让真实世界只是又一个随机世界（Tobin 等, 2017；OpenAI 的 ADR, 2019）。范围越宽越稳健，也越保守。", at: "embodied#sim" },
+  'advantage-conditioning': { t: "优势条件化", en: "advantage conditioning", d: "用价值函数给数据里的动作标上“好 / 不好”，训练以该标签为输入的策略，推理时固定输入“好”。由贝叶斯公式，它等于按“被标为好的概率”给原策略重新加权（π*0.6 的 Recap, 2025）。", at: "embodied#rlft" },
 };
