@@ -48,7 +48,7 @@
 document.addEventListener('DOMContentLoaded', () => {
   const INFO = {
     prologue: '六个时代的主线与支线：每个时代卡在哪个瓶颈、怎么突破、代价与引出；九年算力曲线；苦涩的教训之争；全书路线图',
-    tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
+    tokens: '从零开始：五个短语手动跑 BPE 合并、切句子、查嵌入表、算余弦相似度；BPE 是贪心压缩、Unigram 与 EM、词表大小的账、中英文 token 效率、字节回退、数字怎么切、word2vec 与向量算术、特殊 token、每一代分词器在修什么',
     attention: 'RNN 的瓶颈与路径长度；从零开始：“小猫追红球”四个词手算 Q/K/V、打分、缩放、softmax 与加权求和；因果掩码与 KV 缓存的来历、除以根号 d 的推导与 softmax 饱和、多头、归纳头与注意力汇、平方代价、每一代在修什么',
     transformer: '从零开始：一个 4 维向量逐步穿过一个块，数清一层的参数（12d²）与每 token 计算；残差流、MLP 键值记忆与 SwiGLU、Pre-Norm 与 Post-Norm 的梯度、RoPE 推导与上下文扩展、训练稳定性（QK-Norm、门控）、每一代在修什么；2026 年连残差都在改',
     generation: '从零开始：5 个词的词表手算 softmax、交叉熵、困惑度与温度采样；预测即压缩（比特数）、截断采样各砍掉什么、贪心与束搜索为什么陷入循环、约束解码、扩散语言模型的并行生成、每一代解码方法在修什么',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 123], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 126], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
