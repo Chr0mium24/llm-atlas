@@ -187,4 +187,13 @@ window.ATLAS_TERMS = {
   expert: { t: '专家', en: 'expert', d: 'MoE 层中的一个小 MLP。细粒度 MoE 有几百个专家，外加所有 token 都经过的共享专家。', at: 'moe#idea' },
   router: { t: '路由器', en: 'router / gate', d: String.raw`一个 \(d\times E\) 的线性层，给每个专家打分，选出 top-k 并给出门控权重。与模型一起训练。`, at: 'moe#idea' },
   'routing-collapse': { t: '路由坍缩', en: 'routing collapse', d: '路由器把大部分 token 送给少数专家，其余专家得不到训练。需要辅助损失或无辅助损失的偏置调节来均衡负载。', at: 'moe#balance' },
+
+  // ---- long-context (long-context.html)
+  'kv-cache': { t: 'KV 缓存', en: 'KV cache', d: String.raw`生成时缓存历史 token 的 K、V，避免重算。每 token 大小 \(2\times L\times h_{kv}\times d_h\times\) 字节数；长上下文推理时常是显存的主要占用。`, at: 'long-context#kv' },
+  gqa: { t: 'GQA', en: 'grouped-query attention', d: '把 Q 头分组，每组共享一组 K/V 头（如 64 个 Q 头配 8 个 KV 头），KV 缓存按比例缩小。2023 年后的默认设计。', at: 'long-context#kv' },
+  mla: { t: 'MLA', en: 'multi-head latent attention', d: '把每个 token 的 K、V 联合压缩为一个低维潜向量（如 512 维）加一个 64 维的 RoPE 向量来缓存，计算时把上投影吸收进 Q 和输出投影。DeepSeek-V2 提出。', at: 'long-context#kv' },
+  'flash-attention': { t: 'FlashAttention', en: 'FlashAttention', d: String.raw`把注意力分块在片上 SRAM 中算完、不写出 \(n\times n\) 矩阵的精确实现，借助在线 softmax。显存从 \(O(n^2)\) 降到 \(O(n)\)，速度提升 2–4 倍。`, at: 'long-context#flash' },
+  'online-softmax': { t: '在线 softmax', en: 'online softmax', d: String.raw`分块扫描时维护当前最大值 \(m\) 与归一化因子 \(\ell\)，遇到更大值时把已累积的结果乘 \(e^{m - m_{\text{新}}}\) 修正，最终结果与一次性计算完全一致。`, at: 'long-context#flash' },
+  'linear-attention': { t: '线性注意力', en: 'linear attention', d: String.raw`去掉 softmax，用结合律把历史压成固定大小的状态 \(S_t = S_{t-1} + \mathbf v_t\mathbf k_t^\top\)，读取 \(\mathbf o_t = S_t\mathbf q_t\)。代价线性、显存常数，但精确回忆能力有限；DeltaNet、KDA 加入误差修正与遗忘门。`, at: 'long-context#linear' },
+  ssm: { t: '状态空间模型', en: 'state space model (SSM)', d: '以固定大小的状态做递推、状态更新由输入选择性控制的序列模型，代表是 Mamba。Mamba-2 证明它与一类线性注意力等价。', at: 'long-context#linear' },
 };

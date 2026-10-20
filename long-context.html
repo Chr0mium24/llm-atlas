@@ -12,55 +12,210 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>长上下文：KV cache、FlashAttention 与线性注意力</h1>
-  <p class="lede">2023 年主流模型的上下文是 4K–8K token，2026 年的 Kimi K3、DeepSeek V4 是 1M。智能体要读整个代码仓库、几百轮工具调用记录、几小时的视频，都需要很长的上下文。障碍有两个：注意力计算是 O(n²)，生成时要缓存的 K/V 随长度线性增长。</p>
+  <h1>长上下文：KV 缓存、FlashAttention、线性与稀疏注意力</h1>
+  <p class="lede">2023 年主流模型的上下文是 4K–8K token，2026 年的 Kimi K3、DeepSeek V4 是 100 万。智能体要读整个代码仓库、几百轮工具调用记录、几小时的视频，都需要很长的上下文。障碍有两个：注意力的计算随长度平方增长，生成时要缓存的 K、V 随长度线性增长。这一章依次讲四类办法：压缩 KV 缓存（GQA、MLA）、不改数学只改计算顺序（FlashAttention）、把记忆压成固定大小的状态（线性注意力与 DeltaNet）、只看挑出来的少数 token（稀疏注意力），最后追问：模型真的用得上这么长的上下文吗？</p>
 </header>
 
-<h2 id="kv">KV cache：生成时最占显存的东西</h2>
-<p>自回归生成时，第 t 步的新 token 要和前面所有 token 做注意力。前面 token 的 K、V 每一步都一样，没必要重算，就缓存下来，这就是 <b>KV cache</b>。它的大小：</p>
-<div class="eq">KV 字节数 / token = 2 (K 和 V) × 层数 L × KV 头数 × 头维度 × 每个数的字节数<span class="note">Llama 3 70B（80 层，8 个 KV 头，头维度 128，BF16）：每 token 320 KB；128K 上下文 ≈ 40 GB，单个请求就要这么多</span></div>
-<p>减小 KV cache 的思路有四类：<b>减少 KV 头</b>（MQA、GQA）、<b>压缩到低维</b>（MLA）、<b>只存最近的</b>（滑动窗口）、<b>换成固定大小的状态</b>（线性注意力 / SSM）。2025–26 年的模型通常把几种组合起来，比如 Kimi K3 用 69 层 KDA 线性注意力加 24 层 Gated MLA。</p>
-<div data-demo="kv-cache"></div>
-<ul>
-  <li><b>MQA</b>（2019）：所有 Q 头共享 1 组 K/V。省得最多，但质量有损。</li>
-  <li><b>GQA</b>（2023）：Q 头分组，每组共享一组 K/V（如 64 个 Q 头配 8 个 KV 头）。现在的默认选择。</li>
-  <li><b>MLA</b>（DeepSeek-V2, 2024）：把 K/V 压到一个 512 维的潜向量（另加 64 维给 RoPE），计算时再升维。缓存很小，效果却不比 MHA 差。DeepSeek-V3/V4、Kimi K2/K3 都在用。</li>
-  <li><b>滑动窗口 / 局部-全局交替</b>：大部分层只看最近 w 个 token，少数层看全部（Gemma 3 是 5:1）。</li>
-  <li><b>KV cache 量化</b>：把 K/V 存成 FP8 或 4-bit（第 <a class="xref" data-ref="quantization">9</a> 章）。llama.cpp 的 <code>--cache-type-k q4_0</code> 就是这个。</li>
-</ul>
+<div class="bridge">上一章用 MoE 让参数多而计算少。第 <a class="xref" data-ref="attention"></a> 章最后留下的平方代价，是另一个瓶颈：序列越长，注意力越贵，生成时的缓存越大。</div>
 
-<h2 id="flash">FlashAttention：计算一样，只是换个顺序</h2>
-<p>朴素实现会把 n×n 的分数矩阵完整写进显存（HBM），再读出来做 softmax，再读出来乘 V。GPU 的瓶颈往往不在算力，而在 <b>显存读写</b>。FlashAttention（2022）把 Q、K、V 切成小块，放进片上 SRAM 里算完，<b>n×n 矩阵从不写回显存</b>。难点在 softmax 需要整行的最大值和总和。办法是 <b>在线 softmax</b>：一边扫描一边维护当前最大值 m 和归一化因子 l，遇到更大的值时，把之前累积的结果乘一个修正系数。</p>
+<div class="prereq">
+  <ul>
+    <li>Q/K/V、多头、平方级代价：第 <a class="xref" data-ref="attention"></a> 章</li>
+    <li>RoPE 与上下文扩展：第 <a class="xref" data-ref="transformer"></a> 章；自回归生成：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>上下文工程：第 <a class="xref" data-ref="agents"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="kv">KV 缓存：生成时最占显存的东西</h2>
+<p>自回归生成时，第 \(t\) 步的新 token 要和前面所有 token 做注意力。前面 token 的 K、V 每一步都一样，没必要重算，就缓存下来，这就是 <dfn data-t="kv-cache">KV 缓存</dfn>。它的大小：</p>
+<div class="fx">
+\[ \text{KV 字节数 / token} = 2\times \htmlClass{sym-L}{L}\times \htmlClass{sym-hkv}{h_{kv}}\times \htmlClass{sym-dh}{d_h}\times \htmlClass{sym-by}{b} \]
+  <div class="fx-read">每个 token、每一层都要存一个 K 和一个 V（所以乘 2），每个是 \(h_{kv}\) 个头、每头 \(d_h\) 维，每个数占 \(b\) 字节。总缓存再乘上序列长度和同时服务的请求数。</div>
+  <dl class="fx-syms">
+    <dt data-sym="L">\(L\)</dt><dd>层数</dd>
+    <dt data-sym="hkv">\(h_{kv}\)</dt><dd>KV 头的数量（GQA 中远少于 Q 头数）</dd>
+    <dt data-sym="dh">\(d_h\)</dt><dd>每个头的维度，常为 128</dd>
+    <dt data-sym="by">\(b\)</dt><dd>每个数的字节数：BF16 为 2，FP8 为 1</dd>
+  </dl>
+  <div class="fx-eg">Llama 3 70B：80 层，8 个 KV 头，头维度 128，BF16。每 token \(2\times 80\times 8\times 128\times 2 = 32\) 万字节（320 KB）。128K 上下文约 40 GB，<b>单个请求</b>就要这么多，比很多显卡的总显存还大。如果用 64 个 KV 头（不用 GQA），要再乘 8。</div>
+</div>
+<p>减小 KV 缓存的办法有四类，2025–26 年的模型通常组合使用：</p>
+<ul>
+  <li><b>减少 KV 头</b>：MQA（2019）让所有 Q 头共享 1 组 K/V，省得最多但质量有损；<dfn data-t="gqa">GQA</dfn>（2023）把 Q 头分组，每组共享一组 K/V（如 64 个 Q 头配 8 个 KV 头），是现在的默认选择。</li>
+  <li><b>压缩到低维</b>：<dfn data-t="mla">MLA</dfn>（多头潜注意力，DeepSeek-V2, 2024）把每个 token 的 K、V 联合压缩成一个 512 维的潜向量来缓存，计算时再升维。DeepSeek-V3/V4、Kimi K2/K3 都在用。</li>
+  <li><b>只存最近的</b>：滑动窗口注意力只看最近 \(w\) 个 token；局部层与全局层交替（Gemma 3 是 5 层局部配 1 层全局）。</li>
+  <li><b>降低精度</b>：把 K/V 存成 FP8 甚至 4 比特（第 <a class="xref" data-ref="quantization"></a> 章）。</li>
+</ul>
+<div data-demo="kv-cache"></div>
+<details class="deep"><summary>MLA 为什么只需缓存潜向量：矩阵吸收与“解耦的 RoPE”</summary><div class="in">
+<p>MLA 对每个 token 只缓存一个低维向量 \(\mathbf c = \mathbf x W_{DKV}\)（如 512 维），需要时用上投影恢复每个头的 key 和 value：\(\mathbf k^{(h)} = \mathbf c\,W_{UK}^{(h)}\)，\(\mathbf v^{(h)} = \mathbf c\,W_{UV}^{(h)}\)。看起来每次计算都要先升维，其实不必。第 \(h\) 个头的注意力分数是：</p>
+\[ \mathbf q^{(h)}\cdot\mathbf k^{(h)} = \mathbf x_q W_Q^{(h)}\big(\mathbf c\,W_{UK}^{(h)}\big)^\top = \big(\mathbf x_q\,\underbrace{W_Q^{(h)}W_{UK}^{(h)\top}}_{\text{合并成一个矩阵}}\big)\cdot\mathbf c \]
+<p>\(W_{UK}\) 可以“吸收”进 query 的投影里：先把 query 投影到 512 维的潜空间，直接与缓存的 \(\mathbf c\) 做点积，永远不需要恢复完整的 key。value 一侧同理，\(W_{UV}\) 可以吸收进输出投影。</p>
+<p>问题在于 RoPE：它对 key 的旋转依赖位置，插在 \(\mathbf c\) 和 \(W_{UK}\) 之间，破坏了上面的合并（旋转矩阵随位置变化，无法预先乘进一个固定矩阵）。DeepSeek 的解法是“解耦”：另外为每个 token 缓存一个 64 维、单独做 RoPE 的小向量负责位置信息，主体的 512 维潜向量不做 RoPE。于是每个 token 每层只缓存 \(512 + 64 = 576\) 个数。</p>
+<p><b>这个推导告诉我们：</b>DeepSeek-V3（61 层）每 token 的 KV 缓存约 \(576\times 61\times 2\) 字节 \(\approx 70\) KB，而 128 个头的普通多头注意力需要约 4 MB，相差约 57 倍，效果却不比后者差。这也解释了第 <a class="xref" data-ref="transformer"></a> 章提到的“部分维度用 RoPE”的由来。</p>
+</div></details>
+
+<h2 id="flash">FlashAttention：计算完全一样，只是换个顺序</h2>
+<p>GPU 有两级存储：容量大但慢的显存（HBM，几十 GB，每秒几 TB），和容量极小但快得多的片上 SRAM（每个计算单元只有几百 KB）。朴素的注意力实现把 \(n\times n\) 的分数矩阵完整写进显存，读出来做 softmax，写回去，再读出来乘 V。计算量不大，时间都花在了显存读写上（第 <a class="xref" data-ref="hardware"></a> 章的“访存受限”）。</p>
+<p><dfn data-t="flash-attention">FlashAttention</dfn>（Dao 等, 2022）把 Q、K、V 切成小块，搬进 SRAM 里算完，\(n\times n\) 的矩阵从不写回显存。难点在于 softmax 需要整行的最大值和总和，而分块时一次只看到一部分。解决办法是<dfn data-t="online-softmax">在线 softmax</dfn>：一边扫描一边维护当前的最大值和归一化因子，遇到更大的值时修正之前的累积结果：</p>
+<div class="fx">
+\[ \begin{aligned} m_{\text{新}} &= \max\big(m,\ \max_j s_j\big)\\ \ell_{\text{新}} &= \htmlClass{c-new}{e^{m - m_{\text{新}}}}\,\ell + \sum_j e^{s_j - m_{\text{新}}}\\ \mathbf o_{\text{新}} &= \htmlClass{c-new}{e^{m - m_{\text{新}}}}\,\mathbf o + \sum_j e^{s_j - m_{\text{新}}}\,\mathbf v_j \end{aligned} \]
+  <div class="fx-read">每读入一块分数 \(s_j\)，先更新最大值 \(m\)；之前累积的归一化因子 \(\ell\) 和输出 \(\mathbf o\) 都是按旧的最大值算的，乘上<span style="color:var(--s4)">修正系数</span> \(e^{m - m_{\text{新}}}\) 换算到新的基准，再加上这一块的贡献。全部扫完后，\(\mathbf o/\ell\) 就是精确的注意力输出。</div>
+  <div class="fx-eg">分数依次为 \((1, 3)\) 和 \((2, 5)\)，每块两个。第一块后 \(m = 3\)，\(\ell = e^{-2} + e^0 = 1.135\)。第二块最大值 5，\(m_{\text{新}} = 5\)，修正系数 \(e^{3-5} = 0.135\)：\(\ell = 0.135\times 1.135 + e^{-3} + e^0 = 1.203\)。直接对 \((1,3,2,5)\) 计算 \(\sum e^{s - 5} = e^{-4} + e^{-2} + e^{-3} + 1 = 1.203\)，完全一致。</div>
+</div>
 <div data-demo="online-softmax"></div>
-<p>FlashAttention 的结果和朴素实现在数学上完全一致，不是近似，只是让注意力的显存从 O(n²) 降到 O(n)，速度提升 2–4 倍。FA2（2023）改进了并行划分，FA3（2024）针对 Hopper 的异步与 FP8，2025 年后的 FA4 和各家的 Blackwell 内核继续沿这个方向优化。<b>Ring Attention / 上下文并行</b> 把同一个序列切到多张卡上，K/V 块在卡之间环形传递，用来训练百万级上下文。</p>
+<p>FlashAttention 的结果与朴素实现在数学上完全相同，不是近似；它让注意力的显存从 \(O(n^2)\) 降到 \(O(n)\)，速度提升 2–4 倍。FA2（2023）改进了并行划分，FA3（2024）利用 Hopper GPU 的异步执行和 FP8，2025 年后的 FA4 和各家内核针对 Blackwell 继续优化。训练百万级上下文时，还要把同一条序列切到多张卡上：<b>环形注意力</b>（Ring Attention）让 K/V 块在卡之间轮转传递，每张卡依次与所有块做注意力（第 <a class="xref" data-ref="training-systems"></a> 章的上下文并行）。</p>
 
 <h2 id="linear">线性注意力：把历史压进固定大小的状态</h2>
-<p>softmax 注意力相当于一个 <b>只增不减的记忆</b>：每个 token 的 K/V 都原样保存，查询时逐一比对。<b>线性注意力</b> 去掉 softmax，把记忆变成一个固定大小的矩阵 <span class="math">S</span>（d<sub>k</sub>×d<sub>v</sub>），每来一个 token 就写进去：</p>
-<div class="eq">线性注意力：S<sub>t</sub> = S<sub>t−1</sub> + v<sub>t</sub>k<sub>t</sub>ᵀ　　DeltaNet：S<sub>t</sub> = S<sub>t−1</sub> + β<sub>t</sub>(v<sub>t</sub> − S<sub>t−1</sub>k<sub>t</sub>)k<sub>t</sub>ᵀ　　读取：o<sub>t</sub> = S<sub>t</sub>q<sub>t</sub>
-<span class="note">Gated DeltaNet 再乘一个衰减 α<sub>t</sub>；Kimi Delta Attention（KDA）把 α 变成逐通道的 Diag(α<sub>t</sub>)，可以分别控制每个维度的遗忘</span></div>
-<p>这样每步生成的代价是常数，显存也是常数，像 RNN 一样。问题是固定大小的矩阵 <b>容量有限</b>：存的东西一多就会互相干扰。<b>Delta rule</b> 的改进是，写入前先读出当前存的值，只写“差值”，相当于覆盖而不是叠加；<b>门控 / 衰减</b> 则让模型主动遗忘不再需要的旧信息。下面的演示把 N 对随机的 (key, value) 依次写进 d×d 的状态，再逐个查询，看能取回多少：</p>
+<p>softmax 注意力相当于一个只增不减的记忆：每个 token 的 K、V 都原样保存，查询时逐一比对。<dfn data-t="linear-attention">线性注意力</dfn>去掉 softmax，记忆就变成了一个固定大小的矩阵：</p>
+<div class="fx">
+\[ \htmlClass{sym-S}{S_t} = S_{t-1} + \htmlClass{c-new}{\mathbf v_t\mathbf k_t^\top},\qquad \mathbf o_t = S_t\,\mathbf q_t \]
+  <div class="fx-read">每来一个 token，就把它的 value 和 key 的外积“写”进状态矩阵 \(S\)；查询时用 query 去乘 \(S\)，读出与 query 相关的内容。每生成一个 token 的代价是常数，显存也是常数，像 RNN 一样。</div>
+  <dl class="fx-syms">
+    <dt data-sym="S">\(S_t\)</dt><dd>状态矩阵，\(d_v\times d_k\)，大小固定，与序列长度无关</dd>
+  </dl>
+  <div class="fx-eg">\(d_k = d_v = 128\)：每层每个头的状态是 \(128\times 128 = 16384\) 个数，无论上下文是 1 千还是 100 万 token。相比之下，softmax 注意力在 100 万 token 时要缓存 \(2\times 128\times 10^6\) 个数，多出约 1.6 万倍。</div>
+</div>
+<details class="deep"><summary>为什么去掉 softmax 就能变成递推：矩阵乘法的结合律</summary><div class="in">
+<p>不带 softmax 的因果注意力是 \(\mathbf o_t = \sum_{j\le t}(\mathbf q_t\cdot\mathbf k_j)\,\mathbf v_j\)。点积是标量，可以挪到后面：</p>
+\[ \mathbf o_t = \sum_{j\le t}\mathbf v_j\,(\mathbf k_j^\top\mathbf q_t) = \Big(\sum_{j\le t}\mathbf v_j\mathbf k_j^\top\Big)\mathbf q_t = S_t\,\mathbf q_t \]
+<p>括号里的和只依赖到 \(t\) 为止的 key 和 value，可以逐步累加，这就是上面的递推。写成矩阵形式，是把 \((QK^\top)V\) 的计算顺序换成 \(Q(K^\top V)\)：前者要先算 \(n\times n\) 的矩阵，代价 \(O(n^2d)\)；后者先算 \(d\times d\) 的矩阵，代价 \(O(nd^2)\)。softmax 之所以阻止了这种换序，是因为它要对每一行做非线性的归一化，不能拆开。Katharopoulos 等（2020）的论文标题正是“Transformer 就是 RNN”。</p>
+<p><b>这个推导告诉我们：</b>线性注意力的效率来自结合律，代价是失去 softmax 的“尖锐选择”能力：所有历史被加在同一个矩阵里，存的东西一多就会相互干扰，精确回忆某一个 token 变得困难。</p>
+</div></details>
+<p>固定大小的矩阵容量有限，存多了就互相干扰。两个改进让它好用得多：</p>
+<div class="fx">
+\[ S_t = \htmlClass{c-dir}{\alpha_t}\,S_{t-1} + \beta_t\,\big(\mathbf v_t - \htmlClass{c-adv}{S_{t-1}\mathbf k_t}\big)\,\mathbf k_t^\top \]
+  <div class="fx-read"><b>Delta 规则</b>：写入前先用 key 读出状态里<span style="color:var(--s2)">当前存的值</span>，只写入“新值与旧值的差”，相当于覆盖而不是叠加。<b>门控</b>：每一步把旧状态乘一个<span style="color:var(--s1)">衰减系数</span> \(\alpha_t\)，让模型主动遗忘不再需要的信息。</div>
+  <dl class="fx-syms">
+    <dt data-sym="a">\(\alpha_t\)</dt><dd>遗忘门（0 到 1），由输入决定；Kimi Delta Attention（KDA）把它扩展成逐通道的对角矩阵，每个维度各自遗忘</dd>
+    <dt data-sym="b">\(\beta_t\)</dt><dd>写入强度（学习率），由输入决定</dd>
+  </dl>
+  <div class="fx-eg">同一个 key 先后写入 value \(\mathbf v_1\) 和 \(\mathbf v_2\)（例如“当前用户名”被改了）。普通线性注意力把两者都加进去，查询时读出 \(\mathbf v_1 + \mathbf v_2\) 的混合；Delta 规则（取 \(\beta = 1\)、\(\|\mathbf k\| = 1\)）第二次写入的是 \(\mathbf v_2 - \mathbf v_1\)，读出恰好是 \(\mathbf v_2\)。</div>
+</div>
+<details class="deep"><summary>Delta 规则是在线做一步梯度下降</summary><div class="in">
+<p>把状态 \(S\) 看成一个线性的“联想记忆”：希望它满足 \(S\mathbf k_t\approx\mathbf v_t\)。对当前这一对 \((\mathbf k_t, \mathbf v_t)\)，定义回归损失 \(\mathcal L(S) = \frac12\|S\mathbf k_t - \mathbf v_t\|^2\)，对 \(S\) 求梯度：</p>
+\[ \nabla_S\mathcal L = (S\mathbf k_t - \mathbf v_t)\,\mathbf k_t^\top \quad\Longrightarrow\quad S_t = S_{t-1} - \beta_t\nabla_S\mathcal L = S_{t-1} + \beta_t(\mathbf v_t - S_{t-1}\mathbf k_t)\mathbf k_t^\top \]
+<p>正好是 Delta 规则（不带遗忘门时）。所以 DeltaNet 的每一步，是让记忆矩阵在当前的 key-value 对上做一步梯度下降，用测试时的“学习”来更新记忆。2024–25 年的一系列工作（TTT、Titans 等）把这个视角推广：线性注意力的状态就是一个在推理时不断训练的小模型。</p>
+<p><b>这个推导告诉我们：</b>普通线性注意力是“只加不减”的记忆，Delta 规则是“按误差修正”的记忆，门控再加上遗忘。三者的差别在下面的演示中一目了然。</p>
+</div></details>
 <div data-demo="delta-memory"></div>
-<p>纯线性注意力在“精确回忆”（比如从长文中找出某个电话号码）上始终不如 softmax 注意力。所以 2025–26 年的主流做法是 <b>混合</b>：大部分层用线性注意力（便宜，负责局部和摘要），每隔几层插一层全注意力（负责精确检索）。Qwen3-Next、Kimi Linear 用约 3:1，Kimi K3 是 69:24。Kimi 报告称在百万 token 下 KV cache 减少约 75%，解码吞吐最高提升约 6 倍。</p>
-<p>另一条路线是 <b>稀疏注意力</b>：保留 softmax，但每个 query 只看挑出来的 top-k 个 token。DeepSeek V3.2 的 DSA 用一个轻量的“闪电索引器”给所有 token 快速打分再选 top-k；V4 的 <b>CSA</b> 先把每 4 个 token 的 KV 压成 1 条再做稀疏选择，<b>HCA</b> 压得更狠但保持稠密注意力。据其报告，百万上下文时 V4-Pro 的单 token 推理 FLOPs 只有 V3.2 的 27%，KV cache 只有 10%。</p>
+<p>另一条相近的路线是<dfn data-t="ssm">状态空间模型</dfn>（SSM），以 Mamba（2023）为代表：同样用固定大小的状态做递推，状态的更新由输入选择性地控制。Mamba-2（2024）证明它与某种线性注意力在数学上等价。</p>
+<p>纯线性注意力在“精确回忆”（比如从长文中找出某个电话号码、复制一段原文）上始终不如 softmax 注意力：Jelassi 等（2024）证明，固定大小的状态在复制长字符串时存在信息论上的上限。所以 2025–26 年的主流做法是<b>混合</b>：大部分层用线性注意力（便宜，负责局部和摘要），每隔几层插一层全注意力（负责精确检索）。Qwen3-Next、Kimi Linear 用约 3:1，Kimi K3 是 69 层 KDA 配 24 层门控 MLA。Kimi 报告称在百万 token 下 KV 缓存减少约 75%，解码吞吐最高提升约 6 倍。</p>
+<aside class="dispute">
+  <h4>线性注意力会取代 softmax 注意力吗</h4>
+  <dl>
+    <dt>支持</dt><dd>混合架构在长上下文上大幅降低了 KV 缓存和计算，质量与全注意力相当甚至更好（Kimi Linear 报告在多项评测上超过全注意力基线）；Qwen3-Next、Kimi K3、Nemotron 等相继采用。</dd>
+    <dt>反对</dt><dd>MiniMax 在 MiniMax-01（2025-01）中用了 7:1 的线性混合，却在 2025 年 10 月的 M2 中回到了全注意力。其预训练负责人解释：在小规模实验和 MMLU 这类常规榜单上，混合模型与全注意力不相上下，但规模扩大后在多跳推理、长上下文和智能体任务上明显退化，而且要专门设计内部指标才能发现；工程上，线性注意力对数值精度更敏感，前缀缓存、投机解码等推理技术对它的支持也不成熟，理论上的速度优势在实际部署中常常兑现不了。本地推理也有类似现象：混合模型理论上更快，但 llama.cpp 等运行时的算子尚未优化时，实际更慢。</dd>
+    <dt>现在怎么看</dt><dd>“取代”不会发生，“混合”是 2026 年的主流方向之一，但并非共识：DeepSeek V4 走的是稀疏注意力（下一节）；MiniMax 的下一代 M3 据第三方分析也没有回到线性注意力，而是改用块稀疏注意力。哪条路线胜出，很大程度上取决于工程生态，而不只是论文中的质量对比。</dd>
+  </dl>
+</aside>
 
-<h2 id="eval">长上下文真的“用得上”吗</h2>
-<p>标称上下文长度不等于有效长度。<b>大海捞针</b>（needle in a haystack）只测单点检索，太简单；RULER、多跳推理、长文档问答等更难的测试显示，很多模型在标称长度的一半处就明显退化（俗称 “context rot”）。工程上，智能体系统会配合 <b>上下文工程</b>：压缩历史、外部记忆、检索、子智能体分工，不把所有东西都塞进上下文。</p>
-
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2019</span>MQA；Transformer-XL 的段级循环</li>
-  <li><span class="d">2020</span>Linear Transformer（“Transformers are RNNs”）、Longformer、BigBird 稀疏模式</li>
-  <li><span class="d">2022-05</span>FlashAttention</li>
-  <li><span class="d">2023</span>GQA；PagedAttention；RoPE 插值 / YaRN；Ring Attention；12 月 Mamba（选择性状态空间）</li>
-  <li><span class="d">2024</span>MLA（DeepSeek-V2）；Mamba-2；DeltaNet 并行化；Jamba（Mamba 混合）；Gemini 1.5 达到 1M–10M 上下文；FlashAttention-3</li>
-  <li><span class="d">2025</span>Gated DeltaNet；MiniMax-M1 lightning attention；Qwen3-Next（3:1 混合）；DeepSeek V3.2 DSA 稀疏注意力；10 月 Kimi Linear（KDA）</li>
-  <li><span class="d">2026</span>DeepSeek V4（CSA + HCA，1M）；Kimi K3（69 KDA + 24 Gated MLA，1M）；Nemotron 3（Mamba 混合）</li>
+<h2 id="sparse">稀疏注意力：只看挑出来的 token</h2>
+<p>另一条路线保留 softmax，但每个 query 只看挑出来的少数 token。难点是“怎样快速挑”：如果要先和所有 token 算一遍分数，就没省下什么。</p>
+<ul>
+  <li><b>原生稀疏注意力</b>（NSA, DeepSeek, 2025-02，ACL 2025 最佳论文）：把 token 分块，先用压缩后的块表示粗选重要的块，再在选中的块里做精细注意力，同时保留一个滑动窗口，三路结果用门控合并；从预训练就开始用，并为 GPU 设计了专门的内核。Kimi 同期的 MoBA 思路相近，把 MoE 的路由思想用到注意力的块选择上。</li>
+  <li><b>DSA</b>（DeepSeek V3.2, 2025）：用一个很轻量的“闪电索引器”给所有历史 token 快速打分，每个 query 只对 top-k 个 token 做完整注意力。</li>
+  <li><b>CSA 与 HCA</b>（DeepSeek V4, 2026）：CSA 先把每 4 个 token 的 KV 压成 1 条，再做稀疏选择；HCA 压缩得更狠，但保持稠密注意力；两者交替使用。据其报告，在百万上下文时 V4-Pro 的单 token 推理计算量只有 V3.2 的 27%，KV 缓存只有 10%。</li>
 </ul>
-<p class="src">资料：<a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 报告</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 架构分析</a>；<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a>。</p>
+
+<h2 id="effective">长上下文真的“用得上”吗</h2>
+<p>标称的上下文长度不等于有效长度。最早流行的“大海捞针”测试在一大段无关文本中藏一句话让模型找出来，它只测单点的字面检索，太简单，很多模型都能满分。更难的测试揭示了问题：</p>
+<aside class="dispute surprise">
+  <h4>意外：信息放在中间，模型最容易看不见</h4>
+  <dl>
+    <dt>原以为</dt><dd>能放进上下文的信息，模型都能同样好地使用。</dd>
+    <dt>实际发现</dt><dd>Liu 等（2023）的“迷失在中间”：相关信息放在上下文的开头或结尾时，模型回答得最好；放在中间时，准确率显著下降，形成一条 U 形曲线，有时甚至不如完全不给这段信息。后来的 RULER（2024）发现，许多宣称支持 32K 以上的模型在 32K 时就明显退化；NoLiMa（2025）把“针”和“问题”之间的字面重合去掉，只留语义关联，到 32K 时大多数模型的表现跌到短上下文时的一半以下。Chroma（2025）把这种随长度增长的普遍退化称为“上下文腐烂”。</dd>
+    <dt>为什么</dt><dd>训练数据中，重要信息常在开头（标题、摘要）和结尾（最近的内容）；注意力汇和 RoPE 的远程衰减（第 <a class="xref" data-ref="transformer"></a> 章）也让开头和附近的 token 更受关注。长距离、语义而非字面的检索，需要模型真正理解并跨越很长的距离匹配信息，训练中这样的样本很少。</dd>
+    <dt>现在怎么看</dt><dd>2025–26 年的模型在这些测试上进步很大，但“有效长度短于标称长度”仍普遍存在。工程上的对策是第 <a class="xref" data-ref="agents"></a> 章的上下文工程：压缩、检索、子智能体，而不是把所有东西都塞进窗口。</dd>
+  </dl>
+</aside>
+<p>把上下文做长，也需要专门的训练：先在短序列上预训练，再分阶段把长度拉到 32K、128K、1M，每一步配合调整 RoPE 的 base 或插值（第 <a class="xref" data-ref="transformer"></a> 章），并加入真正需要长距离依赖的数据。自然的长文档（书籍、代码仓库）不多，各家会合成长距离的检索、多跳推理任务（第 <a class="xref" data-ref="data"></a> 章的中期训练）。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">FlashAttention 是一种近似注意力。</b>它的结果与标准注意力在数学上完全相同，只是改变了计算顺序，减少了显存读写。</li>
+  <li><b class="m">上下文窗口是 1M，就能可靠地使用 1M token 的信息。</b>有效长度往往短得多；中间位置、语义检索、多跳推理都会明显退化。</li>
+  <li><b class="m">长上下文的主要成本是注意力的计算。</b>推理时常常是 KV 缓存的显存和读取带宽占主导，这也是 GQA、MLA、量化 KV 的出发点。</li>
+  <li><b class="m">线性注意力已经取代了 Transformer。</b>纯线性注意力在精确回忆上有根本局限，主流是与全注意力混合；也有团队因为实际效果和工程生态回到了全注意力。</li>
+  <li><b class="m">有了长上下文就不需要检索了。</b>成本、延迟和有效长度都限制了“全部塞进去”的做法，检索和上下文管理仍然必要。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2019–2020</div>
+    <h4>第一波：近似注意力与共享 KV</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>上下文只有 512–2048 token，平方代价让更长的序列无法训练。</dd>
+      <dt>怎么解决</dt><dd>MQA 减少 KV 头；Transformer-XL 的段级循环；Longformer、BigBird 的固定稀疏模式；“Transformer 就是 RNN”的线性注意力。</dd>
+      <dt>代价</dt><dd>近似方法质量有损，在 GPU 上也不够快。</dd>
+      <dt>引出</dt><dd>能否不近似、只让精确注意力更快？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>FlashAttention、GQA 与上下文扩展</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>注意力的瓶颈其实在显存读写；KV 缓存限制了并发和长度。</dd>
+      <dt>怎么解决</dt><dd>FlashAttention（2022）、FA2（2023）；GQA（2023）；PagedAttention 管理 KV 缓存（第 <a class="xref" data-ref="serving"></a> 章）；RoPE 插值与 YaRN 扩展上下文；环形注意力；Mamba（2023-12）。</dd>
+      <dt>代价</dt><dd>计算量的平方并未消失。</dd>
+      <dt>引出</dt><dd>能否进一步压缩 KV 并降低复杂度？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>百万上下文与 MLA</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>长上下文的 KV 缓存过大，推理成本高。</dd>
+      <dt>怎么解决</dt><dd>Gemini 1.5 展示 100 万到 1000 万 token 的上下文；DeepSeek-V2 的 MLA 把 KV 压缩数十倍；Mamba-2 与 DeltaNet 的并行化训练；Jamba 等 SSM 混合模型；“迷失在中间”与 RULER 揭示有效长度问题。</dd>
+      <dt>代价</dt><dd>长而不准。</dd>
+      <dt>引出</dt><dd>怎样在百万 token 时既便宜又准？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>混合与稀疏两条路线</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>智能体任务需要长上下文，平方代价和 KV 缓存成为主要成本。</dd>
+      <dt>怎么解决</dt><dd>混合线性注意力：MiniMax-01（7:1）、Gated DeltaNet、Qwen3-Next（3:1）、Kimi Linear（KDA）；稀疏注意力：NSA、MoBA、DeepSeek V3.2 的 DSA。</dd>
+      <dt>代价</dt><dd>推理框架和内核的支持滞后；实际质量在复杂任务上存疑。</dd>
+      <dt>引出</dt><dd>哪条路线适合前沿模型？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">回头</span>MiniMax M2 回到全注意力（2025-10）</summary><div>在 MiniMax-01 采用线性混合之后，M2 回到全注意力，理由是复杂推理和智能体任务上的缺陷，以及工程生态不成熟。这提醒人们：架构选择要在真实任务和真实部署中检验。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>百万上下文成为前沿标配</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>百万 token 的推理成本与有效利用。</dd>
+      <dt>怎么解决</dt><dd>DeepSeek V4 的 CSA + HCA 稀疏压缩注意力；Kimi K3 的 KDA + 门控 MLA 混合；Nemotron 3 的 Mamba 混合；配合上下文工程使用。</dd>
+      <dt>代价</dt><dd>模型结构与推理系统深度耦合，部署门槛提高。</dd>
+      <dt>引出</dt><dd>这些结构都要在具体硬件上高效运行：下一部分讲芯片、内核与部署（第 <a class="xref" data-ref="hardware"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个 32 层、8 个 KV 头、头维度 128 的模型，KV 缓存用 FP8 存储。32K 上下文、同时服务 16 个请求，需要多少显存？</summary><div class="ans">每 token \(2\times 32\times 8\times 128\times 1 = 65536\) 字节 = 64 KB。\(64\text{ KB}\times 32768\times 16 = 32\) GB。</div></details>
+<details class="quiz"><summary>2. 用在线 softmax 处理分数 \((2, 0)\) 和 \((4, 1)\) 两块，写出每一步的 \(m\) 和 \(\ell\)，并与直接计算对照。</summary><div class="ans">第一块：\(m = 2\)，\(\ell = e^0 + e^{-2} = 1.135\)。第二块：\(m_{\text{新}} = 4\)，\(\ell = e^{-2}\times 1.135 + e^0 + e^{-3} = 0.154 + 1 + 0.050 = 1.204\)。直接计算：\(e^{-2} + e^{-4} + e^0 + e^{-3} = 0.135 + 0.018 + 1 + 0.050 = 1.204\)。</div></details>
+<details class="quiz"><summary>3. 普通线性注意力中，同一个 key（单位向量）先写入 value \(\mathbf v_1\)，再写入 \(\mathbf v_2\)，查询这个 key 得到什么？用 Delta 规则（\(\beta = 1\)）呢？</summary><div class="ans">普通线性注意力：\(S = \mathbf v_1\mathbf k^\top + \mathbf v_2\mathbf k^\top\)，\(S\mathbf k = \mathbf v_1 + \mathbf v_2\)，两次写入混在一起。Delta 规则：第二次写入 \((\mathbf v_2 - \mathbf v_1)\mathbf k^\top\)，\(S = \mathbf v_2\mathbf k^\top\)，读出 \(\mathbf v_2\)，旧值被覆盖。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2205.14135">FlashAttention</a>（Dao 等, 2022）<span class="why">从访存角度重新看注意力，在线 softmax 的工程实现。</span></li>
+  <li><a href="https://arxiv.org/abs/2405.04434">DeepSeek-V2</a>（2024）<span class="why">MLA 的提出与矩阵吸收的细节。</span></li>
+  <li><a href="https://arxiv.org/abs/2006.16236">Transformers are RNNs</a>（Katharopoulos 等, 2020）<span class="why">线性注意力与结合律。</span></li>
+  <li><a href="https://arxiv.org/abs/2412.06464">Gated Delta Networks</a>（Yang 等, 2024）<span class="why">Delta 规则与门控的结合，混合架构的基础。</span></li>
+  <li><a href="https://arxiv.org/abs/2307.03172">Lost in the Middle</a>（Liu 等, 2023）<span class="why">有效上下文长度问题的经典实验。</span></li>
+  <li><a href="https://arxiv.org/abs/2502.11089">Native Sparse Attention</a>（DeepSeek, 2025）<span class="why">为硬件设计的可训练稀疏注意力。</span></li>
+</ol>
+
+<div class="nextq">第四部分的结构改进最终都要落到硬件上：同样的计算，换一种顺序就能快几倍（FlashAttention），说明瓶颈常常不在算力。GPU 到底擅长什么、不擅长什么？内核和编译器在其中扮演什么角色？下一部分的第一章（第 <a class="xref" data-ref="hardware"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1911.02150">MQA</a> · <a href="https://arxiv.org/abs/2305.13245">GQA</a> · <a href="https://arxiv.org/abs/2503.19786">Gemma 3</a> · <a href="https://arxiv.org/abs/2307.08691">FlashAttention-2</a> · <a href="https://arxiv.org/abs/2407.08608">FlashAttention-3</a> · <a href="https://arxiv.org/abs/2310.01889">Ring Attention</a> · <a href="https://arxiv.org/abs/2312.00752">Mamba</a> · <a href="https://arxiv.org/abs/2405.21060">Mamba-2</a> · <a href="https://arxiv.org/abs/2402.01032">Repeat After Me</a> · <a href="https://arxiv.org/abs/2510.26692">Kimi Linear</a> · <a href="https://arxiv.org/abs/2501.08313">MiniMax-01</a> · <a href="https://x.com/zpysky1125/status/1983383094607347992">MiniMax：为什么 M2 回到全注意力</a> · <a href="https://www.lmsys.org/blog/2025-11-04-miminmax-m2/">No Free Lunch（LMSYS）</a> · <a href="https://huggingface.co/blog/AtlasCloud-AI/minimax-goes-sparse">MiniMax M3 的稀疏注意力（解读）</a> · <a href="https://arxiv.org/abs/2502.13189">MoBA</a> · <a href="https://arxiv.org/abs/2512.02556">DeepSeek-V3.2（DSA）</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4（CSA/HCA）</a> · <a href="https://arxiv.org/abs/2404.06654">RULER</a> · <a href="https://arxiv.org/abs/2502.05167">NoLiMa</a> · <a href="https://research.trychroma.com/context-rot">Context Rot</a> · <a href="https://arxiv.org/abs/2607.24653">Kimi K3</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>
