@@ -12,69 +12,194 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>Infra：模型怎么在成千上万张卡上训练，又怎么同时服务几百万人</h1>
-  <p class="lede">模型结构决定理论上的计算量，真正决定成本和速度的是系统：显存带宽、批处理、KV cache 管理、并行策略、通信。这一章从一个 token 的生成开始，一直讲到 2026 年的 P/D 分离、宽专家并行和超节点。</p>
+  <h1>推理系统：同时服务几百万人</h1>
+  <p class="lede">模型结构决定理论上的计算量，真正决定成本和速度的是系统。一个线上服务同时处理成千上万个请求，它们长短不一、随时到达和结束，共享同一批 GPU 的算力和显存。这一章从一次请求的两个阶段讲起，讲连续批处理和分页 KV 缓存怎样把显存利用率从三成提到九成以上，前缀缓存为什么让 API 的“缓存命中”便宜十倍，投机解码怎样在不改变输出的前提下加速两三倍，再到 2026 年的预填充与解码分离、宽专家并行和超节点，最后算一算一百万个 token 的成本从哪来。</p>
 </header>
 
-<h2 id="roofline">两个阶段：Prefill 吃算力，Decode 吃带宽</h2>
+<div class="bridge">第 <a class="xref" data-ref="hardware"></a> 章说单用户解码只能用到算力的零头，第 <a class="xref" data-ref="quantization"></a> 章把模型压小以减少要读的字节。另一个、也是更重要的杠杆，是让一次权重读取同时服务很多用户。</div>
+
+<div class="prereq">
+  <ul>
+    <li>Roofline、算术强度、访存受限：第 <a class="xref" data-ref="hardware"></a> 章</li>
+    <li>KV 缓存、GQA / MLA：第 <a class="xref" data-ref="long-context"></a> 章；MoE 与专家并行：第 <a class="xref" data-ref="moe"></a> 章</li>
+    <li>自回归生成、多 token 预测：第 <a class="xref" data-ref="generation"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="phases">两个阶段：预填充吃算力，解码吃带宽</h2>
 <p>一次请求分两段：</p>
 <ul>
-  <li><b>Prefill</b>：把整个 prompt（可能几万 token）一次性送进模型，算出所有位置的 KV cache 和第一个输出 token。这是大矩阵乘大矩阵，<b>算力受限（compute-bound）</b>，决定首 token 延迟（TTFT）。</li>
-  <li><b>Decode</b>：之后每步只生成 1 个 token，权重矩阵乘一个向量。每读 1 字节权重只做约 2 次运算，GPU 大部分时间在等显存，<b>带宽受限（memory-bound）</b>，决定每个 token 的间隔（TPOT）。</li>
+  <li><dfn data-t="prefill">预填充</dfn>（prefill）：把整个提示（可能几万 token）一次性送进模型，算出所有位置的 KV 缓存和第一个输出 token。这是大矩阵乘大矩阵，计算受限，决定<b>首 token 延迟</b>（TTFT）。</li>
+  <li><dfn data-t="decode">解码</dfn>（decode）：之后每步只生成 1 个 token，权重矩阵乘一个向量，访存受限，决定<b>每个 token 的间隔</b>（TPOT），也就是用户看到的“打字速度”。</li>
 </ul>
-<p><b>Roofline 模型</b>：可达到的算力 = min(峰值算力, 带宽 × 算术强度)。算术强度 = 每字节数据对应的运算次数。decode 时把 B 个用户的请求合成一个 batch，读一次权重就能服务 B 个 token，算术强度乘以 B。这就是 <b>批处理</b> 能大幅降低成本的根本原因。</p>
-<div data-demo="roofline"></div>
+<p>系统的目标是在满足延迟要求的前提下，每秒处理尽量多的 token。满足延迟要求（例如首 token 不超过 2 秒、每 token 不超过 50 毫秒）的那部分吞吐叫<dfn data-t="goodput">有效吞吐</dfn>（goodput），它比单纯的吞吐更能反映服务质量。</p>
+<p>提高吞吐的关键是批处理：把 \(B\) 个用户的解码步拼在一起，读一次权重服务 \(B\) 个 token。批多大才“用满”算力？</p>
+<div class="fx">
+\[ t_{\text{步}}(B) \approx \max\Big(\underbrace{\frac{N\,\htmlClass{sym-b}{b}}{\text{BW}}}_{\text{读权重}},\ \underbrace{\frac{2N\,B}{P}}_{\text{计算}}\Big)\qquad\Longrightarrow\qquad B^\ast = \frac{P\,b}{2\,\text{BW}} \]
+  <div class="fx-read">一步解码的时间取两者中较大的：读一遍权重的时间（与批大小无关），和 \(B\) 个 token 的计算时间（随 \(B\) 增长）。批小于 \(B^\ast\) 时，增大批几乎不增加每步时间，吞吐随 \(B\) 线性上升；超过 \(B^\ast\) 后转为计算受限，每步时间开始变长，用户感到变慢。</div>
+  <dl class="fx-syms">
+    <dt data-sym="b">\(b\)</dt><dd>每个权重的字节数</dd>
+  </dl>
+  <div class="fx-eg">H100 跑 FP8 权重（\(b = 1\)）：\(B^\ast = 1979\times 10^{12}\times 1/(2\times 3.35\times 10^{12})\approx 295\)。与模型大小无关。实际中 KV 缓存的读取（随批和上下文增长）、注意力计算和显存容量会让最优批更小，通常在几十到一两百之间。</div>
+</div>
 
-<h2 id="batching">连续批处理与 PagedAttention</h2>
-<p>请求的输出长度差异很大，短的几个 token，长的几万 token。<b>静态批处理</b> 要等一批里最长的请求结束，才能换下一批，其余槽位只能空转。<b>连续批处理</b>（continuous / in-flight batching，Orca 2022）在每个解码步都检查：有请求结束就立刻从队列补上新的请求。</p>
-<p>KV cache 的显存管理也是同样的问题。旧做法按最大长度给每个请求预留一整块连续显存，实际只用了一小部分。<b>PagedAttention</b>（vLLM, 2023）借鉴操作系统的分页：KV cache 切成固定大小的块（比如 16 token），按需分配，用块表映射。浪费从 60–80% 降到 4% 以下，同样的显存能多服务几倍的并发请求。</p>
+<h2 id="batching">连续批处理与分页 KV 缓存</h2>
+<p>请求的输出长度差异很大，短的几个 token，长的几万 token。<b>静态批处理</b>要等一批里最长的请求结束才能换下一批，其余槽位只能空转。<dfn data-t="continuous-batching">连续批处理</dfn>（Orca, 2022）在每个解码步都检查：有请求结束，就立刻从队列补上新的请求。</p>
+<p>KV 缓存的显存管理也是同一个问题。旧做法按最大长度给每个请求预留一整块连续显存，实际只用了一小部分。<dfn data-t="paged-attention">PagedAttention</dfn>（vLLM, 2023）借鉴操作系统的分页：把 KV 缓存切成固定大小的块（比如每块 16 个 token），按需分配，用块表记录映射。浪费从 60–80% 降到 4% 以下，同样的显存能多服务几倍的并发请求。</p>
 <div data-demo="batching"></div>
-<p>在这之上还有：<b>前缀缓存</b>（SGLang 的 RadixAttention，2024）：系统 prompt、多轮对话历史、智能体的工具定义都是共享前缀，算过一次的 KV 直接复用。Kimi、DeepSeek 等 API 对缓存命中的 token 收费低得多，原因就在这里。<b>分块 prefill</b>：把长 prompt 切块，和 decode 请求混在同一个 batch 里，避免长 prompt 卡住所有人。</p>
+<p>在这之上还有两项关键的优化：</p>
+<ul>
+  <li><b><dfn data-t="prefix-cache">前缀缓存</dfn></b>（SGLang 的 RadixAttention, 2024）：系统提示、多轮对话的历史、智能体的工具说明都是许多请求共享的前缀，算过一次的 KV 直接复用。各家 API 对缓存命中的输入 token 收费通常只有正常价格的十分之一，原因就在这里，这也是智能体 harness 极力保持前缀不变的原因（第 <a class="xref" data-ref="agents"></a> 章）。</li>
+  <li><b>分块预填充</b>：把长提示切成块，和其他请求的解码步混在同一个批里，避免一个几万 token 的长提示卡住所有人。</li>
+</ul>
 
 <h2 id="spec">投机解码：小模型先猜，大模型一次验证</h2>
-<p>decode 受带宽限制，GPU 算力闲着。<b>投机解码</b>（2022）利用这些闲置算力：用一个便宜的草稿模型连续猜 γ 个 token，大模型 <b>一次前向</b> 并行验证这 γ 个位置。从第一个猜错的位置截断，并在那里用大模型自己的分布补一个 token。用特殊的接受/拒绝采样规则，可以证明输出分布和大模型单独生成 <b>完全一致</b>，不是近似。</p>
-<div class="eq">每轮期望产出 token 数 = (1 − α<sup>γ+1</sup>) / (1 − α)　　加速比 ≈ 上式 / (1 + γ·c)<span class="note">α：每个草稿 token 被接受的概率；γ：一次猜几个；c：草稿模型相对大模型的成本</span></div>
+<p>解码受带宽限制，算力闲着。<dfn data-t="spec-decoding">投机解码</dfn>（Leviathan 等, 2022；Chen 等, 2023）利用这些闲置算力：用一个便宜的“草稿”连续猜 \(\gamma\) 个 token，大模型<b>一次前向</b>并行验证这 \(\gamma\) 个位置（与预填充一样，多个位置一起算几乎不比一个位置慢）。从第一个被拒绝的位置截断，并在那里补一个 token：</p>
+<div class="fx">
+\[ \mathbb E[\text{每轮产出的 token 数}] = \frac{1 - \htmlClass{sym-al}{\alpha}^{\gamma + 1}}{1 - \alpha},\qquad \text{加速比}\approx\frac{1 - \alpha^{\gamma+1}}{(1-\alpha)(1 + \gamma\,\htmlClass{sym-c}{c})} \]
+  <div class="fx-read">每个草稿 token 以概率 \(\alpha\) 被接受，接受到第一个拒绝为止，再加上补的那一个。分母中的 \(\gamma c\) 是生成草稿的额外开销。</div>
+  <dl class="fx-syms">
+    <dt data-sym="al">\(\alpha\)</dt><dd>草稿 token 的平均接受率</dd>
+    <dt data-sym="g">\(\gamma\)</dt><dd>每轮猜几个</dd>
+    <dt data-sym="c">\(c\)</dt><dd>生成一个草稿 token 的成本相对大模型一次前向的比例</dd>
+  </dl>
+  <div class="fx-eg">\(\alpha = 0.8\)，\(\gamma = 4\)：每轮期望产出 \((1 - 0.8^5)/0.2 = 3.36\) 个 token。草稿成本 \(c = 0.05\)，加速比约 \(3.36/1.2 = 2.8\) 倍。</div>
+</div>
 <div data-demo="spec-decode"></div>
-<p>草稿从哪来：独立的小模型；<b>Medusa / EAGLE</b>：在大模型上挂几个轻量预测头，利用大模型自己的隐藏状态，接受率高，EAGLE-3 是 2025–26 年 vLLM/SGLang 的主力；<b>MTP</b>：DeepSeek-V3/V4 训练时就带多 token 预测头，推理时直接当草稿（社区给 Bonsai 2 27B 加的 MTP 头，实测 decode 提升约 24.5%）；<b>prompt lookup / n-gram</b>：直接从上下文里找重复片段，改代码、引用原文时特别有效。注意：batch 很大时 GPU 已经接近算力受限，投机解码的收益会下降。</p>
-
-<h2 id="parallel">训练：怎么把一个模型切到上万张卡上</h2>
+<details class="deep"><summary>为什么输出分布和大模型单独生成完全一样</summary><div class="in">
+<p>设大模型在某个位置的分布为 \(p\)，草稿的分布为 \(q\)，草稿抽到了 token \(x\)。验证规则：</p>
 <ul>
-  <li><b>数据并行 DP</b>：每张卡一份完整模型，各吃不同的数据，梯度做 all-reduce。最简单，但每张卡要装下整个模型和优化器状态。</li>
-  <li><b>ZeRO / FSDP</b>（2019）：把优化器状态（stage 1）、梯度（stage 2）、参数本身（stage 3）切分到各数据并行卡上，用到时再收集。</li>
-  <li><b>张量并行 TP</b>（Megatron, 2019）：把每个矩阵乘按行/列切开，放到多张卡上，每层都要通信，通常只在一台机器的 8 张卡内（NVLink）使用。</li>
-  <li><b>流水线并行 PP</b>（GPipe, 2018）：按层切成几段，放到不同机器。有 <b>气泡</b>：流水线填满和排空时部分卡在空等，要靠足够多的微批次摊薄。</li>
-  <li><b>专家并行 EP</b>：MoE 的专家分布在不同卡上，token 通过 all-to-all 发送和收回（第 <a class="xref" data-ref="moe">7</a> 章）。</li>
-  <li><b>上下文并行 CP</b>：把一条超长序列切到多张卡上（Ring Attention），用来训练 1M 上下文。</li>
+  <li>以概率 \(\min\big(1,\ p(x)/q(x)\big)\) 接受 \(x\)；</li>
+  <li>若拒绝，从“残差分布” \(r(y)\propto\max\big(0,\ p(y) - q(y)\big)\) 中重新抽一个 token。</li>
 </ul>
-<p>前沿训练通常是 <b>4D/5D 并行</b>：DP × TP × PP × EP × CP 组合使用。衡量效率的指标是 <b>MFU</b>（模型算力利用率）= 实际有效 FLOPs / 硬件峰值，大规模训练做到 40–50% 就算很好。</p>
-<div data-demo="train-memory"></div>
+<p>最终输出 \(y\) 的概率是“草稿抽到 \(y\) 并被接受”加上“某次被拒绝后从残差中抽到 \(y\)”：</p>
+\[ \begin{aligned} P(y) &= q(y)\min\Big(1, \frac{p(y)}{q(y)}\Big) + \Big(1 - \sum_x q(x)\min\Big(1,\frac{p(x)}{q(x)}\Big)\Big)\,r(y)\\ &= \min\big(q(y), p(y)\big) + \max\big(0,\ p(y) - q(y)\big) = p(y) \end{aligned} \]
+<p>（中间一步用到：拒绝的总概率 \(1 - \sum_x\min(q(x), p(x))\) 恰好等于 \(\sum_y\max(0, p(y) - q(y))\)，即残差分布的归一化常数。）</p>
+<p><b>这个推导告诉我们：</b>投机解码是一种精确的加速，不是近似：无论草稿多差，输出分布都与大模型一致，草稿的质量只影响接受率，也就是速度。平均接受率 \(\alpha = \sum_x\min(p(x), q(x))\)，草稿与大模型越像越高。</p>
+</div></details>
+<p>草稿从哪来：独立的小模型；Medusa、EAGLE 在大模型上挂几个轻量的预测头，利用大模型自己的隐藏状态，接受率高，EAGLE-3 是 2025–26 年 vLLM、SGLang 的主力；DeepSeek-V3/V4 训练时就带多 token 预测头（第 <a class="xref" data-ref="generation"></a> 章），推理时直接当草稿；prompt lookup 直接从上下文里找重复片段，改代码、引用原文时特别有效。注意：批很大时 GPU 已接近计算受限，投机解码的收益会下降。</p>
 
-<h2 id="serving2026">2026 年的推理系统</h2>
+<h2 id="disagg">2026 年的大规模推理架构</h2>
 <ul>
-  <li><b>P/D 分离</b>（DistServe、Mooncake，2024）：prefill 和 decode 放在不同的 GPU 池，KV cache 通过高速网络传输（NIXL、Mooncake Transfer Engine）。两类负载互不干扰，可以分别扩容。vLLM 2026 年 4 月的博客报告，在单台 8×MI300X 上做 P/D 分离，有效吞吐（goodput）提升 2.5 倍。NVIDIA Dynamo、SGLang、vLLM 都已支持。</li>
-  <li><b>宽专家并行</b>：DeepSeek 式的大规模 EP decode，几十到上百张卡共同服务一个 MoE，每张卡只放少数专家，靠 DeepEP 一类的通信库做 all-to-all。</li>
-  <li><b>KV cache 分层存储</b>：GPU 显存 → CPU 内存 → SSD / 分布式存储（Mooncake Store 等）。Kimi 用 KV-centric 的架构在高缓存命中率下提供“百万上下文统一定价”。</li>
-  <li><b>超节点</b>：GB200 NVL72（72 张 GPU 共享 NVLink 域）、华为 CloudMatrix 384 等，把 TP/EP 的通信域扩大到整柜。Kimi K3 官方建议的部署是不少于 64 张加速卡的超节点。</li>
-  <li><b>低精度推理</b>：Blackwell 原生 FP4（NVFP4 / MXFP4），Hopper 上用 Marlin/Machete 一类的内核做 W4A16 反量化。</li>
-  <li><b>本地推理</b>：llama.cpp（GGUF、各类 K/I-quants、CPU 卸载 MoE 专家）、MLX（Apple Silicon）、Ollama 封装。新架构（线性注意力、Hadamard 旋转、三值）往往要等运行时补上算子支持，否则理论上更快，实际反而更慢。</li>
+  <li><b><dfn data-t="pd-disagg">预填充与解码分离</dfn></b>（P/D 分离；DistServe、Mooncake, 2024）：预填充和解码放在不同的 GPU 池，KV 缓存通过高速网络从预填充池传给解码池。两类负载一个吃算力、一个吃带宽，混在一起会互相干扰；分开后可以分别扩容、分别选硬件（NVIDIA 甚至为长上下文的预填充推出了专门的芯片）。NVIDIA Dynamo、SGLang、vLLM 都已支持。</li>
+  <li><b>宽专家并行</b>：DeepSeek 式的大规模 MoE 解码，几十到上百张卡共同服务一个模型，每张卡只放少数专家，用 DeepEP 这类通信库做全对全通信（第 <a class="xref" data-ref="moe"></a> 章：批大时所有专家都要常驻）。</li>
+  <li><b>KV 缓存分层存储</b>：GPU 显存 → CPU 内存 → SSD 与分布式存储。Kimi 的 Mooncake 以 KV 缓存为中心设计整个系统，在高缓存命中率下提供长上下文服务。</li>
+  <li><b>超节点</b>：GB200 NVL72（72 张 GPU 共享一个 NVLink 域）、华为 CloudMatrix 384 等，把张量并行和专家并行的通信域扩大到整个机柜。Kimi K3 官方建议的部署是不少于 64 张加速卡的超节点。</li>
+  <li><b>低精度推理</b>：Blackwell 原生 FP4；Hopper 上用 Marlin、Machete 一类的内核做 4 位权重的反量化（第 <a class="xref" data-ref="quantization"></a> 章）。</li>
+</ul>
+<aside class="dispute">
+  <h4>预填充与解码分离总是更好吗</h4>
+  <dl>
+    <dt>支持</dt><dd>两类负载特性相反，分开后各自可以用最合适的批大小和并行方式，互不打扰，长提示不再拖慢正在解码的用户。Mooncake、DistServe 报告了数倍的有效吞吐提升；vLLM 2026 年的博客报告，即使在单台 8 卡服务器内做 P/D 分离，有效吞吐也提升约 2.5 倍。</dd>
+    <dt>反对</dt><dd>分离要在节点之间传输 KV 缓存，长上下文时数据量很大，需要高速网络；预填充池和解码池的配比要随流量动态调整，否则一边闲置一边拥堵；小规模部署时，分块预填充加连续批处理往往已经足够，分离只会增加复杂度。</dd>
+    <dt>现在怎么看</dt><dd>大规模服务（尤其是长上下文、智能体流量）普遍采用分离；中小规模部署按流量特征选择。它是规模和负载的函数，而不是普遍更优。</dd>
+  </dl>
+</aside>
+
+<h2 id="cost">一百万个 token 的成本从哪来</h2>
+<p>API 按百万 token 收费，背后的成本可以粗略算出：</p>
+<div class="fx">
+\[ \text{每百万 token 成本} = \frac{\htmlClass{sym-gpu}{\text{每 GPU 小时的成本}}}{\htmlClass{sym-tp}{\text{每 GPU 每秒的 token 数}}\times 3600}\times 10^6 \]
+  <div class="fx-read">一张卡一小时的成本（折旧、电费、机房）除以它一小时能产出多少 token。吞吐越高，单价越低：这就是批处理、量化、投机解码最终体现的地方。</div>
+  <dl class="fx-syms">
+    <dt data-sym="gpu">每 GPU 小时成本</dt><dd>2025–26 年 H100 级别的租用价格约 2 美元</dd>
+    <dt data-sym="tp">吞吐</dt><dd>一张卡在满足延迟要求时每秒总共产出的 token 数（所有用户合计）</dd>
+  </dl>
+  <div class="fx-eg">每 GPU 小时 2 美元，每张卡每秒产出 3000 个输出 token：\(2/(3000\times 3600)\times 10^6\approx 0.19\) 美元 / 百万 token。输入 token 便宜得多，因为预填充一次处理成千上万个 token，效率高；命中前缀缓存的输入几乎不需要计算，所以再便宜一个数量级。</div>
+</div>
+<p>DeepSeek 在 2025 年 3 月公开过其推理服务的一天：平均约 226 个节点（每节点 8 张 H800），日成本约 8.7 万美元；若全部按 R1 的价格计费，理论日收入约 56 万美元，理论利润率 545%（实际收入低得多，因为有免费服务、夜间折扣和更便宜的 V3）。这说明在大规模、高并发、优化到位的条件下，推理可以有很高的毛利。</p>
+<aside class="dispute">
+  <h4>推理越来越便宜，AI 的总成本会下降吗</h4>
+  <dl>
+    <dt>便宜派</dt><dd>同等能力的推理价格大约每年下降一个数量级（a16z 称之为“LLMflation”，Epoch AI 测得不同能力门槛下每年下降几倍到几百倍不等）：硬件更快、模型更小、量化和系统优化层层叠加。</dd>
+    <dt>反方</dt><dd>单价下降，用量涨得更快：推理模型每个问题要想几千上万 token，智能体一个任务要跑上百轮，每次都带着几十万 token 的上下文。用户总是用更强、更贵的前沿模型，而不是用便宜下来的旧模型。这是经典的杰文斯悖论：效率提高反而增加总消耗。</dd>
+    <dt>现在怎么看</dt><dd>两者同时成立：每个 token 的价格在快速下降，而 token 的消耗量在更快地增长，AI 的总算力支出仍在上升（第 <a class="xref" data-ref="industry"></a> 章）。对使用者而言，前缀缓存命中率、思考预算和模型选择，比单价更影响账单。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">投机解码会降低输出质量。</b>标准的接受规则保证输出分布与大模型完全相同；草稿差只会变慢，不会变差。</li>
+  <li><b class="m">批处理只提高吞吐，不影响单个用户。</b>批超过某个大小后每步时间变长，用户感到“打字”变慢；服务要在吞吐和延迟之间取舍。</li>
+  <li><b class="m">输入和输出 token 的成本一样。</b>预填充效率高得多，命中缓存的输入几乎免费，所以输入价格通常是输出的几分之一。</li>
+  <li><b class="m">GPU 利用率 100% 就是满负荷。</b>系统监控的“利用率”只表示有内核在跑，不表示算力被用满；解码时它可能显示 100%，实际只用到峰值算力的个位数百分比。</li>
+  <li><b class="m">本地部署只要模型能装进显存就行。</b>还要算 KV 缓存（随上下文增长），以及新架构是否有运行时支持（第 <a class="xref" data-ref="on-device"></a> 章）。</li>
 </ul>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2018</span>GPipe 流水线并行；混合精度训练（FP16 + loss scaling）</li>
-  <li><span class="d">2019</span>Megatron-LM 张量并行；ZeRO</li>
-  <li><span class="d">2020–21</span>3D 并行训练千亿模型；A100 与 BF16</li>
-  <li><span class="d">2022</span>Orca 连续批处理；FlashAttention；投机解码；H100 与 FP8</li>
-  <li><span class="d">2023</span>vLLM / PagedAttention；TensorRT-LLM；llama.cpp 爆发；Medusa</li>
-  <li><span class="d">2024</span>SGLang（RadixAttention）；DistServe / Mooncake P/D 分离；EAGLE-2；DeepSeek-V3 FP8 训练 + DualPipe + DeepEP；Blackwell 发布</li>
-  <li><span class="d">2025</span>GB200 NVL72 大规模部署；EAGLE-3；DeepSeek 开源推理系统组件；NVIDIA Dynamo；宽 EP</li>
-  <li><span class="d">2026</span>P/D 分离进入单机部署；FP4 推理普及；百万上下文服务；超节点成为大型 MoE 的默认部署单元</li>
-</ul>
-<p class="src">资料：<a href="https://vllm.ai/blog/2026-04-07-moriio-kv-connector">vLLM：P/D 分离与 MoRI-IO</a>；<a href="https://vllm.ai/blog/2026-07-22-kimi-k3-preview">vLLM：Kimi K3 支持预览</a>；<a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 部署分析</a>。硬件参数为公开规格的近似值。</p>
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2020–2022</div>
+    <h4>为 Transformer 推理专门优化</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>通用的深度学习框架推理效率低，GPT-3 级模型服务成本极高。</dd>
+      <dt>怎么解决</dt><dd>FasterTransformer 等融合内核；Orca（2022）提出按迭代调度的连续批处理；FlashAttention；投机解码被提出。</dd>
+      <dt>代价</dt><dd>KV 缓存的显存浪费严重，并发受限。</dd>
+      <dt>引出</dt><dd>ChatGPT 带来海量请求，显存管理成为关键。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023</div>
+    <h4>vLLM 与开源推理框架</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>开源模型爆发，缺少高效的服务系统。</dd>
+      <dt>怎么解决</dt><dd>vLLM 的 PagedAttention；TensorRT-LLM、TGI；llama.cpp 让本地推理普及；Medusa 等草稿头。</dd>
+      <dt>代价</dt><dd>多轮对话、长提示的重复计算仍很多。</dd>
+      <dt>引出</dt><dd>怎样复用计算、分开不同负载？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>前缀缓存、P/D 分离与价格战</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>长上下文与多轮对话让预填充开销巨大；预填充和解码互相干扰。</dd>
+      <dt>怎么解决</dt><dd>SGLang 的 RadixAttention；DistServe、Mooncake 的 P/D 分离；EAGLE-2；DeepSeek-V2 以极低价格引发国内 API 价格战，V3 以 FP8 和 MLA 进一步降低成本。</dd>
+      <dt>代价</dt><dd>系统复杂度大增，需要专门的网络和调度。</dd>
+      <dt>引出</dt><dd>万亿参数 MoE 怎样服务？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>开源基础设施与机柜级部署</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>推理模型和智能体让 token 消耗暴增。</dd>
+      <dt>怎么解决</dt><dd>DeepSeek 开源周公开 FlashMLA、DeepEP 等组件并公布推理成本；NVIDIA Dynamo；EAGLE-3；GB200 NVL72 大规模部署；宽专家并行。</dd>
+      <dt>代价</dt><dd>部署门槛升高，最优配置依赖硬件和流量。</dd>
+      <dt>引出</dt><dd>FP4 和更大的超节点。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>FP4 服务与百万上下文</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>百万上下文、万亿参数模型的单 token 成本。</dd>
+      <dt>怎么解决</dt><dd>FP4 推理普及；P/D 分离进入单机部署；超节点成为大型 MoE 的默认部署单元；面向预填充的专门硬件。</dd>
+      <dt>代价</dt><dd>模型、内核、硬件、调度深度耦合，换任何一环都要重新调优。</dd>
+      <dt>引出</dt><dd>服务之外，训练这些模型需要怎样的系统？（第 <a class="xref" data-ref="training-systems"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一块芯片 FP8 算力 4500 TFLOPS、带宽 8 TB/s，跑 FP8 权重。解码时批大约多大开始转为计算受限？</summary><div class="ans">\(B^\ast = P\,b/(2\,\text{BW}) = 4500\times 10^{12}\times 1/(2\times 8\times 10^{12})\approx 281\)。</div></details>
+<details class="quiz"><summary>2. 草稿接受率 \(\alpha = 0.6\)，每轮猜 \(\gamma = 3\) 个，草稿成本 \(c = 0.1\)。每轮期望产出多少 token？加速比约多少？</summary><div class="ans">\((1 - 0.6^4)/0.4 = (1 - 0.1296)/0.4\approx 2.18\)；加速比 \(2.18/(1 + 0.3)\approx 1.67\) 倍。</div></details>
+<details class="quiz"><summary>3. 一张卡每小时成本 3 美元，满足延迟要求时每秒总共产出 1500 个输出 token。每百万输出 token 的成本是多少？吞吐翻倍呢？</summary><div class="ans">\(3/(1500\times 3600)\times 10^6\approx 0.56\) 美元；吞吐翻倍后约 0.28 美元。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2309.06180">Efficient Memory Management for LLM Serving with PagedAttention</a>（Kwon 等, 2023）<span class="why">vLLM，分页 KV 缓存。</span></li>
+  <li><a href="https://arxiv.org/abs/2211.17192">Fast Inference from Transformers via Speculative Decoding</a>（Leviathan 等, 2022）<span class="why">投机解码与精确性证明。</span></li>
+  <li><a href="https://arxiv.org/abs/2312.07104">SGLang</a>（Zheng 等, 2024）<span class="why">RadixAttention 前缀缓存。</span></li>
+  <li><a href="https://arxiv.org/abs/2407.00079">Mooncake</a>（Moonshot, 2024）<span class="why">以 KV 缓存为中心的 P/D 分离架构。</span></li>
+  <li><a href="https://github.com/deepseek-ai/open-infra-index">DeepSeek 推理系统概览与开源组件</a>（2025）<span class="why">一个真实大规模服务的成本与设计。</span></li>
+</ol>
+
+<div class="nextq">推理系统服务的模型，是在上万张卡上训练出来的。一个万亿参数的模型怎样切分到这么多卡上？显存里都放了什么，通信怎样不拖后腿，一张卡坏了怎么办？下一章（第 <a class="xref" data-ref="training-systems"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://www.usenix.org/conference/osdi22/presentation/yu">Orca</a> · <a href="https://arxiv.org/abs/2302.01318">Chen 等 2023（投机采样）</a> · <a href="https://arxiv.org/abs/2401.10774">Medusa</a> · <a href="https://arxiv.org/abs/2503.01840">EAGLE-3</a> · <a href="https://arxiv.org/abs/2401.09670">DistServe</a> · <a href="https://developer.nvidia.com/dynamo">NVIDIA Dynamo</a> · <a href="https://github.com/deepseek-ai/DeepEP">DeepEP</a> · <a href="https://a16z.com/llmflation-llm-inference-cost/">LLMflation（a16z）</a> · <a href="https://epoch.ai/data-insights/llm-inference-price-trends">Epoch：推理价格趋势</a> · <a href="https://blog.vllm.ai/">vLLM 博客（P/D 分离等）</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

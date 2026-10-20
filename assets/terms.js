@@ -213,4 +213,14 @@ window.ATLAS_TERMS = {
   ptq: { t: '训练后量化（PTQ）', en: 'post-training quantization', d: '模型训练完后直接量化，最多用少量校准数据（GPTQ、AWQ、imatrix）。4 位以上通常够用。', at: 'quantization#qat' },
   qat: { t: '量化感知训练（QAT）', en: 'quantization-aware training', d: '训练时前向使用量化后的权重、反向用直通估计器更新高精度潜权重，让模型适应量化网格。低于 4 位基本必需。', at: 'quantization#qat' },
   ste: { t: '直通估计器（STE）', en: 'straight-through estimator', d: '反向传播时把取整当作恒等函数，梯度原样传给潜权重（超出可表示范围时置零），使不可导的量化可以被训练。', at: 'quantization#qat' },
+
+  // ---- serving (serving.html)
+  prefill: { t: '预填充', en: 'prefill', d: '一次性处理整个提示、算出全部 KV 缓存和第一个 token 的阶段。大矩阵乘法，计算受限，决定首 token 延迟（TTFT）。', at: 'serving#phases' },
+  decode: { t: '解码（阶段）', en: 'decode', d: '之后每步生成一个 token 的阶段。矩阵乘向量，访存受限，决定每 token 间隔（TPOT）；靠批处理提高吞吐。', at: 'serving#phases' },
+  goodput: { t: '有效吞吐', en: 'goodput', d: '满足延迟要求（如首 token 与每 token 延迟上限）的那部分吞吐，比单纯的吞吐更能反映服务质量。', at: 'serving#phases' },
+  'continuous-batching': { t: '连续批处理', en: 'continuous batching', d: '每个解码步都把已结束的请求换成队列中的新请求，而不是等一整批都结束（Orca, 2022）。', at: 'serving#batching' },
+  'paged-attention': { t: 'PagedAttention', en: 'PagedAttention', d: 'KV 缓存按固定大小的块按需分配、用块表映射，借鉴操作系统分页；显存浪费从 60–80% 降到 4% 以下（vLLM, 2023）。', at: 'serving#batching' },
+  'prefix-cache': { t: '前缀缓存', en: 'prefix caching', d: '多个请求共享的前缀（系统提示、对话历史、工具说明）只计算一次 KV，之后直接复用。API 对缓存命中的输入大幅降价。', at: 'serving#batching' },
+  'spec-decoding': { t: '投机解码', en: 'speculative decoding', d: String.raw`草稿先猜 \(\gamma\) 个 token，大模型一次前向并行验证，按 \(\min(1, p/q)\) 接受、拒绝时从残差分布重抽；输出分布与大模型完全相同，速度提升 2–3 倍。`, at: 'serving#spec' },
+  'pd-disagg': { t: '预填充与解码分离', en: 'prefill/decode disaggregation', d: '把预填充和解码放在不同的 GPU 池，KV 缓存经高速网络传输，两类负载互不干扰、分别扩容。', at: 'serving#disagg' },
 };
