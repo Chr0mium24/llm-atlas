@@ -29,7 +29,7 @@
     { s: 'quantization', t: '量化', st: 'new' },
     { s: 'serving', t: '推理系统', st: 'new' },
     { s: 'training-systems', t: '训练系统', st: 'new' },
-    { s: 'on-device', t: '本地与端侧部署', st: 'todo' },
+    { s: 'on-device', t: '本地与端侧部署', st: 'new' },
     { part: '六 · 多模态' },
     { s: 'vlm', t: '多模态理解', st: 'old' },
     { s: 'diffusion', t: '扩散与流匹配', st: 'old' },

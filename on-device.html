@@ -12,25 +12,185 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>本地与端侧部署</h1>
-  <p class="lede">从你的 M3 Mac、4070 Ti，到手机 NPU 和 K230 / RK3588：给定一台设备，怎么算出能跑什么模型、跑多快。</p>
+  <h1>本地与端侧部署：给定一台设备，能跑什么、跑多快</h1>
+  <p class="lede">前几章的公式在一台具体的设备上会变成很实际的问题：这台 16 GB 的 Mac 能跑多大的模型？12 GB 的显卡能不能放下 27B？手机上为什么只有 3B 的模型？嵌入式板子标的几十 TOPS 能跑大模型吗？这一章把显存、带宽、算力三本账算到具体设备上，再讲运行时的选择、手机和嵌入式的特殊约束，最后用几个真实的部署记录走一遍。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（5.6、7.3）。</div>
+<div class="bridge">第五部分前面几章讲的是数据中心：上万张卡、几百个用户拼一批。本地部署是另一个极端：只有一个用户，批大小为 1，内存和带宽都有限，而且要和操作系统、其他程序共享。决定能不能跑、跑多快的，几乎全是第 <a class="xref" data-ref="hardware"></a> 章的访存和第 <a class="xref" data-ref="quantization"></a> 章的位数。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>Roofline、带宽与算力、TOPS：第 <a class="xref" data-ref="hardware"></a> 章</li>
+    <li>bpw、量化格式、QAT、三值模型：第 <a class="xref" data-ref="quantization"></a> 章</li>
+    <li>KV 缓存公式：第 <a class="xref" data-ref="long-context"></a> 章；MoE 的激活参数：第 <a class="xref" data-ref="moe"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="budget">三本账：放得下、生成多快、提示读多久</h2>
+<p><b>第一本：内存。</b>模型要放进显存（或统一内存）里：</p>
+<div class="fx">
+\[ \text{内存} \approx \underbrace{N\times\frac{\text{bpw}}{8}}_{\text{权重}} + \underbrace{\text{每 token 的 KV}\times\htmlClass{sym-ctx}{\text{上下文长度}}}_{\text{KV 缓存}} + \underbrace{\htmlClass{sym-os}{\text{运行时与系统}}}_{\text{通常 1–5 GB}} \]
+  <div class="fx-read">权重由参数量和每权重位数决定；KV 缓存随上下文线性增长，也可以量化；剩下的是运行时的缓冲区，以及在 Mac 和手机上与操作系统、其他程序共享的那部分内存。</div>
+  <dl class="fx-syms">
+    <dt data-sym="ctx">上下文长度</dt><dd>你打算用的最大上下文，而不是模型支持的最大值</dd>
+    <dt data-sym="os">运行时与系统</dt><dd>独立显卡上约 1 GB；统一内存的 Mac 上还要给系统和其他应用留出约 4–5 GB</dd>
+  </dl>
+  <div class="fx-eg">16 GB 的 M3 Mac：系统和常用程序占约 5 GB，可用约 11 GB。Gemma 4 12B 的 QAT 4 位版本约 7.2 GB，剩下约 3–4 GB 给 KV 缓存，上下文控制在 8K 左右比较稳。而 Qwen3.8-27B 的 MLX 4 位版本约 18 GB，放不下。</div>
+</div>
+<p><b>第二本：生成速度。</b>单用户解码受带宽限制（第 <a class="xref" data-ref="hardware"></a> 章），上限是“带宽 ÷ 每个 token 要读的字节数”。M3 的带宽约 100 GB/s，读 7.2 GB 的权重，最多约 14 token/s；RTX 4070 Ti 约 504 GB/s，同样的模型可到 60–70 token/s。MoE 只读激活的专家，所以同样大小的 MoE 比稠密模型快得多。</p>
+<p><b>第三本：读提示的时间。</b>这本账常被忽略。预填充是计算受限的：</p>
+<div class="fx">
+\[ t_{\text{预填充}} \approx \frac{2N\times\htmlClass{sym-L}{L_{\text{提示}}}}{\htmlClass{sym-P}{P}\times\htmlClass{sym-u}{u}} \]
+  <div class="fx-read">读入一个长度为 \(L_{\text{提示}}\) 的提示，计算量约 \(2N\) 乘以提示长度，除以设备的有效算力（峰值 \(P\) 乘以利用率 \(u\)）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="L">\(L_{\text{提示}}\)</dt><dd>提示的 token 数（文档、代码、智能体的上下文）</dd>
+    <dt data-sym="P">\(P\)</dt><dd>峰值算力：M3 GPU 约 3.6 TFLOPS，RTX 4090 约 165 TFLOPS（FP16）</dd>
+    <dt data-sym="u">\(u\)</dt><dd>实际利用率，常见 30–60%</dd>
+  </dl>
+  <div class="fx-eg">8B 模型读一个 8K token 的提示，\(2\times 8\times 10^9\times 8192\approx 1.3\times 10^{14}\) FLOPs。M3（按 50% 利用率）约 73 秒；RTX 4090 约 1.6 秒。Mac 生成速度尚可，但读长文档、跑智能体时首 token 要等很久：这是 Apple 在 M5 的 GPU 中加入矩阵加速单元的原因之一。</div>
+</div>
+<p>下面两个工具分别算第一本账和后两本账：</p>
+<div data-demo="model-size"></div>
+<div data-demo="roofline"></div>
+
+<h2 id="choose">格式与运行时怎么选</h2>
+<p><b>格式。</b>本地部署的默认选择是 4 位左右：GGUF 的 Q4_K_M（约 4.8 bpw）、MLX 的 4 位、各家官方的 QAT 版本（Gemma 的 QAT、gpt-oss 的 MXFP4）。显存紧张时，宁可用更大模型的低位版本，也不要用小模型的高位版本：同样占 6 GB，27B 的三值模型通常强于 8B 的 Q5。官方 QAT 版本一般优于社区的训练后量化。</p>
+<p><b>运行时。</b>常见的选择：</p>
 <ul>
-  <li>显存和带宽的账：权重 + KV cache + 运行时</li>
-  <li>量化格式怎么选：Q4_K_M、MXFP4、三值</li>
-  <li>运行时：llama.cpp、MLX、Ollama、LiteRT、ExecuTorch、RKNN</li>
-  <li>手机：Apple 端侧模型的 2-bit QAT、Gemma 4 E2B、NPU 加速</li>
-  <li>嵌入式 NPU：TOPS 为什么不能直接比</li>
-  <li>实战记录：Bonsai 2 27B 在 4070 Ti 上的部署</li>
+  <li><b>llama.cpp</b>：C/C++ 实现，支持 CPU、Metal、CUDA、Vulkan 等几乎所有后端，GGUF 格式的事实标准。可以把 MoE 的专家放在 CPU 内存、只把注意力和共享部分放在显存（第 <a class="xref" data-ref="moe"></a> 章）。Ollama、LM Studio 是在它之上的易用封装。</li>
+  <li><b>MLX</b>：Apple 为自家芯片设计的数组框架，利用统一内存，在 Mac 上通常比 llama.cpp 的 Metal 后端更快。</li>
+  <li><b>vLLM、SGLang</b>：数据中心的推理框架，也能在单张显卡上运行，适合需要并发或高吞吐的本地服务。</li>
+  <li><b>移动端</b>：Google 的 LiteRT（原 TFLite）、Meta 的 ExecuTorch、Apple 的 Core ML 与 Foundation Models 框架、MLC-LLM。</li>
+  <li><b>嵌入式</b>：各家 NPU 的私有工具链：瑞芯微的 RKNN / RKLLM、嘉楠 K230 的 nncase、Hailo 的编译器等。</li>
+</ul>
+<aside class="dispute surprise">
+  <h4>意外：理论上更快的新模型，本地实际更慢，甚至输出乱码</h4>
+  <dl>
+    <dt>原以为</dt><dd>混合线性注意力、旋转量化、三值权重这些新设计，计算量或字节数更少，下载下来就应该跑得更快。</dd>
+    <dt>实际发现</dt><dd>本地运行时对新算子的支持往往滞后几个月。混合注意力模型在 llama.cpp 中一度因为线性注意力层的内核未优化，生成速度反而低于同等规模的全注意力模型。三值的 Ternary Bonsai 2 必须用 PrismML 修改过的 llama.cpp：原版 llama.cpp 拒绝加载新格式；更早的格式能“成功加载”却只输出乱码，因为原版缺少对激活做 Hadamard 旋转的那一步（第 <a class="xref" data-ref="quantization"></a> 章），调温度也救不回来。</dd>
+    <dt>为什么</dt><dd>模型的“理论效率”只有在运行时为它写了专门的内核之后才能兑现。数据中心框架往往由模型发布方直接适配，本地运行时则依赖社区跟进。</dd>
+    <dt>现在怎么看</dt><dd>本地部署新架构的模型，先确认运行时的版本和对应的格式是否被支持，看社区的实测速度，而不是只看参数量和位数。</dd>
+  </dl>
+</aside>
+
+<h2 id="mac">Mac 与统一内存</h2>
+<p>Apple 芯片的 CPU 和 GPU 共享同一块内存（<dfn data-t="unified-memory">统一内存</dfn>），这带来两个特点。好处是容量：M3 Ultra 可以配 512 GB，能放下独立显卡远远放不下的模型，一些万亿参数级 MoE 的 4 位版本可以在一两台 Mac Studio 上运行。限制是带宽和算力：M3 约 100 GB/s，M3 Max 约 300–400 GB/s，M3 Ultra 约 819 GB/s，都低于同价位的高端显卡（RTX 4090 约 1 TB/s），而 GPU 算力更是差一个数量级，长提示的预填充很慢。</p>
+<p>所以 Mac 适合的组合是：大内存放下大模型，用 MoE（每个 token 只读少量专家）弥补带宽，控制提示长度。2025 年底以来，NVIDIA 的 DGX Spark 和 AMD 的 Ryzen AI Max 等“统一内存小主机”（128 GB、约 250–270 GB/s）也走同样的路线。</p>
+
+<h2 id="phone">手机：3B 左右是甜点</h2>
+<p>手机的约束更紧：内存 8–16 GB 且大部分要留给系统和应用，带宽约 60–80 GB/s，还有电池和发热。持续推理几分钟后芯片会降频，速度可能掉一半。所以手机上的模型通常在 1–4B 之间，并且大量使用 QAT 和极低位量化：</p>
+<ul>
+  <li><b>Apple Foundation Models</b>（iOS 26，2025）：约 3B 的端侧模型，用 2 位 QAT 训练，并在层之间共享 KV 缓存；开放给第三方开发者，支持结构化输出和 LoRA 适配器。</li>
+  <li><b>Gemma 3n / Gemma 4 的 E2B、E4B</b>：“E”表示有效参数。总参数更多，但把每层的嵌入表（PLE）放在闪存或 CPU 内存里、按需读取，常驻内存的只相当于 2B 或 4B 的模型；MatFormer 结构还允许从大模型中切出小模型按需使用。据报道 Gemma 4 E2B 在新一代旗舰手机上可达每秒约 40 个 token。</li>
+  <li><b><dfn data-t="npu">NPU</dfn> 的角色</b>：手机的 NPU（几十 TOPS）擅长计算受限的预填充，联发科 NPU 上 Gemma 3n E2B 的预填充超过每秒 1600 token；但解码仍受内存带宽限制，NPU 帮不上太多。NPU 的算子集合封闭、编程门槛高，很多应用仍在 GPU 上运行。</li>
 </ul>
 
-<h2 id="demos">已有的相关演示</h2>
-<p class="small muted">这些演示来自旧版章节，正文写好后会重新安排位置。</p>
-<div data-demo="model-size"></div>
+<h2 id="embedded">嵌入式 NPU：TOPS 为什么不能直接比</h2>
+<p>嵌入式板子的宣传数字常常是 TOPS（每秒万亿次运算）。这个数字有很多“水分”需要挤掉：</p>
+<div class="fx">
+\[ \text{可用算力} \approx \text{标称 TOPS}\times\htmlClass{sym-sp}{\underbrace{0.5}_{\text{若标的是稀疏}}}\times\htmlClass{sym-ut}{\underbrace{u}_{\text{实际利用率}}} \]
+  <div class="fx-read">很多厂商标的是“结构化稀疏”下的峰值，稠密计算要打对折；标的往往是 INT8，换成 INT16 或 FP16 再减半或更多；实际模型受访存和不支持的算子拖累，利用率常常只有三到五成。</div>
+  <dl class="fx-syms">
+    <dt data-sym="sp">稀疏系数</dt><dd>标称值基于 2:4 稀疏时，稠密算力约为一半</dd>
+    <dt data-sym="ut">\(u\)</dt><dd>实际利用率，嵌入式 NPU 上常见 30–60%</dd>
+  </dl>
+  <div class="fx-eg">Jetson Orin Nano Super 标称 67 TOPS（INT8 稀疏），稠密约 33 TOPS。但跑大模型时它的内存带宽只有约 102 GB/s：4 位的 3B 模型约 1.7 GB，生成速度上限约 60 token/s，与 TOPS 几乎无关。K230 标称约 3 TOPS，实际可用 1–2 TOPS，内存只有几百 MB，适合视觉小模型，跑不了语言模型。</div>
+</div>
+<div class="tablewrap"><table>
+  <tr><th>平台</th><th>标称算力</th><th>实际可用（经验值）</th><th>能跑大模型吗</th></tr>
+  <tr><td>嘉楠 K230</td><td>约 3 TOPS（INT8）</td><td>1–2 TOPS</td><td>不能；视觉检测、分类够用</td></tr>
+  <tr><td>瑞芯微 RK3588 / RK3576</td><td>6 TOPS（3 个 NPU 核）</td><td>3–4 TOPS</td><td>1–3B 小模型（RKLLM），每秒数个到十几个 token</td></tr>
+  <tr><td>Hailo-8 / 8L</td><td>26 / 13 TOPS</td><td>视模型而定</td><td>为视觉设计，大模型支持有限</td></tr>
+  <tr><td>Jetson Orin Nano Super</td><td>67 TOPS（稀疏）</td><td>约 33 TOPS 稠密</td><td>4 位的 3–8B 模型，受约 100 GB/s 带宽限制</td></tr>
+  <tr><td>手机旗舰 NPU</td><td>约 40–60 TOPS</td><td>预填充强、解码受带宽限制</td><td>1–4B 模型（QAT / 2 位）</td></tr>
+</table></div>
+<p>选择嵌入式 NPU 也意味着离开 CUDA 生态：每家都有自己的“TensorRT 对应物”（编译器、量化工具、运行时），支持的算子集合不同，模型往往要改写或重新量化才能部署。</p>
+
+<h2 id="cases">实战记录</h2>
+<p><b>RTX 4070 Ti（12 GB）跑 Ternary Bonsai 2 27B。</b>这个模型基于 Qwen3.8-27B，用三值量化压到每权重约 1.76 位，PTQ1_0 文件 5.95 GB，官方报告保留约 98% 的评测成绩。12 GB 显存放下权重后还剩约 6 GB，配合 Q4 的 KV 缓存可以用到 64K 上下文，相当于用 9B 模型 4 位的显存预算跑 27B 级别的能力。前提是必须用 PrismML 的 llama.cpp 分支（见上面的意外框）。社区还给它加了多 token 预测头做投机解码，实测解码速度提升约 25%（第 <a class="xref" data-ref="serving"></a> 章）。8 GB 的显卡只能用 PTQ1_0 加 8–16K 上下文，并且不能挂视觉投影器。</p>
+<p><b>M3（16 GB）。</b>Bonsai 的方案依赖 CUDA 和专用运行时，不适合这台 Mac。可用的选择是 Gemma 4 12B 的 QAT 版本（约 7.2 GB，上下文约 8K），或 Qwen3 8B 一类的 4 位模型；27B 的 4 位版本（约 18 GB）放不下。速度上限约每秒十几个 token，读长提示需要几十秒。</p>
+<p>这两个例子说明了本章的方法：先算内存（权重 + KV + 系统），再按带宽估生成速度、按算力估读提示的时间，最后确认运行时是否支持这个格式。</p>
+
+<aside class="dispute">
+  <h4>本地模型与云端模型的差距在缩小吗</h4>
+  <dl>
+    <dt>缩小</dt><dd>Epoch AI（2025）测得，一张消费级显卡能运行的开源模型，在多项基准上落后前沿约 6–12 个月（平均约 9 个月）；2026 年以来，最强的开源模型与闭源前沿的差距平均约 4 个月。开源模型追赶得快，量化和 MoE 让大模型越来越容易放进本地设备。隐私、离线、零边际成本和低延迟，是本地部署的独特优势。</dd>
+    <dt>没有缩小</dt><dd>Epoch 自己也提醒，小型开源模型更可能针对基准做了优化，实际可用性的差距要比 9 个月长。前沿能力本身在快速前进：一年前的前沿，到今天往往已不够用；智能体任务需要百万 token 的上下文和长时间推理，本地设备的预填充速度和内存都难以承受；最强的模型越来越大（万亿参数），本地只能运行它们的蒸馏版。</dd>
+    <dt>现在怎么看</dt><dd>“本地能跑一年前的前沿”大致成立，“本地能跑今天的前沿”不成立。实际的分工是：日常、隐私敏感、离线的任务在本地，复杂的长任务交给云端；端云协同（本地小模型处理简单请求、必要时转给云端）是手机厂商的主流方案。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">能装进显存就能跑得快。</b>装得下只是第一本账；生成速度看带宽，读长提示看算力，Mac 和手机在后者上差距很大。</li>
+  <li><b class="m">TOPS 越高，越适合跑大模型。</b>大模型的解码受内存带宽限制；TOPS 还常按稀疏、INT8 标注，需要打折。</li>
+  <li><b class="m">同样占 6 GB，小模型高精度比大模型低精度好。</b>多数情况下相反：大模型的低位版本（尤其是 QAT 的）通常更强。</li>
+  <li><b class="m">任何 GGUF 文件都能用任何版本的 llama.cpp 打开。</b>新格式（三值、旋转、新注意力）需要对应版本或专门的分支，否则可能拒绝加载，甚至加载成功却输出乱码。</li>
+  <li><b class="m">MoE 本地一定慢。</b>MoE 每个 token 只读少量专家，在带宽受限的本地设备上反而有优势，前提是内存放得下全部专家，或者能把专家放在 CPU 内存。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2023</div>
+    <h4>llama.cpp：大模型第一次跑在笔记本上</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型只能在数据中心的 GPU 上运行。</dd>
+      <dt>怎么解决</dt><dd>LLaMA 泄露后不久，llama.cpp（2023-03）用纯 C/C++ 和 4 位量化让它在 MacBook 上运行；GGUF 格式（2023-08）；Ollama 封装；Apple 发布 MLX（2023-12）；Gemini Nano 进入 Pixel 手机。</dd>
+      <dt>代价</dt><dd>小模型能力弱，量化质量参差。</dd>
+      <dt>引出</dt><dd>能否让小模型更强、手机上更好用？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>端侧小模型与系统级 AI</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>手机内存和电池限制模型规模。</dd>
+      <dt>怎么解决</dt><dd>Phi-3 mini 等强力小模型；Apple Intelligence 发布端侧约 3B 的模型；高通、联发科的 NPU 开始支持大模型；I-quants 等极限量化。</dd>
+      <dt>代价</dt><dd>端侧模型只能做简单任务，复杂请求转给云端。</dd>
+      <dt>引出</dt><dd>能否在本地运行接近前沿的模型？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>QAT、MoE 与统一内存主机</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>4 位以下质量下降；显存放不下大模型。</dd>
+      <dt>怎么解决</dt><dd>Gemma 3 QAT、Gemma 3n 的 E2B / E4B；gpt-oss-20b 以 MXFP4 在 16 GB 设备上运行；Apple 开放 Foundation Models 框架（2 位 QAT）；DGX Spark 与 Ryzen AI Max 等 128 GB 统一内存主机。</dd>
+      <dt>代价</dt><dd>新格式和新架构的运行时支持滞后。</dd>
+      <dt>引出</dt><dd>极低位能否把 27B 塞进消费级显卡？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">持续发展</span>嵌入式 NPU 上的大模型</summary><div>瑞芯微的 RKLLM、各家边缘 AI 芯片开始支持 1–3B 的语言模型，但受内存带宽和封闭算子集合的限制，主要用于语音助手、简单问答等场景；视觉检测仍是嵌入式 NPU 的主战场。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>三值 27B 与 Gemma 4</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>消费级显卡与手机的内存仍然有限。</dd>
+      <dt>怎么解决</dt><dd>PrismML 的 1-bit Bonsai（8B 仅 1.15 GB）与 Ternary Bonsai 2 27B（约 6 GB）；Gemma 4 的 E2B / E4B / 26B MoE / 31B；Apple M5 的 GPU 矩阵加速单元改善预填充。</dd>
+      <dt>代价</dt><dd>依赖专门的运行时分支；极低位的长尾损失仍需更多独立评测。</dd>
+      <dt>引出</dt><dd>第五部分到此结束。第六部分转向多模态：模型怎样看图、听声音、生成图像和视频（第 <a class="xref" data-ref="vlm"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一台 24 GB 显存的显卡，想跑 32B 稠密模型，Q4_K_M（约 4.8 bpw），每 token 的 KV 缓存约 128 KB（FP16）。权重多大？留 1 GB 给运行时，最多能用多长的上下文？</summary><div class="ans">权重 \(32\times 10^9\times 4.8/8\approx 19.2\) GB。剩余约 \(24 - 19.2 - 1 = 3.8\) GB，\(3.8\text{ GB}/128\text{ KB}\approx 3\) 万 token。KV 改用 Q8 可翻倍到约 6 万。</div></details>
+<details class="quiz"><summary>2. 同一台 M3 Max（约 400 GB/s，GPU 约 14 TFLOPS），跑 4 位的 30B 稠密模型和 4 位的 30B 总参数、3B 激活的 MoE，生成速度上限各是多少？读一个 16K 的提示各要多久（利用率 50%）？</summary><div class="ans">稠密：每 token 约 15 GB，上限约 27 token/s；预填充 \(2\times 3\times 10^{10}\times 16384/(7\times 10^{12})\approx 140\) 秒。MoE：每 token 约 1.5 GB，上限约 270 token/s；预填充按激活参数计 \(2\times 3\times 10^9\times 16384/(7\times 10^{12})\approx 14\) 秒。</div></details>
+<details class="quiz"><summary>3. 一块板子宣传“100 TOPS”，脚注写着“INT8，稀疏”。跑一个 INT8 的视觉模型，实际利用率 40%，可用算力大约多少？</summary><div class="ans">\(100\times 0.5\times 0.4 = 20\) TOPS。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://github.com/ggml-org/llama.cpp">llama.cpp</a> 的文档与讨论区<span class="why">量化格式、后端与性能数据的第一手来源。</span></li>
+  <li><a href="https://machinelearning.apple.com/research/apple-foundation-models-tech-report-2025">Apple Intelligence Foundation Language Models Tech Report 2025</a><span class="why">端侧约 3B 模型的 2 位 QAT 与 KV 共享。</span></li>
+  <li><a href="https://developers.googleblog.com/en/introducing-gemma-3n-developer-guide/">Gemma 3n 开发者指南</a><span class="why">每层嵌入外置、MatFormer 等端侧设计。</span></li>
+  <li><a href="https://epoch.ai/data-insights/consumer-gpu-model-gap">Epoch AI：消费级显卡与前沿模型的差距</a><span class="why">本地能跑多久以前的前沿。</span></li>
+  <li><a href="https://huggingface.co/prism-ml/Ternary-Bonsai-2-27B-gguf">Ternary-Bonsai-2-27B</a> 与 <a href="https://docs.prismml.com/download/formats">PrismML 格式文档</a><span class="why">三值模型的本地部署细节。</span></li>
+</ol>
+
+<div class="nextq">到这里，模型处理的都是文字。第六部分转向多模态：一张图片怎样变成模型能读的 token，视觉编码器从哪来，模型怎样“看”屏幕和文档？下一章（第 <a class="xref" data-ref="vlm"></a> 章）。</div>
+
+<p class="src">资料：知识库《Bonsai 2 27B（ternary）在 RTX 4070 Ti 12GB 上的部署》（2026-10-01）与本机部署讨论（2026-10-05）、嵌入式算力天梯讨论（2026-10-07/08） · <a href="https://developers.googleblog.com/mediatek-npu-and-litert-powering-the-next-generation-of-on-device-ai/">联发科 NPU 与 LiteRT</a> · <a href="https://ztabs.co/blog/on-device-llms-mobile-2026">2026 移动端 LLM</a> · <a href="https://en.wikipedia.org/wiki/Gemma_(language_model)">Gemma（维基百科）</a> · <a href="https://developer.nvidia.com/blog/nvidia-jetson-orin-nano-developer-kit-gets-a-super-boost/">Jetson Orin Nano Super</a> · <a href="https://github.com/airockchip/rknn-llm">RKLLM</a> · <a href="https://ml-explore.github.io/mlx/">MLX</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

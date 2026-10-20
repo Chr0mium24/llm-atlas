@@ -231,4 +231,8 @@ window.ATLAS_TERMS = {
   'tensor-parallel': { t: '张量并行', en: 'tensor parallelism', d: '把每个矩阵乘法按行或列切到多张卡上，每层两次全规约；通信频繁，通常限于一个 NVLink 域内。', at: 'training-systems#parallel' },
   'pipeline-parallel': { t: '流水线并行', en: 'pipeline parallelism', d: String.raw`按层切成 \(p\) 段放在不同机器上，数据切成 \(m\) 个微批次流过；空闲“气泡”比例约 \((p-1)/(m+p-1)\)。`, at: 'training-systems#parallel' },
   mfu: { t: 'MFU', en: 'model FLOPs utilization', d: String.raw`模型理论计算量（每 token \(6N\)）占硬件峰值算力的比例。大规模训练做到 40–50% 就算很好。`, at: 'training-systems#comm' },
+
+  // ---- on-device (on-device.html)
+  'unified-memory': { t: '统一内存', en: 'unified memory', d: 'CPU 与 GPU 共享同一块内存（Apple 芯片、DGX Spark 等）。容量大，能放下大模型；带宽与算力通常低于同价位的独立显卡。', at: 'on-device#mac' },
+  npu: { t: 'NPU', en: 'neural processing unit', d: '专为神经网络推理设计的加速器（手机、嵌入式芯片中常见）。算子集合封闭、需专用工具链；擅长计算受限的预填充，解码仍受内存带宽限制。', at: 'on-device#phone' },
 };
