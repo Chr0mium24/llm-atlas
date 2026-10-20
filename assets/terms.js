@@ -280,4 +280,9 @@ window.ATLAS_TERMS = {
   // ---- world-models (world-models.html)
   'world-model': { t: '世界模型', en: 'world model', d: String.raw`学习环境动态 \(p(\mathbf s_{t+1}\mid\mathbf s_{\le t}, \mathbf a_t)\) 的模型：给定观测与动作预测下一刻。用于在想象中训练智能体、可交互的视频世界、驾驶与机器人仿真。`, at: 'world-models#what' },
   jepa: { t: 'JEPA', en: 'joint-embedding predictive architecture', d: '只在抽象表示空间里预测未来、不重建像素的自监督架构（LeCun）；用停止梯度与慢速更新的目标编码器防止表示塌缩。V-JEPA 2 用它做机器人规划。', at: 'world-models#debate' },
+
+  // ---- embodied (embodied.html)
+  vla: { t: 'VLA', en: 'vision-language-action model', d: '以视觉语言模型为骨干、直接输出机器人动作的模型：动作可离散成 token（RT-2），或由流匹配动作专家生成连续的动作块（π0）。', at: 'embodied#vla' },
+  'behavior-cloning': { t: '行为克隆', en: 'behavior cloning', d: String.raw`用监督学习模仿专家在各状态下的动作。偏离示范后的状态没见过，误差累积，代价上界随步数平方增长（\(T^2\varepsilon\)）；DAgger 降为线性。`, at: 'embodied#bc' },
+  wam: { t: '世界动作模型', en: 'world action model', d: '以大规模预训练的视频世界模型为骨干，在预测未来画面的同时解码出动作的机器人策略（2026 年兴起，如 NVIDIA DreamZero）。', at: 'embodied#wam' },
 };

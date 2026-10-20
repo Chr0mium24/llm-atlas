@@ -74,7 +74,7 @@ document.addEventListener('DOMContentLoaded', () => {
     audio: '梅尔频谱与 Whisper（及其幻觉）、RVQ 编解码器与码率、编解码器语言模型做 TTS、声音克隆、延迟账与全双工、三段式 vs 端到端、音乐生成与唱片诉讼和解',
     spatial: '体渲染公式（比尔-朗伯推导）与 NeRF、3D 高斯泼溅的投影与混合、SDS 与雅努斯问题、DUSt3R/VGGT 前馈重建、TRELLIS 三维潜空间、世界生成、空间推理之争',
     'world-models': '动作条件的动态模型、Dreamer 在想象中练习、误差指数累积与记忆、GameNGen/Genie 可以玩的视频、Waymo 与 Cosmos 的物理仿真、JEPA 与像素/表示/三维路线之争',
-    embodied: 'RT-2、π0 系列、双系统 VLA、世界动作模型',
+    embodied: '莫拉维克悖论、动作 token 化（RT-2）与流匹配动作块（π0）、行为克隆 T²ε 与 DAgger、快慢双系统、世界动作模型与 π0.7、数据从哪来、人形机器人之争',
     interpretability: '残差流与电路、叠加与稀疏自编码器、人设向量与助手轴',
     evaluation: '污染与饱和、榜单幻觉、新一代评测、METR 时间跨度',
     alignment: '规范文档、谄媚、钻奖励空子与涌现不对齐、思维链可监控性',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 71]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 72]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

@@ -38,7 +38,7 @@
     { s: 'audio', t: '语音、音频与音乐', st: 'new' },
     { s: 'spatial', t: '3D 与空间智能', st: 'new' },
     { s: 'world-models', t: '世界模型', st: 'new' },
-    { s: 'embodied', t: '具身智能与 VLA', st: 'todo' },
+    { s: 'embodied', t: '具身智能与 VLA', st: 'new' },
     { part: '七 · 理解与评判' },
     { s: 'interpretability', t: '可解释性', st: 'todo' },
     { s: 'evaluation', t: '评测', st: 'todo' },

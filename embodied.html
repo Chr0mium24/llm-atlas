@@ -12,22 +12,176 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>具身智能与 VLA</h1>
-  <p class="lede">把语言模型接上身体：视觉-语言-动作模型怎么让机器人做事。</p>
+  <h1>具身智能：把语言模型接到电机上</h1>
+  <p class="lede">大模型能写代码、解奥数题，却叠不好一件衬衫。让模型在物理世界中行动，难点和数字世界完全不同：没有互联网规模的数据，每一步都要在几十毫秒内做出，错误会让机器人摔倒或打碎东西。这一章讲视觉-语言-动作模型（VLA）怎样把机器人动作变成“另一种 token”，模仿学习为什么会越走越偏，“慢思考 + 快反应”的双系统架构，以及 2026 年兴起的“世界动作模型”。最后讨论数据从哪来，和人形机器人热潮背后有多少是真的。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.1）。</div>
+<div class="bridge">上一章的世界模型能预测“如果这样做会发生什么”。具身智能要回答反过来的问题：为了达成目标，现在应该怎么做。它把多模态理解（第 <a class="xref" data-ref="vlm"></a> 章）、生成（第 <a class="xref" data-ref="diffusion"></a> 章）和世界模型（第 <a class="xref" data-ref="world-models"></a> 章）连到了真实的电机上。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>多模态模型与投影层：第 <a class="xref" data-ref="vlm"></a> 章；流匹配：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>策略、奖励、强化学习：第 <a class="xref" data-ref="rl"></a> 章；暴露偏差与在线蒸馏（DAgger）：第 <a class="xref" data-ref="generation"></a>、<a class="xref" data-ref="distillation"></a> 章</li>
+    <li>世界模型：第 <a class="xref" data-ref="world-models"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="moravec">为什么叠衣服比解奥数题还难</h2>
+<aside class="dispute surprise">
+  <h4>意外：对人容易的事，对机器最难（莫拉维克悖论）</h4>
+  <dl>
+    <dt>原以为</dt><dd>能下棋、解数学题的智能，处理“拿起杯子”这样的小事应该更容易。</dd>
+    <dt>实际发现</dt><dd>莫拉维克在 1988 年就指出：让计算机在智力测验或下棋上达到成人水平相对容易，让它拥有一岁小孩的感知和运动能力却极其困难。2026 年的大模型在奥数上拿到金牌，而机器人在陌生的家里叠衣服、收拾餐桌，成功率才刚刚变得可观。</dd>
+    <dt>为什么</dt><dd>感知和运动是数亿年进化的结果，我们意识不到其中的复杂度；更直接的原因是数据：语言模型有数十万亿 token 的网络文本，而机器人的动作数据需要真实的机器人一条条采集，最大的开放数据集也只有百万条量级的轨迹。另外，物理世界的每一步都有真实的后果，无法像文本那样随意重试。</dd>
+    <dt>现在怎么看</dt><dd>这个悖论正在被“借用”互联网数据的方法部分破解：用在网络图文上预训练的视觉语言模型做骨干（VLA），用人类第一视角的视频学习动作先验，用视频世界模型预测物理变化。</dd>
+  </dl>
+</aside>
+
+<h2 id="vla">VLA：把动作当作另一种 token</h2>
+<p>2023 年 Google 的 RT-2 提出了一个简单的想法：一个视觉语言模型已经能看图、理解指令，只要让它的输出除了文字还包括“动作”，它就能控制机器人。这类模型叫<dfn data-t="vla">视觉-语言-动作模型</dfn>（VLA）。最直接的做法是把连续的动作离散成 token：</p>
+<div class="fx">
+\[ \mathbf a_t = (\Delta x, \Delta y, \Delta z, \Delta\text{滚转}, \Delta\text{俯仰}, \Delta\text{偏航}, \text{夹爪})\ \longrightarrow\ \htmlClass{c-new}{\text{7 个 token}},\quad\text{每维分成 } \htmlClass{sym-K}{K} = 256\ \text{档} \]
+  <div class="fx-read">机械臂末端的位移、旋转和夹爪开合，每一维都等分成 256 档，每档对应词表里的一个 token。模型看到相机画面和指令“把苹果放进碗里”，像生成文字一样生成 7 个动作 token，再解码回连续的动作执行。</div>
+  <dl class="fx-syms">
+    <dt data-sym="K">\(K\)</dt><dd>每个动作维度的离散档数</dd>
+  </dl>
+  <div class="fx-eg">x 方向的位移范围是 \(\pm 5\) 厘米，256 档每档约 0.4 毫米。RT-2 直接复用语言模型词表中最少使用的 256 个 token 来表示这些档位。好处是网络规模的视觉语言知识直接迁移：RT-2 能执行“把东西递给泰勒·斯威夫特的照片”这类训练数据中从未出现的指令。</div>
+</div>
+<p>离散化的问题是精度和速度：每步要逐个生成 7 个 token，精细的灵巧操作需要更高的控制频率和更平滑的轨迹。2024 年 Physical Intelligence 的 π0 换了一种方式：视觉语言模型负责理解，一个单独的“动作专家”用流匹配（第 <a class="xref" data-ref="diffusion"></a> 章）直接生成一段连续的动作轨迹：</p>
+<div class="fx">
+\[ \mathbf A^{\tau} = \tau\,\mathbf A + (1-\tau)\,\boldsymbol\varepsilon,\qquad \mathcal L = \big\|\mathbf v_\theta(\mathbf A^\tau,\ \htmlClass{sym-o}{\mathbf o}) - (\mathbf A - \boldsymbol\varepsilon)\big\|^2,\qquad \mathbf A = (\mathbf a_t, \dots, \mathbf a_{t+\htmlClass{sym-H}{H}-1}) \]
+  <div class="fx-read">\(\mathbf A\) 是接下来 \(H\) 步的完整动作序列（一个“动作块”），\(\mathbf o\) 是相机画面、机器人状态和语言指令。和图像生成完全一样：从噪声出发，沿学到的速度场积分十步左右，得到一整段平滑的动作。</div>
+  <dl class="fx-syms">
+    <dt data-sym="o">\(\mathbf o\)</dt><dd>观测：多路相机图像、关节角度、语言指令</dd>
+    <dt data-sym="H">\(H\)</dt><dd>动作块的长度，例如 50 步</dd>
+  </dl>
+  <div class="fx-eg">π0 以每秒 50 次的频率控制机械臂，一次推理生成 50 步的动作块，相当于每秒只需推理一次左右。这让 30 亿参数的模型也能驱动高频的灵巧操作（叠衣服、装盒子），而离散 token 的方法很难做到。</div>
+</div>
+
+<h2 id="bc">模仿学习与“越走越偏”</h2>
+<p>VLA 的主要训练方式是<dfn data-t="behavior-cloning">行为克隆</dfn>：收集人类遥操作机器人完成任务的轨迹（相机画面 + 动作），用监督学习让模型模仿“在这个画面下，人做了什么动作”。这和第 <a class="xref" data-ref="sft"></a> 章的 SFT 是同一件事。它有一个根本的缺陷：</p>
+<div class="fx">
+\[ J(\hat\pi) \le J(\pi^\ast) + \htmlClass{c-adv}{T^2}\,\htmlClass{sym-e}{\varepsilon}\quad(\text{行为克隆}),\qquad J(\hat\pi) \le J(\pi^\ast) + \htmlClass{c-dir}{T}\,\varepsilon\quad(\text{DAgger}) \]
+  <div class="fx-read">\(J\) 是任务的总代价，\(\varepsilon\) 是模型在专家见过的状态上每一步犯错的概率，\(T\) 是任务步数。行为克隆的额外代价随步数<span style="color:var(--s2)">平方</span>增长：一旦犯错进入专家没走过的状态，模型不知道如何恢复，后面每一步都可能继续出错。DAgger 让学生自己执行，请专家为它实际遇到的状态标注正确动作，代价只<span style="color:var(--s1)">线性</span>增长（Ross 与 Bagnell, 2010–2011）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="e">\(\varepsilon\)</dt><dd>在专家状态分布上的单步错误率</dd>
+  </dl>
+  <div class="fx-eg">\(T = 200\) 步的叠衣服任务，单步错误率 1%。行为克隆的上界是 \(200^2\times 0.01 = 400\)，比任务本身的长度还大，意味着几乎必然失败；DAgger 是 \(200\times 0.01 = 2\)。这正是第 <a class="xref" data-ref="generation"></a> 章暴露偏差的定量版本。</div>
+</div>
+<div data-demo="bc-drift"></div>
+<p>实践中的对策：采集数据时故意加入扰动和恢复动作；用动作块（一次预测一段，减少决策次数）；在部署后让机器人自己尝试、由人在出错时接管并纠正（DAgger 的变体）；以及强化学习。Physical Intelligence 的 π*0.6（2025）用机器人在实际工作中积累的经验和人的纠正做强化学习，连续制作咖啡、叠衣服的成功率和速度都明显提高。</p>
+
+<h2 id="dual">双系统：慢思考与快反应</h2>
+<p>一个几十亿参数的 VLA 每秒只能推理几次，而平衡、抓取的反馈控制需要每秒几百次。2025 年的几个代表系统都采用了类似认知科学中“系统 1 / 系统 2”的分工：</p>
 <ul>
-  <li>RT-2：把动作当成 token</li>
-  <li>OpenVLA 与 π0：流匹配动作头</li>
-  <li>双系统：慢思考规划 + 快反应控制（GR00T、Helix）</li>
-  <li>π0.5 → π0.7：开放世界泛化与跨本体迁移</li>
-  <li>世界动作模型（2026）</li>
-  <li>难点：数据、仿真到现实、控制频率</li>
+  <li><b>Figure Helix</b>（2025-02）：一个 70 亿参数的视觉语言模型以每秒 7–9 次的频率理解场景和指令（系统 2），输出一个隐向量；一个 8000 万参数的小网络以每秒 200 次的频率据此控制人形机器人的上半身（系统 1）。Helix 02（2026-01）把行走、平衡和操作统一进一个学习系统。</li>
+  <li><b>NVIDIA GR00T N1</b>（2025-03）到 N1.7（2026）：开源的人形机器人基础模型，同样是“推理模块 + 动作模块”的级联，N1.7 号称首次观察到灵巧操作的规模定律（在两万多小时人类第一视角视频上训练）。</li>
+  <li><b>Gemini Robotics</b>（2025-03 起）：一个具身推理模型（ER）负责理解空间、规划步骤、调用工具，VLA 负责执行。2026 年 7 月的 Gemini Robotics 2 能控制完整的人形机器人。</li>
+</ul>
+<p>这与第 <a class="xref" data-ref="audio"></a> 章全双工语音的“快对话 + 后台深度推理”、第 <a class="xref" data-ref="reasoning"></a> 章 GPT-5 的快慢路由是同一种设计思想：把“反应快”和“想得深”交给不同的部件。</p>
+
+<h2 id="wam">2026：世界动作模型</h2>
+<p>2026 年最受关注的方向是把第 <a class="xref" data-ref="world-models"></a> 章的视频世界模型直接变成策略。<dfn data-t="wam">世界动作模型</dfn>（World Action Model）以大规模预训练的视频生成模型为骨干：视频模型已经从海量视频中学会了“物体会怎样运动”，只需少量机器人数据，让它在“想象接下来的画面”的同时“解码出让画面成真的动作”。NVIDIA 的 DreamZero 以 140 亿参数的视频模型 Wan 2.1 为骨干，据其报告在 2026 年 4 月的 RoboArena 排行榜上超过了 π0.5；Black Forest Labs 也发布了基于其图像模型的开源世界动作模型。</p>
+<p>VLA 一侧也在吸收世界模型：Physical Intelligence 的 π0.7（2026-04，约 50 亿参数）在提示中除了语言指令，还加入任务的元信息和由一个轻量世界模型生成的“子目标图像”，用来引导机器人以特定的方式完成任务；它在多种灵巧任务上达到针对单一任务微调的专用模型的水平，并能执行训练中从未出现过的新指令。Figure 的 Helix 2.5（2026-09）在人类行为视频上预训练后，在 30 个从未采集过数据的真实家庭中，零样本成功率从 9% 提升到 56%。</p>
+<aside class="dispute">
+  <h4>机器人的数据从哪来</h4>
+  <dl>
+    <dt>遥操作派</dt><dd>真实机器人的遥操作数据质量最高、与部署分布一致。Physical Intelligence、Figure、特斯拉等都在雇佣大量人员遥操作采集数据；跨机器人的开放数据集（Open X-Embodiment, 2023）汇集了 22 种机器人的一百多万条轨迹。但它昂贵、慢，规模比语言数据小六七个数量级。</dd>
+    <dt>仿真派</dt><dd>仿真中数据几乎免费、可以无限并行、可以安全地失败，强化学习在仿真中训练行走、平衡等运动技能已非常成功；但视觉外观、接触与摩擦、柔性物体的物理难以仿真准确，“仿真到现实”的差距在灵巧操作上尤其大。</dd>
+    <dt>视频派</dt><dd>互联网上有海量人类做事的视频（第一视角、教学视频），可以学到动作的先验和物理常识；世界动作模型和 Helix 2.5、GR00T N1.7 的人类视频预训练都在走这条路。难点是视频里没有动作标签，人手与机械手的形态也不同。</dd>
+    <dt>现在怎么看</dt><dd>2026 年的共识是混合：用视频和网络数据打底（知识与物理先验），仿真训练运动和可大量重复的技能，少量但高质量的真实数据做对齐，再在部署中持续收集纠正数据。“机器人的 ImageNet 时刻”尚未完全到来，数据仍是最大的瓶颈。</dd>
+  </dl>
+</aside>
+<aside class="dispute">
+  <h4>人形机器人：真的要来了吗</h4>
+  <dl>
+    <dt>乐观</dt><dd>2025–26 年人形机器人的能力快速进步：从实验室走进真实的家庭和工厂测试，模型在陌生环境中的零样本成功率显著提高；数十亿美元的投资和算力涌入，各家宣布量产计划。</dd>
+    <dt>谨慎</dt><dd>许多惊艳的演示是遥操作或经过多次重拍的，而厂商未必明确标注；有的家用人形机器人在预售时就说明，复杂任务需要远程人员接管。在陌生家庭里的成功率从 9% 到 56% 是巨大进步，但对一件家电来说远不够可靠；成本、续航、安全认证都还没有解决。</dd>
+    <dt>现在怎么看</dt><dd>能力的进步是真实的，商业化的时间表普遍偏乐观。看演示时要问：是否自主、是否在没见过的环境、成功率多少、重试了几次。工业场景（固定流程、受控环境）会比家庭更早落地。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">有了强大的大语言模型，机器人就能自然地做家务。</b>理解指令只是第一步；精确、可靠、实时的物理操作才是难点，而且缺乏数据。</li>
+  <li><b class="m">机器人演示视频展示的就是自主能力。</b>很多演示是遥操作、经过剪辑或只展示成功的那次；要看是否标注“自主”“一镜到底”和成功率。</li>
+  <li><b class="m">模仿学习的误差只是“偶尔做错一步”。</b>误差会累积：偏离示范的状态越多，后面越不知道怎么办，代价随步数平方增长。</li>
+  <li><b class="m">在仿真里训练好的机器人可以直接放到现实中。</b>外观、摩擦、柔性物体的差距会让策略失效，需要域随机化、真实数据微调等手段。</li>
+  <li><b class="m">VLA 就是让语言模型输出“左转”“抓取”这样的文字指令。</b>早期的 SayCan 是这样做高层规划；VLA 直接输出关节或末端的连续动作，每秒数十到数百次。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2015–2021</div>
+    <h4>端到端视觉运动学习与仿真到现实</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>手工设计的感知、规划、控制流程难以应对多样的物体和环境。</dd>
+      <dt>怎么解决</dt><dd>Levine 等（2016）从像素直接学习控制；大规模真实抓取实验；OpenAI 在仿真中用强化学习训练机械手还原魔方（2019），靠大量域随机化迁移到现实。</dd>
+      <dt>代价</dt><dd>每个任务单独训练，泛化差。</dd>
+      <dt>引出</dt><dd>能否借用大模型的通用知识？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>大模型进入机器人：SayCan、RT-1、RT-2</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>机器人听不懂开放的语言指令，也缺乏常识。</dd>
+      <dt>怎么解决</dt><dd>SayCan（2022）让语言模型做高层规划、用技能的可行性打分；RT-1（2022-12）用 13 台机器人 13 万条轨迹训练 Transformer 策略；RT-2（2023）把动作变成 token，提出 VLA；Open X-Embodiment 汇集跨机器人数据；ALOHA 与动作块、Diffusion Policy 让模仿学习能做灵巧操作。</dd>
+      <dt>代价</dt><dd>离散动作慢且粗；模型闭源。</dd>
+      <dt>引出</dt><dd>开源与连续动作。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">仍在使用</span>语言模型做高层规划</summary><div>SayCan、Code as Policies 等让语言模型把任务拆成调用现有技能的步骤或代码。端到端 VLA 兴起后，这种模块化方式仍在需要可解释和可靠性的场合使用，2025 年的“具身推理模型 + VLA”双层结构也延续了这一思想。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>开源 VLA 与流匹配动作</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>研究界缺乏可用的基础模型；离散动作做不了高频灵巧操作。</dd>
+      <dt>怎么解决</dt><dd>OpenVLA（70 亿参数，开源）；π0 用流匹配动作专家以每秒 50 次控制；人形机器人公司大量涌现。</dd>
+      <dt>代价</dt><dd>在陌生环境中泛化仍差。</dd>
+      <dt>引出</dt><dd>开放世界的泛化。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>双系统与开放世界</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型太慢，无法直接做高频控制；新环境的泛化。</dd>
+      <dt>怎么解决</dt><dd>Figure Helix、GR00T N1 的快慢双系统；Gemini Robotics 与具身推理模型；π0.5 在陌生家庭中的泛化；π*0.6 用部署中的经验做强化学习；V-JEPA 2 的零样本规划。</dd>
+      <dt>代价</dt><dd>演示与实际可靠性的差距；数据仍稀缺。</dd>
+      <dt>引出</dt><dd>能否用视频模型的物理知识补足机器人数据？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>世界动作模型与人形机器人</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>机器人数据规模有限，泛化瓶颈。</dd>
+      <dt>怎么解决</dt><dd>世界动作模型（DreamZero 等）以视频模型为骨干；π0.7 的可引导通才模型；Helix 02 与 2.5 的人类视频预训练；Gemini Robotics 2 控制完整人形机器人；GR00T N1.7 开源。</dd>
+      <dt>代价</dt><dd>可靠性、成本、安全仍待解决。</dd>
+      <dt>引出</dt><dd>第六部分到此结束。模型越来越强，我们能理解它在想什么吗？（第 <a class="xref" data-ref="interpretability"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个 VLA 推理一次需要 150 毫秒，机械臂需要每秒 50 次的控制。每次推理至少要输出多长的动作块？</summary><div class="ans">每秒最多推理约 6.7 次，需要 \(50/6.7\approx 7.5\)，至少 8 步的动作块；实际会更长（如 16–50 步），并在执行旧块的同时计算新块。</div></details>
+<details class="quiz"><summary>2. 任务 100 步，模仿学习的单步错误率从 2% 降到 1%，按 \(T^2\varepsilon\) 的上界，额外代价降了多少？换成 DAgger 呢？</summary><div class="ans">行为克隆：从 200 降到 100。DAgger（\(T\varepsilon\)）：从 2 降到 1。两种情况下错误率减半都让代价减半，但行为克隆的代价本身大了 \(T = 100\) 倍。</div></details>
+<details class="quiz"><summary>3. 为什么用视频生成模型做机器人策略的骨干可能更容易泛化？它最大的风险是什么？</summary><div class="ans">视频模型从海量视频中学到了物体如何运动、接触后会怎样的先验，机器人数据只需教它“怎样的动作导致怎样的画面变化”。风险是第 <a class="xref" data-ref="video"></a> 章的物理争议：视频模型学到的是看起来合理的统计规律，物理上不一定准确，在罕见情况下可能“想象”出不会发生的结果。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2307.15818">RT-2: Vision-Language-Action Models</a>（Google DeepMind, 2023）<span class="why">把动作当作 token，VLA 的起点。</span></li>
+  <li><a href="https://arxiv.org/abs/1011.0686">A Reduction of Imitation Learning and Structured Prediction to No-Regret Online Learning</a>（DAgger, 2011）<span class="why">模仿学习误差平方累积与 DAgger。</span></li>
+  <li><a href="https://arxiv.org/abs/2410.24164">π0: A Vision-Language-Action Flow Model</a>（Physical Intelligence, 2024）<span class="why">流匹配动作专家与动作块。</span></li>
+  <li><a href="https://arxiv.org/abs/2604.15483">π0.7</a>（2026）<span class="why">可引导的通才机器人基础模型。</span></li>
+  <li><a href="https://developer.nvidia.com/blog/pretrained-to-imagine-fine-tuned-to-act-the-rise-of-world-action-models/">The Rise of World-Action Models</a>（NVIDIA, 2026）<span class="why">世界动作模型的思路与进展。</span></li>
+</ol>
+
+<div class="nextq">第六部分结束。从文字到图像、声音、三维和机器人，模型能做的事越来越多，可我们对它内部发生了什么仍知之甚少。第七部分讲理解与评判：先从打开黑箱开始（第 <a class="xref" data-ref="interpretability"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2212.06817">RT-1</a> · <a href="https://arxiv.org/abs/2204.01691">SayCan</a> · <a href="https://arxiv.org/abs/2310.08864">Open X-Embodiment</a> · <a href="https://arxiv.org/abs/2304.13705">ALOHA / ACT</a> · <a href="https://arxiv.org/abs/2303.04137">Diffusion Policy</a> · <a href="https://arxiv.org/abs/2406.09246">OpenVLA</a> · <a href="https://www.figure.ai/news/helix">Figure Helix</a> · <a href="https://arxiv.org/abs/2503.14734">GR00T N1</a> · <a href="https://huggingface.co/blog/nvidia/gr00t-n1-7">GR00T N1.7</a> · <a href="https://en.wikipedia.org/wiki/Gemini_Robotics">Gemini Robotics</a> · <a href="https://www.pi.website/blog/pi07">π0.7 博客</a> · <a href="https://theaiinsider.tech/2026/09/17/figure-unveils-helix-2-5-with-zero-shot-humanoid-generalization-across-30-homes/">Helix 2.5</a> · <a href="https://arxiv.org/abs/2602.15922">World Action Models are Zero-shot Policies</a> · <a href="https://arxiv.org/abs/2603.22078">WAM 与 VLA 的鲁棒性比较</a> · <a href="https://arxiv.org/abs/2604.15395">机器人基础模型综述 2026</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
