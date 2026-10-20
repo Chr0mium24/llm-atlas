@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     image: '从零开始走一遍潜扩散流水线：VAE、文本编码器、去噪与 CFG 的账；MMDiT 联合注意力、SDEdit 强度权衡与上下文编辑、DreamBooth 个性化、少步蒸馏、FID 的推导与局限、每一代在修什么',
     video: '从零开始算一段 5 秒视频的 token 与注意力账、3D 因果 VAE、联合去噪为什么一致、自回归漂移与 Self Forcing、少步与实时、每一代在修什么（噪声分工 MoE、原生音频、多镜头）、懂物理之争',
     audio: '从零开始：一秒语音是多少个采样、多少帧梅尔频谱、多少编解码 token；STFT 的时频权衡、RVQ 码率、多码本的排列（延迟模式、深度 Transformer）、语音对话的延迟账与全双工判停、每一代在修什么、音乐生成与版权',
-    spatial: '体渲染公式（比尔-朗伯推导）与 NeRF、3D 高斯泼溅的投影与混合、SDS 与雅努斯问题、DUSt3R/VGGT 前馈重建、TRELLIS 三维潜空间、世界生成、空间推理之争',
+    spatial: '从零开始：针孔相机把三维点投影成像素、一条光线累加颜色；体渲染与 alpha 合成、NeRF 位置编码与频谱偏置、3D 高斯投影与实时光栅化、SDS 与多面问题、前馈重建（DUSt3R、VGGT）、每一代在修什么与世界生成',
     'world-models': '从零开始：网格世界里世界模型预测什么、怎样在想象中规划；误差累积与最优视野、Dreamer 的潜变量目标、JEPA 为什么不重建像素、Genie 的潜动作、MuZero 的价值等价；每一代在修什么与路线之争',
     embodied: '从零开始：玩具机械臂的观测、动作与一条示范；行为克隆的误差累积（T²ε）与 DAgger、动作块的权衡、FAST 频域 token 化、流匹配动作专家、双系统的时间账、仿真到现实、RL 微调、每一代在修什么',
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 113], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 116], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
