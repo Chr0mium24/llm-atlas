@@ -270,4 +270,10 @@ window.ATLAS_TERMS = {
   'neural-codec': { t: '神经音频编解码器', en: 'neural audio codec', d: '把波形压成每秒几十帧、每帧几个码本编号的网络（SoundStream、EnCodec、Mimi），并能解码还原。让语言模型可以“预测声音 token”。', at: 'audio#codec' },
   rvq: { t: '残差向量量化（RVQ）', en: 'residual vector quantization', d: '第 1 级码本量化原始向量，第 k 级量化前 k−1 级留下的残差；码率 = 帧率 × 级数 × log₂(码本大小)。', at: 'audio#codec' },
   'full-duplex': { t: '全双工对话', en: 'full-duplex dialogue', d: '同时听和说、可随时被打断或插话的语音对话模型（Moshi、GPT-Live）。', at: 'audio#duplex' },
+
+  // ---- spatial (spatial.html)
+  nerf: { t: '神经辐射场（NeRF）', en: 'neural radiance field', d: '用一个 MLP 表示场景：输入坐标与视角，输出密度和颜色；沿光线做可微体渲染，从多张照片优化得到。', at: 'spatial#nerf' },
+  'volume-rendering': { t: '体渲染', en: 'volume rendering', d: String.raw`沿光线累加 \(C = \sum_i T_i\alpha_i\mathbf c_i\)，\(\alpha_i = 1 - e^{-\sigma_i\delta_i}\)，\(T_i = \prod_{j<i}(1-\alpha_j)\)。来自比尔-朗伯定律，NeRF 与高斯泼溅共用。`, at: 'spatial#nerf' },
+  'gaussian-splatting': { t: '3D 高斯泼溅', en: '3D Gaussian splatting', d: '用几百万个带位置、协方差、颜色、不透明度的三维高斯椭球表示场景，投影到屏幕后按深度排序混合，可实时渲染（2023）。', at: 'spatial#gs' },
+  sds: { t: '分数蒸馏采样（SDS）', en: 'score distillation sampling', d: '从随机视角渲染三维表示、加噪后让二维扩散模型预测噪声，用预测与真实噪声之差更新三维参数，借二维模型生成三维（DreamFusion, 2022）。', at: 'spatial#gen' },
 };

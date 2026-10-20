@@ -109,7 +109,7 @@
 <h2 id="multihead">多头注意力</h2>
 <p>一个注意力头只能给出一组权重，也就是一种“关注方式”。但一个词往往同时需要几种信息：它的主语是谁、前一个词是什么、前文有没有出现过它。<dfn data-t="multi-head">多头注意力</dfn>把 \(d\) 维切成 \(h\) 份，每份是一个独立的头，有自己的 \(W_Q, W_K, W_V\)，各算各的，结果拼起来再乘一个输出矩阵：</p>
 <div class="fx">
-\[ \operatorname{MultiHead}(X) = \big[\,\htmlClass{sym-hd}{\text{head}_1};\ \dots;\ \text{head}_h\,\big]\,\htmlClass{sym-WO}{W_O},\qquad \text{head}_m = \operatorname{Attention}(XW_Q^{(m)},\ XW_K^{(m)},\ XW_V^{(m)}) \]
+\[ \begin{aligned} \operatorname{MultiHead}(X) &= \big[\,\htmlClass{sym-hd}{\text{head}_1};\ \dots;\ \text{head}_h\,\big]\,\htmlClass{sym-WO}{W_O}\\ \text{head}_m &= \operatorname{Attention}(XW_Q^{(m)},\ XW_K^{(m)},\ XW_V^{(m)}) \end{aligned} \]
   <div class="fx-read">\(h\) 个头各自用一套小矩阵做注意力，输出拼接成 \(d\) 维，再用 \(W_O\) 混合。</div>
   <dl class="fx-syms">
     <dt data-sym="hd">\(\text{head}_m\)</dt><dd>第 \(m\) 个头的输出，维度 \(d_h = d/h\)</dd>

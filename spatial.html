@@ -12,22 +12,165 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>3D 与空间智能</h1>
-  <p class="lede">从 NeRF 到高斯泼溅，从逐个物体优化到一秒生成整个可探索的世界。</p>
+  <h1>3D 与空间智能：从照片到可以走进去的场景</h1>
+  <p class="lede">图像和视频是三维世界在二维平面上的投影。要生成可以从任意角度观看的物体、可以走进去的场景，或者让模型真正理解“桌子在椅子左边一米”，需要三维的表示。这一章讲两种改变了三维视觉的表示：神经辐射场（NeRF）与 3D 高斯泼溅，它们共用一个来自物理的渲染公式；然后是怎样借二维扩散模型生成三维、怎样一秒钟从照片重建三维，以及 2025–26 年的“世界生成”和多模态模型糟糕的空间推理能力。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.6）。</div>
+<div class="bridge">前几章的模型都在二维平面上工作：图像是像素网格，视频是一叠网格。它们能画出逼真的画面，却不保证不同角度看到的是同一个物体，也说不清物体之间的距离。这一章把第三个维度加回来。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>扩散、分数、CFG：第 <a class="xref" data-ref="diffusion"></a> 章；潜空间与 DiT：第 <a class="xref" data-ref="image"></a> 章</li>
+    <li>ViT 与 Transformer：第 <a class="xref" data-ref="vlm"></a>、<a class="xref" data-ref="transformer"></a> 章</li>
+    <li>指数函数、积分、多元高斯分布与协方差矩阵：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+  </ul>
+</div>
+
+<h2 id="repr">三维怎样表示</h2>
+<p>传统图形学用<b>网格</b>（三角形拼成的表面）、<b>点云</b>、<b>体素</b>（三维像素）表示形状。深度学习带来了两种新表示：一种是把场景存在一个神经网络里，输入坐标、输出该点的密度和颜色（隐式表示）；另一种是用大量可优化的小基元拼出场景（显式表示）。两者渲染成图像时，都用同一个来自光学的公式。</p>
+
+<h2 id="nerf">NeRF：一个记住了整个场景的网络</h2>
+<p><dfn data-t="nerf">神经辐射场</dfn>（NeRF, 2020）用一个小 MLP 表示场景：输入空间中一点的坐标和观察方向，输出这一点的“密度” \(\sigma\)（有多不透明）和颜色 \(\mathbf c\)。要渲染一个像素，就从相机出发沿着这个像素的方向射出一条光线，在光线上采样许多点，按<dfn data-t="volume-rendering">体渲染</dfn>公式把它们的颜色混合起来：</p>
+<div class="fx">
+\[ C = \sum_{i=1}^{N} \htmlClass{sym-T}{T_i}\,\htmlClass{c-adv}{\alpha_i}\,\mathbf c_i,\qquad \alpha_i = 1 - e^{-\htmlClass{sym-s}{\sigma_i}\,\delta_i},\qquad T_i = \prod_{j&lt;i}(1 - \alpha_j) \]
+  <div class="fx-read">沿着光线从近到远，第 \(i\) 段<span style="color:var(--s2)">挡住了比例 \(\alpha_i\) 的光</span>并贡献自己的颜色；能走到这一段的光只剩前面各段都没挡住的比例 \(T_i\)（透射率）。像素的颜色是各段贡献的加权和。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(\sigma_i\)</dt><dd>第 \(i\) 个采样点的密度（单位长度上被吸收的比例）；\(\delta_i\) 是相邻采样点的间距</dd>
+    <dt data-sym="T">\(T_i\)</dt><dd>透射率：光从相机走到第 \(i\) 段还剩多少</dd>
+  </dl>
+  <div class="fx-eg">一条光线依次经过两段：第一段 \(\alpha_1 = 0.6\)（红色），第二段 \(\alpha_2 = 0.9\)（蓝色）。红色的权重 \(1\times 0.6 = 0.6\)；蓝色的权重 \(0.4\times 0.9 = 0.36\)；剩下 \(0.4\times 0.1 = 0.04\) 的光看到背景。即使蓝色更不透明，因为在后面，贡献反而更小。</div>
+</div>
+<details class="deep"><summary>体渲染公式从哪来：比尔-朗伯定律</summary><div class="in">
+<p>光在吸收介质中传播，单位长度上被吸收的比例是密度 \(\sigma(t)\)。透射率 \(T(t)\)（走到距离 \(t\) 时剩下的光）满足：</p>
+\[ \frac{dT}{dt} = -\sigma(t)\,T(t)\quad\Longrightarrow\quad T(t) = \exp\Big(-\int_0^t\sigma(s)\,ds\Big) \]
+<p>这就是比尔-朗伯定律。在 \(t\) 到 \(t + dt\) 之间被吸收（并以该处颜色发光）的光是 \(T(t)\sigma(t)\,dt\)，所以像素颜色为：</p>
+\[ C = \int_0^{\infty} T(t)\,\sigma(t)\,\mathbf c(t)\,dt \]
+<p>把光线切成长度为 \(\delta_i\) 的小段、假设每段内密度和颜色不变，积分就变成卡片中的求和：一段内被吸收的比例是 \(1 - e^{-\sigma_i\delta_i}\)，段与段之间的透射率相乘。</p>
+<p><b>这个推导告诉我们：</b>NeRF 的渲染过程是可微的：像素颜色对每个点的密度和颜色都有梯度。于是只需要几十张从不同角度拍的照片，用“渲染出的像素 vs 照片的像素”的误差做梯度下降，就能把整个场景“训练”进网络里，不需要任何三维标注。</p>
+</div></details>
+<p>拖动下面的演示，看密度、顺序和采样点数怎样影响一个像素的颜色：</p>
+<div data-demo="ray-render"></div>
+<p>NeRF 的问题是慢：每个像素要沿光线采样上百个点、每个点过一次 MLP，渲染一张图要几秒，训练一个场景要几个小时到一天。Instant-NGP（2022）用多分辨率哈希编码把训练缩短到几秒到几分钟，但渲染仍难以实时。</p>
+
+<h2 id="gs">3D 高斯泼溅：几百万个半透明椭球</h2>
+<p><dfn data-t="gaussian-splatting">3D 高斯泼溅</dfn>（3DGS, 2023）换了一种显式表示：场景由几百万个三维高斯椭球组成，每个有位置、形状（协方差矩阵）、颜色和不透明度。渲染时把每个椭球投影到屏幕上变成一个二维椭圆，按深度排序，再用与 NeRF 完全相同的透射率公式从前到后混合：</p>
+<div class="fx">
+\[ \Sigma' = J\,W\,\htmlClass{sym-Sig}{\Sigma}\,W^\top J^\top,\qquad C = \sum_i \mathbf c_i\,\alpha_i\prod_{j&lt;i}(1 - \alpha_j) \]
+  <div class="fx-read">三维协方差 \(\Sigma\) 经过相机的旋转 \(W\) 和透视投影的线性近似 \(J\)，变成屏幕上的二维椭圆 \(\Sigma'\)。每个像素只需混合覆盖它的那些椭圆，不必沿光线逐点采样，GPU 可以像光栅化三角形一样并行地画。</div>
+  <dl class="fx-syms">
+    <dt data-sym="Sig">\(\Sigma\)</dt><dd>每个高斯的 \(3\times 3\) 协方差，由一个旋转和三个轴的缩放构成，决定椭球的朝向和胖瘦</dd>
+  </dl>
+  <div class="fx-eg">原论文在 1080p 下以每秒 100 帧以上渲染，质量与最好的 NeRF 相当，训练只需几十分钟。一个场景通常有一两百万个高斯，未经压缩约几百 MB；2026 年的压缩格式能压缩约 90%，一个可漫游的世界只要几十 MB。</div>
+</div>
+<p>高斯泼溅迅速成为三维重建的主流：实时、可编辑、训练快。它也进入了工业标准：2026 年 2 月，Khronos 发布了 glTF 的高斯泼溅扩展候选版，OpenUSD 也在加入支持，三维高斯从研究格式变成了可以在各种软件间交换的资产格式。</p>
+
+<h2 id="gen">用二维扩散模型生成三维</h2>
+<p>三维训练数据极少（几百万个模型，远不及几十亿张图像）。DreamFusion（2022）想出一个办法：不用三维数据，借用一个训练好的二维文生图扩散模型当“老师”。随机初始化一个 NeRF，从随机角度渲染出一张图，给它加噪，让扩散模型预测噪声；扩散模型认为这张图“哪里不像提示词”，就沿相应的方向更新 NeRF 的参数。这叫<dfn data-t="sds">分数蒸馏采样</dfn>（SDS）：</p>
+<div class="fx">
+\[ \nabla_\theta\mathcal L_{\text{SDS}} = \mathbb E_{t,\boldsymbol\varepsilon}\Big[w(t)\,\big(\htmlClass{c-adv}{\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t;\ y,\ t)} - \boldsymbol\varepsilon\big)\,\frac{\partial\mathbf x}{\partial\theta}\Big],\qquad \mathbf x = \operatorname{render}(\theta,\ \text{随机视角}) \]
+  <div class="fx-read">\(\mathbf x\) 是三维表示 \(\theta\) 从某个角度渲染出的图。扩散模型预测的噪声与实际加入的噪声之差，就是扩散模型认为“这张图应该往哪个方向改才更像提示词 \(y\)”（第 <a class="xref" data-ref="diffusion"></a> 章的分数）。把这个方向通过渲染器传回三维参数。</div>
+  <div class="fx-eg">提示词“一只柯基犬”。第一千步时，从正面渲染出的图还是一团模糊的橙色，扩散模型推它变得更像狗；从侧面、背面渲染的图也各自被推着更像狗。几千步后，三维模型从各个角度看都像一只狗。</div>
+</div>
+<aside class="dispute surprise">
+  <h4>意外：生成的三维物体从每个角度看都是正面（“雅努斯问题”）</h4>
+  <dl>
+    <dt>原以为</dt><dd>二维扩散模型从每个角度都把渲染图推向“像提示词”，最终就能得到一致的三维物体。</dd>
+    <dt>实际发现</dt><dd>SDS 生成的人物、动物常常长出好几张脸：背面也是一张脸，像罗马神话中两面的雅努斯。</dd>
+    <dt>为什么</dt><dd>二维模型训练用的照片绝大多数是正面照，“一只柯基犬”最典型的样子就是正脸。每个角度独立地被推向“最典型的样子”，而没有任何东西告诉它“这是背面，应该看到尾巴”。这与第 <a class="xref" data-ref="diffusion"></a> 章 CFG 推向“最典型”的机制如出一辙（SDS 通常要用很大的引导强度）。</dd>
+    <dt>现在怎么看</dt><dd>解法是让二维老师知道视角：MVDream（2023）等训练能同时生成同一物体多个视角的扩散模型，提供一致的多视图监督。之后的趋势是干脆不用逐个场景优化，直接训练三维生成模型（下一节）。</dd>
+  </dl>
+</aside>
+
+<h2 id="feedforward">一秒钟重建：前馈的三维模型</h2>
+<p>NeRF、3DGS 和 SDS 都要为每个场景单独优化几分钟到几小时。2023 年起的思路是训练一个大模型，输入图片、直接输出三维，一次前向就完成：</p>
 <ul>
-  <li>NeRF 与体渲染</li>
-  <li>SDS：用 2D 扩散模型“蒸馏”出 3D</li>
-  <li>3D 高斯泼溅：为什么能实时渲染</li>
-  <li>前馈大重建模型：LRM、GS-LRM</li>
-  <li>结构化 3D 潜空间：TRELLIS.2、Hunyuan3D</li>
-  <li>世界生成与工业标准（OpenUSD、glTF）</li>
+  <li><b>大型重建模型</b>（LRM, 2023；GS-LRM 等）：一个 Transformer 读入一张或几张图，几秒内输出 NeRF 或高斯泼溅。</li>
+  <li><b>DUSt3R</b>（2024）与 <b>VGGT</b>（CVPR 2025 最佳论文）：直接从一组没有相机参数的照片预测每个像素的三维坐标、相机位姿和深度，取代了传统摄影测量中耗时的特征匹配与优化流程，几秒钟处理上百张图。</li>
+  <li><b>结构化三维潜空间</b>：微软的 TRELLIS（2024-12）和 TRELLIS.2（2025-12，40 亿参数，MIT 开源）在稀疏体素上训练扩散模型，单张 24 GB 显卡约 20 秒生成带材质的高精度资产，可导出网格、辐射场或高斯泼溅；腾讯的 Hunyuan3D 2.x/3.x 在纹理和材质上领先。这和第 <a class="xref" data-ref="image"></a> 章的“先压缩到潜空间再扩散”是同一套方法。</li>
+</ul>
+<p>2025–26 年，三维生成从“物体”扩展到“世界”：World Labs 的 Marble（2025-11）从文字或图片生成可以走进去漫游、可导出为高斯泼溅和网格的三维场景；腾讯的 HunyuanWorld 等开源模型跟进。这引出了一场路线之争（第 <a class="xref" data-ref="world-models"></a> 章）：世界应该用显式的三维表示（Marble），还是由视频模型逐帧“想象”出来（Genie）？</p>
+
+<h2 id="reasoning">多模态模型的空间推理</h2>
+<aside class="dispute">
+  <h4>大模型懂空间吗</h4>
+  <dl>
+    <dt>质疑</dt><dd>“Thinking in Space”（VSI-Bench, 2024）让多模态模型看一段室内漫游视频，回答“沙发离电视多远”“从门口走到冰箱要先左转还是右转”“这个房间有几把椅子”。当时最强的模型远低于人类；研究发现它们的瓶颈不在语言推理，而在建立“认知地图”：在脑中把看到的东西放到统一的空间坐标里。第 <a class="xref" data-ref="vlm"></a> 章的视觉盲点（数量、精确位置）在三维中被放大。</dd>
+    <dt>进展</dt><dd>2025–26 年的模型在空间基准上进步明显：加入大量三维标注和合成的空间问答数据、让模型先显式地画出认知地图再回答、接入 VGGT 这类三维重建模块。机器人和自动驾驶对空间能力的需求，推动了大量专门的“空间智能”研究。</dd>
+    <dt>现在怎么看</dt><dd>空间推理仍是多模态模型最弱的能力之一，也是具身智能（第 <a class="xref" data-ref="embodied"></a> 章）的关键瓶颈。是靠扩大二维数据就能学会，还是需要显式的三维表示和三维数据，尚无定论。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">NeRF 生成了一个三维模型。</b>它是一个“能回答任意点密度和颜色”的函数，要得到网格还需额外提取；而且通常只对一个场景训练。</li>
+  <li><b class="m">高斯泼溅和 NeRF 是完全不同的东西。</b>两者用同一个体渲染公式，区别在于表示（显式椭球 vs 神经网络）和渲染方式（光栅化 vs 沿光线采样）。</li>
+  <li><b class="m">文生 3D 就是文生图再“立起来”。</b>单张图缺少背面信息；需要多视角一致的监督或直接在三维潜空间中生成。</li>
+  <li><b class="m">能生成逼真视频的模型就懂三维空间。</b>视频模型不保证几何一致，绕回原处时场景可能已经变了（第 <a class="xref" data-ref="world-models"></a> 章的记忆问题）。</li>
+  <li><b class="m">三维重建需要标定好的相机和长时间计算。</b>DUSt3R、VGGT 等能从随手拍的一组照片在几秒内恢复相机和几何。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2020–2022</div>
+    <h4>NeRF：可微渲染重建场景</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>传统摄影测量只能重建表面，难以处理半透明、反光和细节。</dd>
+      <dt>怎么解决</dt><dd>NeRF（2020）用 MLP 加可微体渲染，从几十张照片重建出照片级的新视角；Instant-NGP（2022）把训练缩短到几分钟。</dd>
+      <dt>代价</dt><dd>渲染慢，每个场景单独训练。</dd>
+      <dt>引出</dt><dd>能否不用三维数据就生成三维？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>SDS 与 3D 高斯泼溅</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>三维数据稀缺；NeRF 无法实时渲染。</dd>
+      <dt>怎么解决</dt><dd>DreamFusion（2022）用 SDS 从二维扩散模型蒸馏三维；MVDream（2023）缓解雅努斯问题；3D 高斯泼溅（2023）实现实时渲染。</dd>
+      <dt>代价</dt><dd>逐场景优化慢；SDS 结果过饱和、多脸。</dd>
+      <dt>引出</dt><dd>能否直接前馈地生成三维？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2025</div>
+    <h4>前馈重建与三维潜空间扩散</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>逐场景优化无法规模化应用。</dd>
+      <dt>怎么解决</dt><dd>LRM、GS-LRM 秒级重建；DUSt3R、VGGT 无需相机参数的几何恢复；TRELLIS、Hunyuan3D 在三维潜空间做扩散；VSI-Bench 揭示多模态模型的空间短板。</dd>
+      <dt>代价</dt><dd>生成的资产在拓扑和材质上仍需人工修整。</dd>
+      <dt>引出</dt><dd>从物体走向世界。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">与视频路线竞争</span>显式三维的世界生成</summary><div>World Labs 的 Marble、HunyuanWorld 用显式三维表示生成可漫游的场景，几何一致、可导出；视频世界模型（Genie 3）则能实时交互但几何不保证一致。两条路线在第 <a class="xref" data-ref="world-models"></a> 章交汇。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>高斯泼溅进入标准，三维资产生产化</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>格式不统一，难以进入游戏、影视、工业流程。</dd>
+      <dt>怎么解决</dt><dd>glTF 的高斯泼溅扩展与压缩格式；OpenUSD 加入支持；TRELLIS.2 等开源模型达到可用的生产质量；自动驾驶仿真用前馈高斯泼溅重建街景。</dd>
+      <dt>代价</dt><dd>闭源模型在精细度上仍领先；版权与数据来源问题同样存在。</dd>
+      <dt>引出</dt><dd>如果场景不仅能看，还能按动作实时变化，就成了世界模型（第 <a class="xref" data-ref="world-models"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 光线依次经过三段，\(\alpha = (0.3,\ 0.5,\ 0.8)\)，颜色分别是红、绿、蓝。各自的权重是多少？背景还能透出多少？</summary><div class="ans">红：\(0.3\)；绿：\(0.7\times 0.5 = 0.35\)；蓝：\(0.7\times 0.5\times 0.8 = 0.28\)；背景：\(0.7\times 0.5\times 0.2 = 0.07\)。四者之和为 1。</div></details>
+<details class="quiz"><summary>2. 密度 \(\sigma = 2\)（每单位长度），一段长 \(\delta = 0.5\) 的均匀雾挡住多少光？长度加倍呢？</summary><div class="ans">\(\alpha = 1 - e^{-1}\approx 0.63\)。长度加倍：\(1 - e^{-2}\approx 0.86\)，不是简单的两倍（透射率按指数衰减）。</div></details>
+<details class="quiz"><summary>3. 为什么 SDS 需要从随机视角渲染？如果只从正面渲染，会得到什么？</summary><div class="ans">SDS 只能约束被渲染出来的那些视角。只从正面渲染，三维模型只需正面看起来对就行，侧面和背面可以是任何形状（常常是扁平的“纸片”或一团雾）。随机视角迫使每个角度都合理，但如果二维老师不知道视角，又会导致雅努斯问题。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2003.08934">NeRF</a>（Mildenhall 等, 2020）<span class="why">可微体渲染与神经场景表示。</span></li>
+  <li><a href="https://arxiv.org/abs/2308.04079">3D Gaussian Splatting for Real-Time Radiance Field Rendering</a>（Kerbl 等, 2023）<span class="why">实时渲染的显式表示。</span></li>
+  <li><a href="https://arxiv.org/abs/2209.14988">DreamFusion</a>（Poole 等, 2022）<span class="why">SDS：用二维扩散模型生成三维。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.11651">VGGT: Visual Geometry Grounded Transformer</a>（2025）<span class="why">前馈地从照片恢复相机与几何。</span></li>
+  <li><a href="https://arxiv.org/abs/2412.14171">Thinking in Space</a>（Yang 等, 2024）<span class="why">多模态模型的空间推理短板。</span></li>
+</ol>
+
+<div class="nextq">三维场景能看、能走进去，但还不会“动”。如果一个模型能根据你的动作实时生成下一刻的世界，它就成了一个可以玩、可以用来训练机器人的模拟器：世界模型。下一章（第 <a class="xref" data-ref="world-models"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2201.05989">Instant-NGP</a> · <a href="https://arxiv.org/abs/2308.16512">MVDream</a> · <a href="https://arxiv.org/abs/2311.04400">LRM</a> · <a href="https://arxiv.org/abs/2312.14132">DUSt3R</a> · <a href="https://arxiv.org/abs/2412.01506">TRELLIS</a> · <a href="https://github.com/microsoft/TRELLIS.2">TRELLIS.2</a> · <a href="https://www.3daistudio.com/state-of-ai-3d-generation-2026">2026 年 AI 3D 生成现状</a> · <a href="https://www.cgchannel.com/2026/02/3d-gaussian-splats-are-being-added-to-the-gltf-standard/">glTF 加入高斯泼溅</a> · <a href="https://www.worldlabs.ai/">World Labs</a> · <a href="https://arxiv.org/abs/2508.09977">3DGS 应用综述</a> · <a href="https://arxiv.org/abs/2602.03907">HY3D-Bench</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

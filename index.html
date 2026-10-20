@@ -72,7 +72,7 @@ document.addEventListener('DOMContentLoaded', () => {
     image: '潜空间 token 计数、U-Net → DiT（adaLN）→ MMDiT、为什么不会写字、SDEdit 强度与 ControlNet 零初始化、自回归回归与统一模型、水印与版权之争',
     video: '3D VAE 与时空 patch 的 token 计数、全 3D 与分解注意力、为什么联合去噪、自回归漂移与 Diffusion Forcing、原生音频与噪声分阶段 MoE、视频模型懂物理吗、帧链推理',
     audio: '梅尔频谱与 Whisper（及其幻觉）、RVQ 编解码器与码率、编解码器语言模型做 TTS、声音克隆、延迟账与全双工、三段式 vs 端到端、音乐生成与唱片诉讼和解',
-    spatial: 'NeRF、SDS、3D 高斯泼溅、前馈重建、3D 资产与世界生成',
+    spatial: '体渲染公式（比尔-朗伯推导）与 NeRF、3D 高斯泼溅的投影与混合、SDS 与雅努斯问题、DUSt3R/VGGT 前馈重建、TRELLIS 三维潜空间、世界生成、空间推理之争',
     'world-models': '动作条件的实时视频生成、长时记忆、路线之争',
     embodied: 'RT-2、π0 系列、双系统 VLA、世界动作模型',
     interpretability: '残差流与电路、叠加与稀疏自编码器、人设向量与助手轴',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 70]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 71]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>
