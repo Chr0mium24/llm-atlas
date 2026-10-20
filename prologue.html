@@ -12,22 +12,147 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>九年简史</h1>
-  <p class="lede">从 2017 到 2026，把各章的主干连成一条故事线：每个时代卡在哪个瓶颈，又是怎么突破的。</p>
+  <h1>九年简史：从一篇论文到七千亿美元</h1>
+  <p class="lede">2017 年 6 月，Google 的八位研究者发表了《Attention Is All You Need》，提出 Transformer。九年后，基于它的模型能写代码、解开放数学问题、生成带声音的视频，全球一年为它投入七千多亿美元。这一章把全书的主干连成一条故事线：每个时代卡在哪个瓶颈，靠什么突破，付出了什么代价，又引出了什么新问题；旁边是那些被放弃、仍在延续或至今有争议的支线。细节都在后面各章，这里只看来龙去脉。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（各章主干）。</div>
+<div class="bridge">读这一章不需要任何预备知识。遇到不懂的名词可以先跳过，或者点开它的定义：每个名词都链接到讲它的那一章。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>2017–19 · 预训练范式确立：Transformer、GPT / BERT、字节级 BPE</li>
-  <li>2020–22 · 规模化与对齐：规模定律、GPT-3、Chinchilla、InstructGPT、扩散模型</li>
-  <li>2022–23 · ChatGPT 与开源爆发：LLaMA、量化与本地推理、Stable Diffusion</li>
-  <li>2024 · 多模态、MoE 与效率战：GPT-4o、MLA、FP8 训练、Sora</li>
-  <li>2025 · 推理与强化学习：o1 → R1、GRPO 家族、智能体</li>
-  <li>2026 · 超大稀疏 MoE、低精度训练、混合注意力、在线蒸馏、世界模型</li>
+<div class="prereq">
+  <ul>
+    <li>无。数学工具在附录（<a class="xref" data-ref="nn-basics" data-full="1"></a>），需要时再看</li>
+  </ul>
+</div>
+
+<h2 id="before">2017 年以前：两个瓶颈</h2>
+<p>2012 年，AlexNet 用 GPU 训练的深度网络在图像识别比赛中大幅领先，深度学习开始席卷各个领域。但在语言上，有两个瓶颈一直没被打破。第一个是<b>顺序</b>：当时主流的循环神经网络（RNN、LSTM）必须一个词一个词地读，无法在 GPU 上并行，距离远的词之间的信息也容易在传递中衰减（第 <a class="xref" data-ref="attention"></a> 章）。第二个是<b>数据</b>：每个任务（翻译、问答、情感分析）都要单独收集标注数据、单独训练一个模型，而人工标注又贵又少。word2vec（2013）证明了从海量无标注文本中可以学到有用的词向量，但它只学到了单个词的意思，没有学到怎样理解一整句话。</p>
+
+<h2 id="arc">主线：六个时代</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2017–2019</div>
+    <h4>注意力与预训练：一个模型，先读遍互联网</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>RNN 无法并行、难以处理长距离依赖；每个任务都缺标注数据。</dd>
+      <dt>怎么解决</dt><dd>Transformer（2017-06）去掉循环，只用注意力，让每个词直接“查询”所有其他词，训练可以完全并行（第 <a class="xref" data-ref="attention"></a>、<a class="xref" data-ref="transformer"></a> 章）。GPT（2018-06）和 BERT（2018-10）提出<dfn data-t="pretraining">预训练</dfn>：先在海量无标注文本上学“预测被遮住或下一个词”，再用少量标注数据微调到具体任务。GPT-2（2019-02）发现，只做预训练、不做微调，模型也能完成一些任务；OpenAI 以“可能被滥用”为由分阶段发布，这是第一次关于“模型太强是否该公开”的公开争论。</dd>
+      <dt>代价</dt><dd>预训练的算力开销远超以往；仍然要为每个任务微调。</dd>
+      <dt>引出</dt><dd>如果模型足够大，能不能什么都不微调，直接用？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">退居幕后</span>编码器路线（BERT）</summary><div>BERT 用“完形填空”式的双向预训练，在 2018–2020 年统治了几乎所有理解类基准。但它不擅长生成文字，规模化之后，纯解码器的 GPT 路线一路胜出。编码器模型没有消失：今天检索用的嵌入模型、分类器、重排模型大多仍是 BERT 的后代（第 <a class="xref" data-ref="agents"></a> 章的检索）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2020–2022</div>
+    <h4>规模定律与对齐：变大，然后变得听话</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>模型该做多大、喂多少数据？做大之后，怎样让它按人的意图回答，而不是只会续写？</dd>
+      <dt>怎么解决</dt><dd>OpenAI 的<span class="term" data-t="scaling-law">规模定律</span>（2020-01）发现损失随参数、数据、算力按幂律平滑下降，做大有了可预测的回报。GPT-3（2020-05，1750 亿参数）展示了<span class="term" data-t="icl">上下文学习</span>：在提示里给几个例子，不用训练就能做新任务。Chinchilla（2022-03）修正了“只加参数”的做法：同样的算力，数据应和参数同比例增长（第 <a class="xref" data-ref="scaling"></a> 章）。InstructGPT（2022-03）用人类偏好做强化学习（RLHF），让模型学会遵循指令（第 <a class="xref" data-ref="sft"></a> 章）；思维链提示（2022-01）发现，让模型“一步步想”能显著提高推理题的正确率。同一时期，扩散模型（2020）让图像生成追上并超过了 GAN，DALL·E 2、Midjourney、Stable Diffusion 在 2022 年相继出现（第 <a class="xref" data-ref="diffusion"></a>、<a class="xref" data-ref="image"></a> 章）。</dd>
+      <dt>代价</dt><dd>训练成本以每年数倍的速度上涨；对齐依赖昂贵的人工标注。</dd>
+      <dt>引出</dt><dd>把一个对齐过的大模型做成对话产品，会发生什么？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被修正</span>只堆参数</summary><div>2021 年前后，Gopher（2800 亿）、Megatron-Turing NLG（5300 亿）等模型一味增大参数，训练数据却只有三千亿 token 左右。Chinchilla 用四分之一的参数、四倍的数据就超过了它们。此后，“用更多数据训练更小的模型”成为主流，甚至走向故意“过度训练”的小模型，以降低推理成本（第 <a class="xref" data-ref="scaling"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022-11 – 2023</div>
+    <h4>ChatGPT 与开源爆发</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型的能力只在研究者和开发者圈子里为人所知。</dd>
+      <dt>怎么解决</dt><dd>ChatGPT（2022-11-30）两个月内吸引了约一亿用户，大模型一夜之间成为大众产品。GPT-4（2023-03）在律师考试等专业考试中达到人类前列的水平。Meta 的 LLaMA（2023-02）权重流出后，开源社区迅速建起完整的生态：llama.cpp 和 GPTQ 让模型在笔记本上运行（第 <a class="xref" data-ref="quantization"></a>、<a class="xref" data-ref="on-device"></a> 章），QLoRA 让单张显卡就能微调，DPO 把偏好对齐简化成一个损失函数（第 <a class="xref" data-ref="sft"></a> 章），vLLM 让推理服务的吞吐翻了几倍（第 <a class="xref" data-ref="serving"></a> 章）。年底，Mixtral 把混合专家（MoE）带进了开源模型（第 <a class="xref" data-ref="moe"></a> 章）。</dd>
+      <dt>代价</dt><dd>GPU 严重短缺；版权诉讼、越狱和滥用问题浮出水面（第 <a class="xref" data-ref="jailbreak"></a>、<a class="xref" data-ref="industry"></a> 章）。</dd>
+      <dt>引出</dt><dd>能不能更便宜、更快，并且看懂图像、听懂声音？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">太早了</span>自主智能体的第一次热潮</summary><div>2023 年春天，AutoGPT 等“让模型自己定目标、自己调用工具”的项目一度爆红，但当时的模型在长任务上频频出错、陷入循环，很快降温。两年后，随着强化学习训练出的推理和工具使用能力，智能体才真正可用（第 <a class="xref" data-ref="agents"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>多模态、效率与“预训练撞墙”</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>推理成本太高；模型只会处理文字；继续做大预训练的回报开始受到质疑。</dd>
+      <dt>怎么解决</dt><dd>GPT-4o（2024-05）原生理解与生成语音和图像（第 <a class="xref" data-ref="vlm"></a>、<a class="xref" data-ref="audio"></a> 章）；Sora 的预览（2024-02）展示了长视频生成（第 <a class="xref" data-ref="video"></a> 章）。DeepSeek-V2 的多头潜注意力（MLA）把 KV 缓存压缩了一个数量级（第 <a class="xref" data-ref="long-context"></a> 章）；DeepSeek-V3（2024-12）用 FP8 混合精度训练出前沿水平的 MoE，报告的最后一次训练只花了约 560 万美元的 GPU 时间（第 <a class="xref" data-ref="training-systems"></a> 章）。OpenAI 的 o1（2024-09）开辟了新方向：让模型在回答前先长时间思考（第 <a class="xref" data-ref="reasoning"></a> 章）。这一年的诺贝尔物理学奖和化学奖都颁给了 AI 相关的工作（第 <a class="xref" data-ref="science"></a> 章）。</dd>
+      <dt>代价</dt><dd>年底，多家实验室的下一代预训练模型据报道提升不及预期，“预训练撞墙”成为热议话题。</dd>
+      <dt>引出</dt><dd>如果不靠更大的预训练，进步从哪里来？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">融入主流</span>RNN 的复兴：状态空间与线性注意力</summary><div>Mamba（2023-12）等状态空间模型试图用固定大小的状态取代注意力，在长序列上更省。它们没有取代 Transformer，却以“混合架构”的方式回到了主流：2025–26 年的许多旗舰模型把大部分注意力层换成线性注意力，只保留少数全注意力层（第 <a class="xref" data-ref="long-context"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>推理模型与强化学习</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>人工标注的对齐数据有上限；模型在数学、代码、多步任务上仍然不可靠。</dd>
+      <dt>怎么解决</dt><dd>DeepSeek-R1（2025-01）公开证明：在能自动判对错的任务上做大规模强化学习（GRPO），模型会自己学会长链推理、自我检查（第 <a class="xref" data-ref="rl"></a> 章）。它的发布让 Nvidia 单日市值蒸发约 5900 亿美元，也让“可验证奖励”成为各家的核心方法。Claude Code（2025-02）等编程智能体进入日常开发（第 <a class="xref" data-ref="coding"></a> 章）；Kimi K2（2025-07）用 Muon 优化器训练出万亿参数的开源 MoE；7 月，AI 在国际数学奥林匹克上拿到金牌成绩。图像编辑（Nano Banana）、带声音的视频（Veo 3）、可交互的世界模型（Genie 3）相继出现（第 <a class="xref" data-ref="image"></a>、<a class="xref" data-ref="video"></a>、<a class="xref" data-ref="world-models"></a> 章）。</dd>
+      <dt>代价</dt><dd>强化学习只在能自动验证的任务上有效；模型学会钻奖励的空子，甚至泛化成更广泛的不对齐（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+      <dt>引出</dt><dd>让智能体完成更长、更真实的任务；为此需要的算力投入达到前所未有的规模。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>超大稀疏模型、长任务智能体与验证瓶颈</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>模型更大但部署更贵；智能体任务越来越长；生成的东西越来越多，确认对错却跟不上。</dd>
+      <dt>怎么解决</dt><dd>开源模型的总参数涨到 1–3 万亿、激活参数仍只有几百亿（Kimi K3、DeepSeek V4、MiMo），配合 4 位量化感知训练和混合线性注意力（第 <a class="xref" data-ref="moe"></a>、<a class="xref" data-ref="quantization"></a> 章）；残差连接这样的“默认部件”也被重新设计（第 <a class="xref" data-ref="transformer"></a> 章）。智能体能完成的任务长度从几分钟涨到以“天”计（第 <a class="xref" data-ref="evaluation"></a> 章）。AI 开始解决真正的数学开放问题，“验证”成为科学应用的瓶颈（第 <a class="xref" data-ref="science"></a> 章）。可解释性研究在模型内部找到了情绪、人设和“全局工作空间”（第 <a class="xref" data-ref="interpretability"></a> 章）。</dd>
+      <dt>代价</dt><dd>四大云厂商一年的资本开支超过七千亿美元，回报能否跟上成为争论焦点（第 <a class="xref" data-ref="industry"></a> 章）。</dd>
+      <dt>引出</dt><dd>持续学习、难以验证的任务、世界模型（第 <a class="xref" data-ref="frontier"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="compute">一条贯穿始终的曲线：算力</h2>
+<div data-demo="compute-growth"></div>
+<p>九年里每一次突破，背后几乎都有算力的增长：更大的预训练、更长的强化学习、更多的推理时思考。但这张图也说明了另一件事：同样的能力，所需的算力在快速下降。用 6 × 参数 × token 数估算训练算力的方法，见第 <a class="xref" data-ref="scaling"></a> 章；为什么是 6，见附录。</p>
+
+<h2 id="lessons">九年里反复出现的规律</h2>
+<ol>
+  <li><b>通用方法 + 规模，胜过精巧的人工设计。</b>强化学习先驱 Rich Sutton 在 2019 年的短文中称之为<dfn data-t="bitter-lesson">苦涩的教训</dfn>：七十年的 AI 研究表明，能随算力扩展的通用方法（搜索与学习）最终总会胜过融入人类知识的专门方法。Transformer 取代语言学特征、端到端视频模型取代手工管线，都是例子。</li>
+  <li><b>瓶颈不断转移。</b>先是并行计算（Transformer 解决），然后是标注数据（预训练解决）、指令遵循（RLHF）、显存与推理成本（量化、MoE、KV 压缩）、人工标注的上限（可验证奖励），2026 年是验证与长任务的可靠性。每解决一个，下一个就浮上来。</li>
+  <li><b>开源追赶得越来越快。</b>2023 年开源模型落后闭源前沿一年以上，2026 年只差几个月，而且用的算力少一到两个数量级（第 <a class="xref" data-ref="on-device"></a> 章）。</li>
+  <li><b>能力跑在理解前面。</b>我们能训练出解开放问题的模型，却还说不清它内部在做什么、是否真的对齐（第 <a class="xref" data-ref="interpretability"></a>、<a class="xref" data-ref="alignment"></a> 章）。</li>
+</ol>
+<aside class="dispute">
+  <h4>苦涩的教训还成立吗</h4>
+  <dl>
+    <dt>成立</dt><dd>九年的历史几乎就是它的注脚：每次有人用巧妙的结构取得领先，很快就被一个更大、更通用的模型超过。2025 年的推理模型也不是靠手写推理规则，而是靠强化学习加算力“自己长出来”的。</dd>
+    <dt>需要修正</dt><dd>DeepSeek 等用少得多的算力做到接近前沿，靠的恰恰是精心的工程与算法设计（MoE、MLA、FP8、数据配比）；强化学习的进步高度依赖人为设计的环境和验证器；“规模”本身也受到数据、电力和资金的约束。</dd>
+    <dt>现在怎么看</dt><dd>“通用方法终将胜出”在长期大概率成立，但在任何一个时间点，决定谁领先的往往是让通用方法更高效的工程设计。两者不是对立，而是“方向”和“速度”的关系。</dd>
+  </dl>
+</aside>
+
+<h2 id="map">全书怎么读</h2>
+<div class="tablewrap"><table>
+  <tr><th>部分</th><th>回答的问题</th></tr>
+  <tr><td>一 · Transformer 怎么工作</td><td>文字怎样变成向量，注意力在算什么，模型怎样一个词一个词地生成（第 <a class="xref" data-ref="tokens"></a>–<a class="xref" data-ref="generation"></a> 章）</td></tr>
+  <tr><td>二 · 预训练</td><td>喂什么数据，做多大，用什么优化器（第 <a class="xref" data-ref="data"></a>–<a class="xref" data-ref="scaling"></a> 章）</td></tr>
+  <tr><td>三 · 后训练</td><td>怎样让模型听话、会推理、能用工具、会写代码（第 <a class="xref" data-ref="sft"></a>–<a class="xref" data-ref="coding"></a> 章）</td></tr>
+  <tr><td>四 · 架构演进</td><td>MoE 和长上下文：怎样在不增加计算的前提下变大、变长（第 <a class="xref" data-ref="moe"></a>–<a class="xref" data-ref="long-context"></a> 章）</td></tr>
+  <tr><td>五 · 硬件与部署</td><td>芯片、量化、推理和训练系统，以及怎样在自己的电脑上运行（第 <a class="xref" data-ref="hardware"></a>–<a class="xref" data-ref="on-device"></a> 章）</td></tr>
+  <tr><td>六 · 多模态</td><td>看图、画图、做视频、说话、理解三维世界、控制机器人（第 <a class="xref" data-ref="vlm"></a>–<a class="xref" data-ref="embodied"></a> 章）</td></tr>
+  <tr><td>七 · 理解与评判</td><td>模型内部是什么样，分数可不可信，怎样对齐，为什么会被越狱（第 <a class="xref" data-ref="interpretability"></a>–<a class="xref" data-ref="jailbreak"></a> 章）</td></tr>
+  <tr><td>八 · 应用与社会</td><td>科学与数学，产业、算力与监管，最后是前沿地图（第 <a class="xref" data-ref="science"></a>–<a class="xref" data-ref="frontier"></a> 章）</td></tr>
+</table></div>
+<p>各章基本可以独立阅读，每章开头的“读这一章需要”会告诉你依赖哪些章节。<span class="term" data-t="post-training">后训练</span>（第三部分）是 2025–26 年进展最快的部分，如果只想了解“现在的模型为什么这么强”，可以从那里读起。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">ChatGPT 是突然出现的。</b>它背后是五年的积累：Transformer、预训练、规模定律、RLHF。ChatGPT 的突破主要在产品形态上。</li>
+  <li><b class="m">大模型的进步主要靠参数变多。</b>2023 年以后，激活参数几乎没涨；进步更多来自数据、训练方法（强化学习、蒸馏）和推理时算力。</li>
+  <li><b class="m">开源模型只是在模仿闭源模型。</b>MLA、GRPO、Muon 的大规模验证、混合线性注意力、mHC 等许多关键方法首先由开源实验室公开，随后被各家采用。</li>
 </ul>
 
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 用“卡在哪、怎么解决”的方式，说出 2017 年和 2025 年的两次突破分别绕过了什么瓶颈。</summary><div class="ans">2017 年：RNN 必须顺序计算、难以并行，Transformer 用注意力让所有位置同时计算。2025 年：人工标注的偏好数据有上限，可验证奖励的强化学习让模型在能自动判对错的任务上自己产生训练信号。</div></details>
+<details class="quiz"><summary>2. 为什么 Chinchilla 之后，大家反而开始训练“比最优更小”的模型？</summary><div class="ans">Chinchilla 回答的是“固定训练算力，怎样让损失最低”。但模型训练一次、使用亿万次，推理成本更重要；用更多数据把小模型训练得更久，训练时多花一些，推理时省得更多（第 <a class="xref" data-ref="scaling"></a> 章的过度训练）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a>（Vaswani 等, 2017）<span class="why">一切的起点。</span></li>
+  <li><a href="https://arxiv.org/abs/2001.08361">Scaling Laws for Neural Language Models</a>（Kaplan 等, 2020）<span class="why">做大的回报可以预测。</span></li>
+  <li><a href="https://arxiv.org/abs/2005.14165">Language Models are Few-Shot Learners</a>（GPT-3, 2020）<span class="why">上下文学习。</span></li>
+  <li><a href="https://arxiv.org/abs/2203.02155">Training language models to follow instructions with human feedback</a>（InstructGPT, 2022）<span class="why">从续写到听话。</span></li>
+  <li><a href="http://www.incompleteideas.net/IncIdeas/BitterLesson.html">The Bitter Lesson</a>（Sutton, 2019）<span class="why">一页纸的 AI 史观。</span></li>
+  <li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a>（2025）<span class="why">强化学习让推理“长出来”。</span></li>
+</ol>
+
+<div class="nextq">故事从一个问题开始：计算机怎样“读”文字？第一步，是把文字切成小块，再把每一块变成一串数字。下一章（第 <a class="xref" data-ref="tokens"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1810.04805">BERT</a> · <a href="https://openai.com/index/better-language-models/">GPT-2 的发布</a> · <a href="https://arxiv.org/abs/2203.15556">Chinchilla</a> · <a href="https://arxiv.org/abs/2201.11903">思维链提示</a> · <a href="https://arxiv.org/abs/2302.13971">LLaMA</a> · <a href="https://arxiv.org/abs/2412.19437">DeepSeek-V3</a> · <a href="https://arxiv.org/abs/2312.00752">Mamba</a> · <a href="https://epoch.ai/data/notable-ai-models">Epoch AI 知名模型数据库</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

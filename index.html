@@ -30,7 +30,7 @@
   <li><b>理解与评判</b>：模型内部是什么样，分数可不可信，怎么让它按我们的意图行事，以及安全对齐为什么会被绕过。</li>
   <li><b>应用与社会</b>：科学与数学，产业、算力和监管。最后用一张前沿地图收尾。</li>
 </ol>
-<p class="small muted">章节旁的“旧版”表示还是改版前的文字（演示可用），“待写”表示只有计划内容。序章和附录（神经网络速成）可以按需阅读。</p>
+<p class="small muted">序章和附录（神经网络与数学速成）可以按需阅读。每章都有可点开的公式卡、折叠的推导、争议与自测；术语第一次出现时可以点开定义，也可以在<a href="glossary.html">术语表</a>里查。</p>
 
 <h2 id="chapters">章节</h2>
 <div id="cards"></div>
@@ -47,7 +47,7 @@
 <script defer>
 document.addEventListener('DOMContentLoaded', () => {
   const INFO = {
-    prologue: '把各章的主干连成一条故事线：每个时代卡在哪个瓶颈，又怎么突破',
+    prologue: '六个时代的主线与支线：每个时代卡在哪个瓶颈、怎么突破、代价与引出；九年算力曲线；苦涩的教训之争；全书路线图',
     tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
     attention: '从 RNN 的瓶颈到 Q/K/V 软查询，代入数字算一遍；多头、因果掩码、归纳头、注意力汇与平方代价',
     transformer: '残差连接与残差流、MLP 键值记忆、Pre-Norm 之争、RoPE 推导与上下文扩展、6N 估算；2026 年连残差都在改',
@@ -97,8 +97,10 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 80]].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 81], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
+  const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
+  setTerms(); document.addEventListener('atlas-terms', setTerms);
 });
 </script>
 </body>

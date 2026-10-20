@@ -335,4 +335,8 @@ window.ATLAS_TERMS = {
   jacobian: { t: '雅可比矩阵', en: 'Jacobian', d: String.raw`向量函数的导数矩阵，第 \(i\) 行第 \(j\) 列是 \(\partial y_i/\partial x_j\)。梯度反传就是连乘各层的雅可比矩阵。`, at: 'nn-basics#backprop' },
   overfitting: { t: '过拟合', en: 'overfitting', d: '训练集上越来越好、没见过的数据上变差：背下了细节与噪声而非规律。', at: 'nn-basics#fit' },
   'floating-point': { t: '浮点数', en: 'floating point', d: '符号 + 指数 + 尾数。指数位决定范围，尾数位决定精度（相对间隔 2 的负尾数位数次方）。BF16 = 8 位指数 + 7 位尾数。', at: 'nn-basics#float' },
+
+  // ---- prologue (prologue.html)
+  pretraining: { t: '预训练', en: 'pretraining', d: '先在海量无标注文本上学“预测下一个（或被遮住的）词”，得到通用的基座模型，再用少量数据适配具体任务。2018 年由 GPT 与 BERT 确立。', at: 'prologue#arc' },
+  'bitter-lesson': { t: '苦涩的教训', en: 'the bitter lesson', d: 'Sutton（2019）：能随算力扩展的通用方法（搜索与学习），最终总会胜过融入人类知识的专门方法。', at: 'prologue#lessons' },
 };

@@ -5,7 +5,7 @@
      n: fixed label (序 / 附); otherwise chapters are numbered 1..N in order. */
   const CHAPTERS = [
     { s: 'index', t: '总览', home: true },
-    { s: 'prologue', t: '九年简史', n: '序', st: 'todo' },
+    { s: 'prologue', t: '九年简史', n: '序', st: 'new' },
     { part: '一 · Transformer 怎么工作' },
     { s: 'tokens', t: '分词与嵌入', st: 'new' },
     { s: 'attention', t: '注意力机制', st: 'new' },
