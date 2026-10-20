@@ -12,20 +12,193 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>AI 编程</h1>
-  <p class="lede">编程是大模型最先产生大规模经济价值的场景，也是智能体 RL 的主战场。</p>
+  <h1>AI 编程：从补全一行到独立完成任务</h1>
+  <p class="lede">编程是大模型最成功、也最被认真测量的应用。代码有天然的“验证器”：能不能编译、测试过没过，这让它成为强化学习最理想的训练场；代码又是精确的，一个字符错了整个程序就不对，这让它成为检验模型能力的试金石。这一章讲代码模型怎样训练（中间填空、仓库级上下文、执行反馈的强化学习），评测怎样从 164 道小题演进到修真实仓库的 issue，又为什么一再饱和；然后看实际效果：AI 让开发者快了还是慢了，生成的代码安不安全。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.4）。</div>
+<div class="bridge">上一章的智能体在编程上落地最早、最成熟：Claude Code、Codex、Cursor 这类工具每天被数百万开发者使用。编程既是智能体的主战场，也是 RL 可验证奖励最丰富的来源。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>代码模型怎么训：FIM、仓库级上下文、执行反馈</li>
-  <li>评测的演进：HumanEval → SWE-bench → Verified → Pro / Terminal-Bench</li>
-  <li>编程智能体：harness、沙盒、测试驱动的 RL（Qwen3-Coder 2 万环境、Cursor Composer）</li>
-  <li>反直觉：METR 随机对照试验里资深开发者反而变慢</li>
+<div class="prereq">
+  <ul>
+    <li>智能体循环、harness、上下文工程：第 <a class="xref" data-ref="agents"></a> 章</li>
+    <li>RLVR、pass@k、钻奖励空子：第 <a class="xref" data-ref="rl"></a> 章</li>
+    <li>特殊 token：第 <a class="xref" data-ref="tokens"></a> 章；数据去重与许可：第 <a class="xref" data-ref="data"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="train">代码模型怎样训练</h2>
+<p>2021 年的 Codex 是在 GPT-3 基础上用 159 GB 的 GitHub Python 代码继续训练得到的，GitHub Copilot 用的就是它。此后代码数据成为所有大模型预训练的标配（第 <a class="xref" data-ref="data"></a> 章），开源的 The Stack v2 覆盖 600 多种编程语言，并按许可证过滤、去重。与普通文本相比，代码训练有几个专门的设计。</p>
+<p><b>中间填空。</b>写代码时，光标常常在文件中间：上面有代码，下面也有代码。普通的自回归模型只能看左边。<dfn data-t="fim">中间填空</dfn>（fill-in-the-middle, FIM, Bavarian 等, 2022）在训练时把一部分文档重新排列：</p>
+<div class="fx">
+\[ \underbrace{\text{前缀}\ \ \text{中间}\ \ \text{后缀}}_{\text{原始文档}} \ \longrightarrow\ \htmlClass{c-new}{\langle\text{PRE}\rangle}\,\text{前缀}\,\htmlClass{c-new}{\langle\text{SUF}\rangle}\,\text{后缀}\,\htmlClass{c-new}{\langle\text{MID}\rangle}\,\htmlClass{c-adv}{\text{中间}} \]
+  <div class="fx-read">随机挑一段作为“中间”，把它挪到最后，用<span style="color:var(--s4)">三个特殊 token</span> 标出各部分。模型仍然只是从左到右预测下一个 token，但预测<span style="color:var(--s2)">中间</span>那段时，已经看过了前缀和后缀。</div>
+  <div class="fx-eg">原文 “def area(r):⏎ return 3.14 * r * r⏎print(area(2))”，选中间为 “return 3.14 * r * r”。重排后：⟨PRE⟩def area(r):⏎ ⟨SUF⟩⏎print(area(2))⟨MID⟩return 3.14 * r * r。推理时，编辑器把光标前后的代码分别放进前缀和后缀，让模型生成中间。论文发现，用约 50% 的数据做这种变换，几乎不影响普通的从左到右能力，“免费”获得了填空能力。</div>
+</div>
+<p><b>仓库级上下文。</b>真实代码分散在许多文件里，一个函数的含义要看它的调用者和依赖。DeepSeek-Coder、StarCoder 2 等按依赖关系把同一仓库的文件拼接成长序列来训练，让模型学会跨文件的引用；长上下文（第 <a class="xref" data-ref="long-context"></a> 章）进一步让整个模块甚至整个小仓库能放进一次输入。</p>
+<p><b>执行反馈的强化学习。</b>代码可以运行，测试可以判对错，这是第 <a class="xref" data-ref="rl"></a> 章 RLVR 最理想的场景。2025 年起，软件工程任务被大规模地做成 RL 环境：每道题是一个装好依赖的容器、一段任务描述和一组判分测试（下一节的演示）。SWE-Gym、R2E-Gym、SWE-smith 等从提交历史自动生成成千上万的任务，甚至主动往代码里注入 bug 来造题；DeepSWE（2025）只用 RL、在约 4500 个真实任务上训练 Qwen3-32B；Qwen3-Coder 训练时并行运行 2 万个环境；Cursor 的自研模型 Composer 据报道在数十万个并发沙盒中做 RL。</p>
+
+<h2 id="eval">评测：从 164 道小题到修真实仓库</h2>
+<p>早期的评测是“写一个函数”：HumanEval（2021）有 164 道手写的 Python 题，每题有几个单元测试。由于模型的输出是随机的，评测通常报告 pass@k：采样 \(k\) 次，至少一次通过测试的概率。直接采样 \(k\) 次来估计方差很大，Codex 论文给出了一个无偏估计：</p>
+<div class="fx">
+\[ \text{pass@}k = \mathbb E_{\text{题目}}\left[\,1 - \frac{\binom{\htmlClass{sym-n}{n} - \htmlClass{sym-c}{c}}{k}}{\binom{n}{k}}\,\right] \]
+  <div class="fx-read">每题采样 \(n\ge k\) 次，数出其中 \(c\) 次通过。从这 \(n\) 次里随机挑 \(k\) 次，全都不通过的概率是“从 \(n - c\) 个失败里挑 \(k\) 个”的组合数除以总组合数；用 1 减去它，就是至少一次通过的概率。</div>
+  <dl class="fx-syms">
+    <dt data-sym="n">\(n\)</dt><dd>每道题实际采样的次数（如 200）</dd>
+    <dt data-sym="c">\(c\)</dt><dd>其中通过测试的次数</dd>
+  </dl>
+  <div class="fx-eg">\(n = 10\)，\(c = 3\)。pass@1 \(= 1 - \binom{7}{1}/\binom{10}{1} = 0.3\)，就是通过率。pass@5 \(= 1 - \binom{7}{5}/\binom{10}{5} = 1 - 21/252 = 0.917\)。如果直接用 \(1 - (1 - 0.3)^5 = 0.832\) 估计，会因为 \(n\) 有限而产生偏差。</div>
+</div>
+<p>HumanEval 很快饱和：2024 年头部模型已超过 90%，而且题目早已散布在网上，难以排除污染。评测于是沿着“更真实、更长、更难污染”的方向演进：</p>
+<div class="tablewrap"><table>
+  <tr><th>评测</th><th>时间</th><th>测什么</th><th>现状</th></tr>
+  <tr><td>HumanEval / MBPP</td><td>2021</td><td>根据函数说明写一个短函数</td><td>饱和，污染严重</td></tr>
+  <tr><td>Codeforces 评级、LiveCodeBench</td><td>2022 / 2024</td><td>竞赛编程；LiveCodeBench 只用模型训练截止之后的新题</td><td>前沿模型达到顶尖人类选手水平</td></tr>
+  <tr><td><dfn data-t="swe-bench">SWE-bench</dfn></td><td>2023-10</td><td>修复真实 GitHub 仓库的 issue，用仓库的测试判分</td><td>原版 2294 题，部分题描述不清</td></tr>
+  <tr><td>SWE-bench Verified</td><td>2024-08</td><td>人工筛选出 500 道描述清楚、测试合理的题</td><td>2026 年头部模型约 80% 以上，接近饱和</td></tr>
+  <tr><td>SWE-bench Pro</td><td>2025-09</td><td>更长、更难的任务，部分来自不公开的商业代码库</td><td>2026 年的主要参考</td></tr>
+  <tr><td>Terminal-Bench</td><td>2025–26</td><td>在终端里完成编译、配置、调试等广义工程任务</td><td>见第 <a class="xref" data-ref="agents"></a> 章</td></tr>
+</table></div>
+<p>SWE-bench 一类的题是怎样构造和判分的？逐步看一遍：</p>
+<div data-demo="swe-task" class="bleed"></div>
+<aside class="dispute">
+  <h4>SWE-bench 的分数能说明多少</h4>
+  <dl>
+    <dt>主张</dt><dd>它用真实仓库的真实 issue、真实测试，比写小函数更接近工程实践；分数从 2023 年的不到 2% 涨到 2026 年的 80% 以上，说明模型的工程能力有了质的飞跃。</dd>
+    <dt>质疑</dt><dd>“SWE-bench 幻觉”研究（2025）发现，模型只看 issue 描述、不看代码，就能以很高的准确率说出该改哪个文件，说明它们可能见过这些公开仓库的修复。同一个模型换到 SWE-bench Pro，分数常常大幅下降：例如据报道 Claude Opus 4.5 在 Verified 上 80.9%，在 Pro 上 45.9%。测试覆盖不全时，“通过测试”也不等于“真正修好”。</dd>
+    <dt>现在怎么看</dt><dd>Verified 的高分主要说明模型在熟悉的公开仓库上很强；更难污染的 Pro、Terminal-Bench 和私有代码库上的测试更能反映真实水平。看分数时要同时看评测版本、harness 和推理预算（第 <a class="xref" data-ref="evaluation"></a> 章）。</dd>
+  </dl>
+</aside>
+<aside class="dispute surprise">
+  <h4>意外：模型学会了“让测试通过”，而不是修好代码</h4>
+  <dl>
+    <dt>原以为</dt><dd>测试是客观的奖励，很难被钻空子（第 <a class="xref" data-ref="rl"></a> 章说可验证奖励“很难被钻空子”）。</dd>
+    <dt>实际发现</dt><dd>在大规模编程 RL 之后，模型出现了各种针对测试的取巧：在代码里对测试用例写特例、修改或删除失败的测试、让测试框架提前退出。Anthropic 在 Claude 3.7 Sonnet 的系统卡中坦承了对测试写特例的倾向；METR 记录了模型在“优化程序速度”任务中直接改写计时函数。ImpossibleBench（2025）专门构造“规格与测试相互矛盾、不可能正确通过”的任务，测量模型作弊通过的比例，发现前沿模型普遍会这样做。</dd>
+    <dt>为什么</dt><dd>测试只是“代码正确”的不完全代理。RL 优化的是奖励本身，只要存在比真正解决问题更容易拿到奖励的路径，优化压力就会找到它（第 <a class="xref" data-ref="sft"></a> 章的古德哈特定律）。</dd>
+    <dt>现在怎么看</dt><dd>训练环境需要额外检查（禁止修改测试文件、隐藏部分测试、用模型审查补丁），使用时要审查 AI 对测试的改动。更令人担心的是，在编程中学会钻空子的模型，可能把这种倾向泛化到其它场景（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+  </dl>
+</aside>
+
+<h2 id="forms">AI 编程的几种形态</h2>
+<ol>
+  <li><b>补全</b>（2021–）：Copilot 在光标处补全一行或一段，依赖 FIM。延迟要求极高，常用小而快的专用模型。</li>
+  <li><b>对话</b>（2022–）：在聊天窗口里问答、生成代码片段，再由人复制粘贴。</li>
+  <li><b>IDE 中的智能体</b>（2024–）：Cursor、Windsurf 等让模型直接读写项目文件、运行命令，人在编辑器里审查每一处修改。</li>
+  <li><b>命令行智能体</b>（2025–）：Claude Code、Codex CLI、Gemini CLI 在终端中自主完成多步任务，人只看计划和结果。</li>
+  <li><b>后台与云端智能体</b>（2025–）：任务交给云端的智能体异步完成，直接提交 PR；多个智能体并行处理不同任务。</li>
+</ol>
+<p>2025 年 2 月，Karpathy 提出 <dfn data-t="vibe-coding">vibe coding</dfn>：完全顺着感觉，用自然语言描述想要什么，接受 AI 生成的所有修改，不读代码，出错了就把报错贴回去。这个词成了 2025 年的流行语。它适合一次性的原型和个人小工具；对需要长期维护、涉及安全的软件，大多数团队的做法仍是人来审查和负责，形成了“规格先行、AI 实现、人审查”的工作流。</p>
+<p>2025 年 9 月，OpenAI 和 Google DeepMind 的推理模型在国际大学生程序设计竞赛（ICPC）世界总决赛中分别解出 12 题中的 12 题和 10 题，达到金牌水平。竞赛编程上，模型已经超过绝大多数人类；但竞赛题规格清晰、可完全测试，与真实工程的差距仍然很大。</p>
+
+<h2 id="productivity">实际效果：快了还是慢了</h2>
+<p>早期的研究几乎都报告了大幅提速：GitHub 2023 年的随机对照试验中，用 Copilot 写一个 HTTP 服务器快了 56%；Google 2024 年的内部实验约快 21%。各大公司也宣称有相当比例的新代码由 AI 生成（Google 称超过四分之一，微软称 20–30%）。但 2025 年 7 月，METR 的一项研究得出了相反的结论。</p>
+<aside class="dispute">
+  <h4>AI 编程工具让资深开发者更快了吗</h4>
+  <dl>
+    <dt>METR 2025</dt><dd>16 位资深开源开发者在自己熟悉的大型仓库（平均约百万行）中完成 246 个真实任务，每个任务随机决定能否使用 AI 工具（当时主要是 Cursor 加 Claude 3.5/3.7 Sonnet）。结果：允许用 AI 时<b>慢了 19%</b>；而开发者事前预计会快 24%，事后仍认为自己快了 20%。</dd>
+    <dt>为什么</dt><dd>开发者花了大量时间写提示、等待、审查和修正 AI 的输出；资深开发者在熟悉的代码库里本来就很快，对质量要求也高，AI 的建议常常不符合项目的隐含约定。早期“快 56%”的实验是从零写一个小程序，情况完全不同。</dd>
+    <dt>2026 年的更新</dt><dd>METR 在 2026 年 2 月称原结论“已经过时”，认为如今的工具很可能带来提速；但新一轮试验的点估计仍是变慢（原受试者约 −18%，新受试者约 −4%，置信区间都包含 0），而且开发者的使用习惯变化（例如不愿参加“禁用 AI”的那一半任务）让结果不可靠。METR 正在重新设计研究。不少二手报道把这次更新说成“结论反转”，这并不准确。</dd>
+    <dt>现在怎么看</dt><dd>效果强烈依赖任务类型、代码库熟悉程度和工具成熟度：从零写小程序、陌生的代码库、样板代码，提速明显；熟悉的大型代码库中的复杂修改，收益不确定。“感觉快了”不是可靠的测量。</dd>
+  </dl>
+</aside>
+<p>一个简单的模型可以解释为什么“写代码变快了”与“整件事变慢了”可以同时成立：</p>
+<div class="fx">
+\[ T_{\text{用 AI}} = (1 - \htmlClass{sym-f}{f}) + \frac{f}{\htmlClass{sym-s}{s}} + \htmlClass{c-adv}{\htmlClass{sym-o}{o}} \]
+  <div class="fx-read">以不用 AI 时的总时间为 1：写代码占 \(f\)，AI 把这部分加速 \(s\) 倍，其余工作不变，但多出了<span style="color:var(--s2)">新的开销</span> \(o\)。只要 \(o > f(1 - 1/s)\)，总时间就超过 1。</div>
+  <dl class="fx-syms">
+    <dt data-sym="f">\(f\)</dt><dd>写代码占总时间的比例；其余是理解需求、读代码、调试、沟通</dd>
+    <dt data-sym="s">\(s\)</dt><dd>AI 对写代码这部分的加速倍数</dd>
+    <dt data-sym="o">\(o\)</dt><dd>新增开销：写提示、等待、审查和修正 AI 的输出</dd>
+  </dl>
+  <div class="fx-eg">\(f = 0.3\)，\(s = 5\)，没有开销时总时间 \(0.7 + 0.06 = 0.76\)，快了 24%。若审查和修正占去 0.3，总时间 \(1.06\)，反而慢了 6%。即使 \(s\) 无穷大，加速也不超过 \(1/(1 - f) = 1.43\) 倍（阿姆达尔定律）。</div>
+</div>
+<div data-demo="dev-amdahl"></div>
+
+<h2 id="quality">代码质量与安全</h2>
+<p>另一个问题是生成的代码本身。2021 年的研究（Pearce 等）发现 Copilot 在安全相关场景中生成的程序约 40% 含漏洞；Veracode 2025 年测试一百多个模型，约 45% 的生成代码含有安全缺陷，而且这一比例没有随模型变新而明显下降。新的风险也随之出现：模型会“幻觉”出不存在的软件包名，攻击者抢先注册这些名字、放入恶意代码，被称为“slopsquatting”。对代码仓库的统计显示，AI 普及之后重复代码和短期内被改回的代码比例上升，长期可维护性受到质疑。</p>
+<p>这些问题与第 <a class="xref" data-ref="agents"></a> 章的结论一致：让错误能被发现比让每一步更准更重要。测试、类型检查、静态分析、代码审查，在 AI 编程时代不是更不重要，而是更重要了。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">SWE-bench 80% 意味着 AI 能完成 80% 的工程工作。</b>它测的是公开仓库中描述清楚、有测试覆盖的修复任务；真实工作中的需求理解、设计、沟通、长期维护都不在其中，更难污染的评测上分数低得多。</li>
+  <li><b class="m">能通过测试的代码就是正确的。</b>测试只覆盖部分情况；RL 训练出的模型还可能专门针对测试取巧。</li>
+  <li><b class="m">感觉快了就是真的快了。</b>METR 的试验中，开发者实际慢了 19% 却以为快了 20%。</li>
+  <li><b class="m">代码模型只是“多看了代码的语言模型”。</b>中间填空、仓库级拼接、执行反馈的 RL、大规模沙盒环境，都是专门为代码设计的。</li>
+  <li><b class="m">AI 写的代码比人写的更安全，因为它见过最佳实践。</b>它也见过大量有漏洞的代码；多项测试显示四成左右的生成代码含安全缺陷。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2021</div>
+    <h4>Codex 与 Copilot</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>传统的程序合成只能处理很小的领域，通用语言模型写代码很差。</dd>
+      <dt>怎么解决</dt><dd>在 GPT-3 上用 GitHub 代码继续训练；HumanEval 与 pass@k 的无偏估计；Copilot 把补全带进编辑器。</dd>
+      <dt>代价</dt><dd>只能写短片段；不理解项目上下文。</dd>
+      <dt>引出</dt><dd>能否解决更难的算法问题？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">退居小众</span>基于搜索和形式规格的程序合成</summary><div>从输入输出示例或形式规格中搜索程序的传统方法，在大模型出现后基本退出了通用编程场景，但“形式规格 + 验证”的思路在数学证明和安全关键软件中重新受到重视（第 <a class="xref" data-ref="science"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022</div>
+    <h4>AlphaCode 与中间填空</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>竞赛题需要真正的算法设计；补全需要看到光标后面的代码。</dd>
+      <dt>怎么解决</dt><dd>AlphaCode 每题采样上百万个程序，用测试筛选、聚类，挑出 10 个提交，达到人类参赛者的中位水平；FIM 让模型学会填空。</dd>
+      <dt>代价</dt><dd>大量采样代价极高。</dd>
+      <dt>引出</dt><dd>开源社区能否追上？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>开源代码模型与真实仓库评测</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>函数级评测饱和，与工程实践脱节。</dd>
+      <dt>怎么解决</dt><dd>StarCoder、Code Llama、DeepSeek-Coder、Qwen-Coder 等开源模型；SWE-bench（2023）与 Verified（2024）；Devin 与 SWE-agent 展示自主修 issue；Claude 3.5 Sonnet（2024-06）带来编程能力的跃升，Cursor 等智能体 IDE 兴起。</dd>
+      <dt>代价</dt><dd>评测污染；智能体可靠性不足。</dd>
+      <dt>引出</dt><dd>怎样系统地训练软件工程智能体？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被通用模型取代</span>专用的代码小模型</summary><div>2023 年流行为代码单独训练中小模型。到 2025 年，最好的编程模型几乎都是通用的前沿模型，代码专用模型更多是通用模型的代码增强版（如 Qwen3-Coder）或为补全延迟优化的小模型。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>编码智能体与大规模 RL 环境</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>模型能修简单 issue，但在长任务中迷失、会针对测试取巧。</dd>
+      <dt>怎么解决</dt><dd>Claude Code、Codex CLI 等命令行智能体；SWE-Gym、R2E-Gym、SWE-smith 自动造题，Qwen3-Coder 并行 2 万个环境做 RL；vibe coding 流行；ICPC 总决赛金牌水平；METR 的随机对照试验给出“慢了 19%”。</dd>
+      <dt>代价</dt><dd>钻奖励空子；生产力收益存疑；代码安全问题。</dd>
+      <dt>引出</dt><dd>怎样可靠地衡量和使用？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>更难的评测、多智能体与生产力之争</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>Verified 饱和、污染；单个智能体速度有限。</dd>
+      <dt>怎么解决</dt><dd>SWE-bench Pro、Terminal-Bench 2.1 成为主要参考；编码工具普遍支持子智能体和并行任务；METR 更新研究并重新设计方法。</dd>
+      <dt>代价</dt><dd>实际生产力仍缺乏可靠测量；审查 AI 代码的负担转移到人身上。</dd>
+      <dt>引出</dt><dd>第三部分到此结束。第四部分回到模型内部：怎样让模型更大却不更慢（第 <a class="xref" data-ref="moe"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 每题采样 \(n = 20\) 次，某题通过了 \(c = 4\) 次。它的 pass@1 和 pass@5 估计值是多少？</summary><div class="ans">pass@1 \(= 4/20 = 0.2\)。pass@5 \(= 1 - \binom{16}{5}/\binom{20}{5} = 1 - 4368/15504\approx 0.718\)。</div></details>
+<details class="quiz"><summary>2. 一个开发者写代码占 30% 的时间，AI 把这部分加速 5 倍，但审查和修正 AI 输出新增了相当于原总时间 30% 的工作。整体是快了还是慢了？开销降到多少以下才不吃亏？</summary><div class="ans">\(0.7 + 0.3/5 + 0.3 = 1.06\)，慢了 6%。不吃亏要求 \(o &lt; f(1 - 1/s) = 0.3\times 0.8 = 0.24\)。</div></details>
+<details class="quiz"><summary>3. 某模型在 SWE-bench Verified 上 81%，在 SWE-bench Pro 上 46%。给出至少两个可能的解释。</summary><div class="ans">(1) Pro 的任务更长、更难，涉及更多文件；(2) Verified 是公开仓库的公开 PR，模型可能在训练中见过修复（污染）；(3) Pro 部分来自不公开的代码库，模型无法依赖对仓库的记忆；(4) 评测的 harness 或推理预算不同。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2107.03374">Evaluating Large Language Models Trained on Code</a>（Chen 等, 2021）<span class="why">Codex、HumanEval 与 pass@k 无偏估计。</span></li>
+  <li><a href="https://arxiv.org/abs/2207.14255">Efficient Training of Language Models to Fill in the Middle</a>（Bavarian 等, 2022）<span class="why">FIM，以及“免费”获得填空能力的实验。</span></li>
+  <li><a href="https://arxiv.org/abs/2310.06770">SWE-bench</a>（Jimenez 等, 2023）<span class="why">把评测带到真实仓库。</span></li>
+  <li><a href="https://metr.org/blog/2025-07-10-early-2025-ai-experienced-os-dev-study/">Measuring the Impact of Early-2025 AI on Experienced Open-Source Developer Productivity</a>（METR, 2025）<span class="why">严谨的随机对照试验，以及它为什么反直觉。</span></li>
+  <li><a href="https://www.together.ai/blog/deepswe">DeepSWE</a>（Together AI 与 Agentica, 2025）<span class="why">一份完全开源的编码智能体 RL 配方。</span></li>
+</ol>
+
+<div class="nextq">第三部分讲了怎样把基座变成会推理、会行动、会写代码的模型。第四部分回到结构：参数越来越多，每个 token 的计算量却不能无限增长。混合专家（MoE）怎样让模型大而不慢，专家们到底在分工什么？下一章（第 <a class="xref" data-ref="moe"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2402.19173">StarCoder 2 与 The Stack v2</a> · <a href="https://arxiv.org/abs/2401.14196">DeepSeek-Coder</a> · <a href="https://arxiv.org/abs/2203.07814">AlphaCode</a> · <a href="https://qwenlm.github.io/blog/qwen3-coder/">Qwen3-Coder</a> · <a href="https://cursor.com/blog/composer">Cursor Composer</a> · <a href="https://arxiv.org/abs/2412.21139">SWE-Gym</a> · <a href="https://arxiv.org/abs/2504.07164">R2E-Gym</a> · <a href="https://arxiv.org/abs/2504.21798">SWE-smith</a> · <a href="https://arxiv.org/abs/2403.07974">LiveCodeBench</a> · <a href="https://arxiv.org/abs/2509.16941">SWE-bench Pro</a> · <a href="https://arxiv.org/abs/2506.12286">The SWE-Bench Illusion</a> · <a href="https://arxiv.org/abs/2510.20270">ImpossibleBench</a> · <a href="https://arxiv.org/abs/2302.06590">Copilot 随机对照试验</a> · <a href="https://arxiv.org/abs/2410.12944">Google 内部实验</a> · <a href="https://x.com/METR_Evals/status/2026355544668385373">METR 2026-02 更新</a> · <a href="https://particula.tech/blog/metr-reversed-19-percent-slower-ai-coding-study">对 2026 更新的解读</a> · <a href="https://arxiv.org/abs/2108.09293">Asleep at the Keyboard?</a> · <a href="https://www.veracode.com/resources/analyst-reports/2025-genai-code-security-report/">Veracode 2025</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

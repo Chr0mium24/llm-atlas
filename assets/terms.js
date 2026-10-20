@@ -176,4 +176,9 @@ window.ATLAS_TERMS = {
   'hybrid-retrieval': { t: '混合检索', en: 'hybrid retrieval', d: String.raw`同时用向量检索（语义）和关键词检索（BM25，精确匹配），常用倒数排名融合 \(\sum 1/(k + \text{rank})\) 合并结果。`, at: 'agents#rag' },
   'agentic-search': { t: '智能体搜索', en: 'agentic search', d: '由模型自己决定搜什么、读什么、是否换关键词再搜，检索成为循环中的一种动作，而非固定流水线。', at: 'agents#rag' },
   'prompt-injection': { t: '提示注入', en: 'prompt injection', d: '工具返回的不可信内容（网页、邮件等）中夹带指令，诱使模型执行。根源是模型无法从结构上区分指令和数据。', at: 'agents#security' },
+
+  // ---- coding (coding.html)
+  fim: { t: '中间填空（FIM）', en: 'fill-in-the-middle', d: '训练时把文档重排为“前缀、后缀、中间”并用特殊 token 标记，模型从左到右预测中间段时已看过前后文。编辑器补全依赖它。', at: 'coding#train' },
+  'swe-bench': { t: 'SWE-bench', en: 'SWE-bench', d: '用真实 GitHub 仓库的 issue 出题：给出 issue 和修复前的仓库，以 PR 中的测试（FAIL_TO_PASS 与 PASS_TO_PASS）判分。Verified 为人工筛选的 500 题，Pro 更难、更难污染。', at: 'coding#eval' },
+  'vibe-coding': { t: 'vibe coding', en: 'vibe coding', d: '用自然语言描述需求、接受 AI 的全部修改而不读代码的编程方式（Karpathy, 2025-02）。适合原型，不适合需长期维护的软件。', at: 'coding#forms' },
 };
