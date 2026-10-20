@@ -50,7 +50,7 @@
     { part: '收尾' },
     { s: 'frontier', t: '前沿地图与开放问题', st: 'new' },
     { part: '附录' },
-    { s: 'nn-basics', t: '神经网络速成', n: '附', st: 'todo' },
+    { s: 'nn-basics', t: '神经网络与数学速成', n: '附', st: 'new' },
   ];
   // assign numbers, part names, file names
   {

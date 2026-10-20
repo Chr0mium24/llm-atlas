@@ -320,4 +320,19 @@ window.ATLAS_TERMS = {
   depreciation: { t: '折旧', en: 'depreciation', d: '把一次性的设备投入按使用年限平摊为每年的成本。年限越长，当期利润越好看，现金流不变。', at: 'industry#bubble' },
   'fair-use': { t: '合理使用', en: 'fair use', d: '美国版权法的抗辩：综合考虑使用目的（是否转化性）、作品性质、使用量和对原作市场的影响，判断未经许可的使用是否合法。', at: 'industry#copyright' },
   'ai-act': { t: 'AI 法案（欧盟）', en: 'EU AI Act', d: '按风险分级的统一立法。2024 年生效，通用模型义务 2025-08 开始，高风险条款经 2026 年修订推迟到 2027–2028 年。', at: 'industry#regulation' },
+
+  // ---- appendix (nn-basics.html)
+  'matrix-rank': { t: '秩', en: 'matrix rank', d: '矩阵真正用到的独立方向个数。低秩矩阵可写成两个瘦矩阵之积，LoRA 即基于此。', at: 'nn-basics#vectors' },
+  'orthogonal-matrix': { t: '正交矩阵', en: 'orthogonal matrix', d: String.raw`满足 \(Q^\top Q = I\) 的矩阵（旋转或镜像），不改变长度与夹角，逆就是转置。`, at: 'nn-basics#vectors' },
+  eigenvalue: { t: '特征值', en: 'eigenvalue', d: String.raw`若 \(A\mathbf v = \lambda\mathbf v\)，矩阵对方向 \(\mathbf v\) 只拉伸 \(\lambda\) 倍。反复相乘时该方向按 \(\lambda^k\) 增长或衰减。`, at: 'nn-basics#vectors' },
+  'conditional-prob': { t: '条件概率', en: 'conditional probability', d: String.raw`\(P(A\mid B) = P(A,B)/P(B)\)：已知 B 时 A 的概率。语言模型把序列概率拆成逐个条件概率之积。`, at: 'nn-basics#prob' },
+  expectation: { t: '期望', en: 'expectation', d: String.raw`按概率加权的平均值。\(n\) 个独立样本平均值的方差是单个的 \(1/n\)。`, at: 'nn-basics#prob' },
+  covariance: { t: '协方差矩阵', en: 'covariance matrix', d: '对角线是各变量的方差，非对角线衡量两两是否一起变化。特征向量是高斯等高线椭圆的轴。', at: 'nn-basics#gauss' },
+  activation: { t: '激活函数', en: 'activation function', d: '每层线性变换后逐元素施加的非线性函数（ReLU、GELU、SiLU）。没有它，多层网络等价于一层。', at: 'nn-basics#nn' },
+  gradient: { t: '梯度', en: 'gradient', d: '损失对每个参数的偏导数组成的向量，指向损失增长最快的方向；梯度下降沿其反方向更新参数。', at: 'nn-basics#gd' },
+  'learning-rate': { t: '学习率', en: 'learning rate', d: String.raw`梯度下降每步走多远。二次损失下必须小于 \(2/\lambda_{\max}\)，否则发散。`, at: 'nn-basics#gd' },
+  'chain-rule': { t: '链式法则', en: 'chain rule', d: String.raw`\(\partial L/\partial x = (\partial L/\partial y)(\partial y/\partial x)\)。反向传播从损失出发逐层套用它。`, at: 'nn-basics#backprop' },
+  jacobian: { t: '雅可比矩阵', en: 'Jacobian', d: String.raw`向量函数的导数矩阵，第 \(i\) 行第 \(j\) 列是 \(\partial y_i/\partial x_j\)。梯度反传就是连乘各层的雅可比矩阵。`, at: 'nn-basics#backprop' },
+  overfitting: { t: '过拟合', en: 'overfitting', d: '训练集上越来越好、没见过的数据上变差：背下了细节与噪声而非规律。', at: 'nn-basics#fit' },
+  'floating-point': { t: '浮点数', en: 'floating point', d: '符号 + 指数 + 尾数。指数位决定范围，尾数位决定精度（相对间隔 2 的负尾数位数次方）。BF16 = 8 位指数 + 7 位尾数。', at: 'nn-basics#float' },
 };

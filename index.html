@@ -82,7 +82,7 @@ document.addEventListener('DOMContentLoaded', () => {
     science: '共进化与 AlphaFold、天气 AI、材料发现的基础率、数学从 IMO 金牌到开放问题、AI 科学家；验证是瓶颈',
     industry: '训练成本与 7000 亿资本开支、GPU 回本与泡沫之争、出口管制、开源与闭源、版权判决、三种监管思路、每次请求的能耗、就业',
     frontier: '总参数与激活参数、前沿方向地图（含安全与科学）、开源格局、2026 值得读的六篇、几条主线、开放问题与大事记',
-    'nn-basics': '梯度下降、反向传播、优化器、归一化（可选）',
+    'nn-basics': '向量与矩阵（秩、正交、特征值）、概率与对数、高斯与协方差、梯度下降、反向传播与 6N、Adam、初始化、过拟合、浮点数（按需查阅）',
   };
   const box = document.getElementById('cards');
   let grid = null;
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 78]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 80]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>
