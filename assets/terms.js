@@ -196,4 +196,12 @@ window.ATLAS_TERMS = {
   'online-softmax': { t: '在线 softmax', en: 'online softmax', d: String.raw`分块扫描时维护当前最大值 \(m\) 与归一化因子 \(\ell\)，遇到更大值时把已累积的结果乘 \(e^{m - m_{\text{新}}}\) 修正，最终结果与一次性计算完全一致。`, at: 'long-context#flash' },
   'linear-attention': { t: '线性注意力', en: 'linear attention', d: String.raw`去掉 softmax，用结合律把历史压成固定大小的状态 \(S_t = S_{t-1} + \mathbf v_t\mathbf k_t^\top\)，读取 \(\mathbf o_t = S_t\mathbf q_t\)。代价线性、显存常数，但精确回忆能力有限；DeltaNet、KDA 加入误差修正与遗忘门。`, at: 'long-context#linear' },
   ssm: { t: '状态空间模型', en: 'state space model (SSM)', d: '以固定大小的状态做递推、状态更新由输入选择性控制的序列模型，代表是 Mamba。Mamba-2 证明它与一类线性注意力等价。', at: 'long-context#linear' },
+
+  // ---- hardware (hardware.html)
+  'tensor-core': { t: '张量核心', en: 'tensor core', d: 'GPU 中专门做小矩阵乘加的电路，一个周期完成上千次乘加；大模型的算力几乎全部来自它。精度越低，吞吐越高。', at: 'hardware#gpu' },
+  sram: { t: '片上 SRAM', en: 'on-chip SRAM', d: '紧挨计算单元的高速小容量存储（每个 SM 几百 KB）。高性能内核的关键是让数据在这里被反复使用。', at: 'hardware#gpu' },
+  hbm: { t: 'HBM', en: 'high-bandwidth memory', d: '与芯片封装在一起的堆叠显存，容量几十到几百 GB、带宽每秒数 TB。大模型推理常受它的带宽限制。', at: 'hardware#gpu' },
+  'arithmetic-intensity': { t: '算术强度', en: 'arithmetic intensity', d: '每从显存读写一个字节所做的运算次数（FLOPs/字节）。低于芯片的“峰值算力 ÷ 带宽”时访存受限，高于时计算受限。', at: 'hardware#roofline' },
+  roofline: { t: 'Roofline 模型', en: 'roofline model', d: String.raw`可达性能 \(=\min(P_{\text{峰值}},\ I\times\text{BW})\)：判断一段计算受限于算力还是带宽。单用户解码的强度约为 1，远低于拐点。`, at: 'hardware#roofline' },
+  'systolic-array': { t: '脉动阵列', en: 'systolic array', d: '乘加单元组成的网格，权重驻留在单元中，输入数据逐拍流过、部分和沿另一方向累加。TPU 的矩阵单元采用这种结构，能效高但不够灵活。', at: 'hardware#arch' },
 };

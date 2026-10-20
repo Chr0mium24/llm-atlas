@@ -12,24 +12,203 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>芯片、内核与编译器</h1>
-  <p class="lede">前面讲的 Roofline、FlashAttention、FP4，最后都落在芯片上。这一章讲芯片怎么设计，软件栈怎么把算法变成指令。</p>
+  <h1>芯片、内核与编译器：算力为什么常常用不满</h1>
+  <p class="lede">前面讲的 FlashAttention、MLA、MoE 的专家并行、FP4，最后都要落到芯片上。这一章先拆开一块 GPU，看它的计算单元和存储层次；然后用 Roofline 模型解释一个贯穿全书的现象：大模型的很多计算其实在“等数据”而不是“算数据”；接着讲分块矩阵乘法、低精度为什么能翻倍算力、TPU 的脉动阵列和全 SRAM 芯片的思路；最后是把算法变成指令的软件栈，以及 2026 年的芯片格局。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.2）。</div>
+<div class="bridge">第 <a class="xref" data-ref="long-context"></a> 章的 FlashAttention 说明了一个事实：计算量完全相同，只换一个顺序，就能快好几倍。瓶颈不在算力，而在数据搬运。理解这一点，需要看清硬件是怎样组织的。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>矩阵乘法与 FLOPs、每个 token \(2N\) 的计算量：第 <a class="xref" data-ref="transformer"></a> 章</li>
+    <li>KV 缓存、FlashAttention：第 <a class="xref" data-ref="long-context"></a> 章；MoE 的批与专家：第 <a class="xref" data-ref="moe"></a> 章</li>
+    <li>浮点数的位数（符号、指数、尾数）：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+  </ul>
+</div>
+
+<h2 id="gpu">拆开一块 GPU</h2>
+<p>GPU 的设计目标是吞吐量：同时做海量相同的简单运算，而不是像 CPU 那样尽快完成一串复杂的指令。以 NVIDIA H100 为例：</p>
 <ul>
-  <li>GPU 内部：SM、张量核心、SRAM、HBM、NVLink；为什么低精度能翻倍算力</li>
-  <li>脉动阵列（TPU）、大 SRAM（Groq / Cerebras）、晶圆级芯片</li>
-  <li>2026 年的硬件：Vera Rubin、TPU Ironwood、Ascend 950、Cerebras CS-4、专用 ASIC 崛起</li>
-  <li>软件栈：CUDA → CUTLASS → Triton；编译器 XLA / TVM / MLIR</li>
-  <li>从 NEON 手写 GEMM 到张量核心：分块、数据复用与访存</li>
+  <li><b>计算单元</b>：132 个流式多处理器（SM），每个包含若干普通的 CUDA 核心和 4 个<dfn data-t="tensor-core">张量核心</dfn>。张量核心是专门做小矩阵乘加（如 \(16\times 8\times 16\)）的电路，一个时钟周期完成上千次乘加，大模型几乎全部的算力都来自它。BF16 稠密算力约 989 TFLOPS，FP8 翻倍。</li>
+  <li><b>存储层次</b>：每个 SM 有寄存器和约 228 KB 的共享内存（片上 <dfn data-t="sram">SRAM</dfn>，极快但极小）；全芯片共享 50 MB 的 L2 缓存；芯片外紧挨着封装的是 80 GB 的 <dfn data-t="hbm">HBM</dfn>（高带宽显存），带宽约 3.35 TB/s。越靠近计算单元越快、越小。</li>
+  <li><b>互连</b>：NVLink 把同一台机器（或同一个机柜）里的 GPU 高速连起来，H100 每卡 900 GB/s；跨机柜用 InfiniBand 或以太网，慢一个数量级以上。</li>
+</ul>
+<p>关键的数字是两个“速度”的比：H100 每秒能做约 \(10^{15}\) 次运算，却只能从显存读 \(3.35\times 10^{12}\) 字节。每读一个字节，必须做约 300 次运算，才能让计算单元不闲着。大模型的很多环节远达不到这个比例。</p>
+
+<h2 id="roofline">Roofline：算得快还是搬得快</h2>
+<p>判断一段计算受限于算力还是带宽，看它的<dfn data-t="arithmetic-intensity">算术强度</dfn>：每从显存读写一个字节，做多少次运算。<dfn data-t="roofline">Roofline 模型</dfn>把它画成一条“屋顶线”：</p>
+<div class="fx">
+\[ \text{可达到的性能} = \min\Big(\htmlClass{sym-P}{P_{\text{峰值}}},\ \ \htmlClass{sym-I}{I}\times \htmlClass{sym-BW}{\text{BW}}\Big),\qquad I = \frac{\text{FLOPs}}{\text{读写的字节数}} \]
+  <div class="fx-read">算术强度低时，性能等于“强度 × 带宽”，随强度线性上升，叫<b>访存受限</b>；强度超过<span style="color:var(--s4)">拐点</span> \(P/\text{BW}\) 后，性能封顶于峰值算力，叫<b>计算受限</b>。</div>
+  <dl class="fx-syms">
+    <dt data-sym="P">\(P_{\text{峰值}}\)</dt><dd>芯片的峰值算力（FLOPS）</dd>
+    <dt data-sym="BW">\(\text{BW}\)</dt><dd>显存带宽（字节 / 秒）</dd>
+    <dt data-sym="I">\(I\)</dt><dd>这段计算的算术强度（FLOPs / 字节）</dd>
+  </dl>
+  <div class="fx-eg">H100 的拐点：\(989\times 10^{12}/3.35\times 10^{12}\approx 295\) FLOPs/字节。生成时单个用户每步要读出全部权重，每个 BF16 权重（2 字节）只参与一次乘加（2 FLOPs），强度约 1，只能用到峰值算力的约 0.3%。一个 8B 模型用 FP8 存储（8 GB），每生成一个 token 至少要读 8 GB，速度上限约 \(3.35\text{ TB/s}/8\text{ GB}\approx 420\) token/s，无论算力多强。</div>
+</div>
+<p>这解释了推理系统的许多设计（第 <a class="xref" data-ref="serving"></a> 章）：<b>预填充</b>（一次处理整个提示，几千个 token 共用一次权重读取）强度高、计算受限；<b>解码</b>（一次生成一个 token）强度低、访存受限，所以要把很多用户的请求拼成一批，让一次权重读取服务 \(B\) 个 token，强度约提高到 \(B\)。量化（第 <a class="xref" data-ref="quantization"></a> 章）减少要读的字节数，在访存受限时几乎直接换来同比例的加速。下面的估算器把这些因素放在一起：</p>
+<div data-demo="roofline"></div>
+<aside class="dispute surprise">
+  <h4>意外：芯片的算力涨得比“喂数据”的速度快得多</h4>
+  <dl>
+    <dt>原以为</dt><dd>每一代新芯片算力翻倍，模型就能跑快一倍。</dd>
+    <dt>实际发现</dt><dd>Gholami 等（2024）统计了二十年的硬件：峰值算力约每 2 年增长 3 倍，显存带宽只增长约 1.6 倍，芯片间互连约 1.4 倍。二十年间算力增长了约 6 万倍，显存带宽只增长了约 100 倍。这就是“内存墙”。</dd>
+    <dt>为什么</dt><dd>晶体管变小让计算电路越来越便宜，但把数据送到芯片的引脚数、信号速率和封装面积增长慢得多。HBM 把显存堆叠在芯片旁边，已经是为了带宽付出的高昂代价。</dd>
+    <dt>现在怎么看</dt><dd>算术强度低的操作（解码、注意力、归一化、逐元素运算）的占比越来越重要。软件上的对策是提高数据复用（分块、算子融合、FlashAttention）、减少数据量（量化、MLA）；硬件上的对策是更大的片上存储（下文的 Groq、Cerebras）和更快的 HBM（2026 年的 HBM4）。</dd>
+  </dl>
+</aside>
+
+<h2 id="tiling">分块：怎样让矩阵乘法达到峰值</h2>
+<p>矩阵乘法是少数能达到峰值的运算，因为它天然有数据复用：\(n\times n\) 的矩阵相乘做 \(n^3\) 次乘加，却只需读 \(2n^2\) 个数。但要真正兑现这种复用，必须让读进来的数据在片上被反复使用，而不是用一次就丢、下次再从显存读。办法是<b>分块</b>：</p>
+<div class="fx">
+\[ I_{\text{分块}} = \frac{2n^3}{\big(2n^3/\htmlClass{sym-T}{T}\big)\times b} = \frac{\htmlClass{c-new}{T}}{b} \]
+  <div class="fx-read">一次在片上计算输出矩阵的一个 \(T\times T\) 区域：沿着内积方向，每读入 A 的一列小块和 B 的一行小块，就做 \(T^2\) 次乘加，结果一直留在片上累加。每个读入的数被用了 \(T\) 次，总读入量从 \(2n^3\) 降到 \(2n^3/T\)，算术强度与 \(T\) 成正比。</div>
+  <dl class="fx-syms">
+    <dt data-sym="T">\(T\)</dt><dd>分块边长，受片上存储容量限制</dd>
+    <dt data-sym="b">\(b\)</dt><dd>每个数的字节数</dd>
+  </dl>
+  <div class="fx-eg">不分块（\(T = 1\)，每次乘加都从显存读两个数）：BF16 下强度只有 0.5，H100 只能用到峰值的约 0.2%。\(T = 128\)：强度 64；再加上 L2 缓存和多个 SM 之间的复用，实际的大矩阵乘法能达到峰值的 70–80%。</div>
+</div>
+<div data-demo="matmul-tiling"></div>
+<p>这就是高性能内核的核心技艺：选择分块大小、安排数据在寄存器、共享内存、L2 之间的流动，让张量核心不断有数据可算，同时用异步拷贝把下一块数据的读取与当前块的计算重叠起来。FlashAttention 是同一个思路在注意力上的应用；把多个小操作合并成一个内核（算子融合），避免中间结果写回显存，也是同一个原则。</p>
+
+<h2 id="precision">低精度：为什么位数减半，算力翻倍</h2>
+<p>H100 的 FP8 算力是 BF16 的 2 倍；Blackwell（B200）又加入 FP4，算力再翻倍；2026 年的 Rubin 宣称单卡 FP4 推理算力 50 PFLOPS。为什么位数越少，算力越高？</p>
+<div class="fx">
+\[ \text{乘法器面积} \ \propto\ (\htmlClass{sym-m}{m} + 1)^2 \]
+  <div class="fx-read">浮点乘法的主体是两个尾数相乘，硬件上是一个 \((m+1)\times(m+1)\) 位的整数乘法器（\(m\) 位尾数加上隐含的 1），面积和功耗大约与位数的平方成正比。同样的芯片面积，位数越少，能放的乘法器越多。</div>
+  <dl class="fx-syms">
+    <dt data-sym="m">\(m\)</dt><dd>尾数位数：BF16 为 7，FP8（E4M3）为 3，FP4（E2M1）为 1</dd>
+  </dl>
+  <div class="fx-eg">BF16 的乘法器约 \(8^2 = 64\) 单位面积，FP8 约 \(4^2 = 16\)，FP4 约 \(2^2 = 4\)。理论上同面积可多放 4 倍、16 倍的乘法器。实际芯片只给出 2 倍、4 倍的提升，因为累加器（通常保持较高精度）、数据通路和寄存器文件也占面积，而且带宽同样要跟上。</div>
+</div>
+<p>低精度的代价是表示范围和精度。2024 年后的方案是“微缩放”格式（MXFP4、NVFP4）：每 16 或 32 个数共享一个缩放因子，用很少的位数存储每个数，同时保留足够的动态范围。怎样让模型在低精度下不掉点，是第 <a class="xref" data-ref="quantization"></a> 章的主题。</p>
+
+<h2 id="arch">另外几种芯片设计</h2>
+<p><b>脉动阵列（TPU）。</b>Google 的 TPU 用<dfn data-t="systolic-array">脉动阵列</dfn>做矩阵乘法：一个 \(128\times 128\)（新一代为 \(256\times 256\)）的乘加单元网格，权重预先放进每个单元，输入数据像脉搏一样一拍一拍地从一侧流入，部分和沿着另一个方向流动累加。每个数据在阵列中被相邻单元依次使用，几乎不需要读写寄存器或缓存，能效极高，代价是灵活性：只擅长规整的大矩阵乘法。GPU 则用 SIMT（单指令多线程）加张量核心，更通用、编程生态更成熟。</p>
+<p><b>全片上存储（Groq、Cerebras）。</b>既然解码受限于显存带宽，那就干脆不用显存。Groq 的 LPU 把模型权重全部放在片上 SRAM 中（每颗芯片数百 MB），带宽高出 HBM 一个数量级，执行完全确定，单用户的生成速度极快；代价是一颗芯片放不下多少参数，一个大模型要用数百颗芯片。Cerebras 走得更远：整片晶圆做成一颗芯片（WSE-3 有 44 GB 片上 SRAM、约 90 万个核心）。2025 年底 NVIDIA 与 Groq 达成授权和人才交易，2026 年的 Vera Rubin 平台据报道纳入了基于 Groq 技术的推理芯片，说明“低延迟解码”已被视为一个独立的硬件市场。</p>
+<aside class="dispute">
+  <h4>推理会被专用芯片接管吗</h4>
+  <dl>
+    <dt>专用派</dt><dd>推理的工作负载比训练简单得多、规模更大，专为它设计的芯片（TPU、Trainium、Groq、Cerebras、各种 ASIC）能效和成本都更好。Anthropic 在 2025 年 10 月宣布将使用多达 100 万颗 Google TPU；据估算，NVIDIA 在数据中心加速器中的收入份额从 2023 年的九成以上降到 2026 年的八成左右。</dd>
+    <dt>通用派</dt><dd>模型结构每年都在变（混合注意力、MoE、新的低精度格式），专用芯片的设计周期跟不上；GPU 的软件生态（CUDA、各种内核库、推理框架）让新模型第一时间就能跑得好。NVIDIA 也在吸收专用设计的优点（纳入 Groq 技术、推出面向长上下文预填充的专门芯片）。</dd>
+    <dt>现在怎么看</dt><dd>大型模型公司普遍走向多种芯片并用：用 GPU 做研究和训练的主力，用 TPU、Trainium 或自研芯片承担大规模推理。决定因素往往不是峰值算力，而是软件栈的成熟度和供应量。</dd>
+  </dl>
+</aside>
+<p><b>互连。</b>大模型一张卡放不下，张量并行和专家并行（第 <a class="xref" data-ref="training-systems"></a> 章）要求卡之间频繁、大量地交换数据。NVIDIA 的 NVL72 机柜用 NVLink 把 72 张 GPU 连成一个高速域；TPU 用芯片间互连组成三维环面，一个 Ironwood 集群可达 9216 颗芯片。“一个高速域里能放多少芯片”，决定了能多高效地运行万亿参数的 MoE。</p>
+
+<h2 id="software">软件栈：从算法到指令</h2>
+<p>同一块芯片，软件写得好坏，性能可以差几倍。从上到下：</p>
+<ul>
+  <li><b>框架</b>：PyTorch、JAX 让研究者用张量运算写模型。</li>
+  <li><b>编译器</b>：XLA（JAX 和 TPU 的编译器）、PyTorch 的 torch.compile 把整个计算图拿到手，做算子融合、内存规划，再为目标硬件生成代码；TVM、MLIR 是更通用的编译器基础设施。</li>
+  <li><b>内核语言</b>：CUDA 是 NVIDIA GPU 的底层编程模型，需要手动管理线程、共享内存和同步；CUTLASS 提供矩阵乘法的模板库；<b>Triton</b>（OpenAI, 2021）让人用 Python 以“分块”为单位写内核，由编译器处理线程级细节，大大降低了门槛。2024–26 年又出现了一批分块级的编程模型（ThunderKittens、TileLang、CuTe DSL，以及 NVIDIA 自己的 CUDA Tile）。</li>
+  <li><b>库与框架</b>：cuBLAS、cuDNN、NCCL（通信），以及 FlashAttention、DeepSeek 开源的 FlashMLA、DeepGEMM（FP8 矩阵乘法）、DeepEP（专家并行通信）等专用内核。</li>
+</ul>
+<aside class="dispute">
+  <h4>CUDA 的护城河还在吗</h4>
+  <dl>
+    <dt>护城河派</dt><dd>近二十年积累的 CUDA 生态（库、工具、开发者、论文代码）是 NVIDIA 最大的优势：新模型、新算法几乎总是先在 CUDA 上实现和优化，其他硬件要追赶适配。</dd>
+    <dt>松动派</dt><dd>大多数开发者已经不直接写 CUDA，而是通过 PyTorch、编译器和 Triton 工作，这些层可以接到其他硬件上；Gemini、Claude 的大规模训练与推理已在 TPU 上进行；中国厂商在出口管制下建立了华为昇腾 CANN 等完整的替代栈，DeepSeek 等公司在国产芯片上部署前沿模型。</dd>
+    <dt>现在怎么看</dt><dd>对最大的几家公司，护城河已经变浅：它们有能力为多种硬件优化自己的软件栈。对中小团队和新算法的快速试验，CUDA 仍是阻力最小的路径。护城河从“只能用 CUDA”变成了“在 CUDA 上最省事”。</dd>
+  </dl>
+</aside>
+
+<h2 id="landscape">2026 年的芯片格局</h2>
+<div class="tablewrap"><table>
+  <tr><th>芯片</th><th>厂商</th><th>时间</th><th>要点（厂商公布或第三方汇总，规格以官方为准）</th></tr>
+  <tr><td>H100 / H200</td><td>NVIDIA</td><td>2022 / 2024</td><td>FP8 与 Transformer Engine；H200 显存增至 141 GB</td></tr>
+  <tr><td>B200 / B300（Blackwell）</td><td>NVIDIA</td><td>2024–25</td><td>原生 FP4；GB200 NVL72 把 72 卡连成一个 NVLink 域</td></tr>
+  <tr><td>Vera Rubin</td><td>NVIDIA</td><td>2026</td><td>每卡 288 GB HBM4、约 22 TB/s；NVFP4 推理约 50 PFLOPS</td></tr>
+  <tr><td>MI355X / MI450</td><td>AMD</td><td>2025 / 2026</td><td>288 GB 大显存；与 OpenAI 签订多吉瓦级部署协议</td></tr>
+  <tr><td>TPU v7 Ironwood</td><td>Google</td><td>2025–26</td><td>每颗 4614 TFLOPS（FP8）、192 GB HBM3E；单集群 9216 颗</td></tr>
+  <tr><td>Trainium 2 / 3</td><td>AWS</td><td>2024 / 2025</td><td>Anthropic 等的大规模训练与推理</td></tr>
+  <tr><td>昇腾 950</td><td>华为</td><td>2026</td><td>950PR 面向预填充与推理、950DT 面向解码与训练；自研 HBM；SuperPoD 达 8192 颗</td></tr>
+  <tr><td>LPU / WSE-3</td><td>Groq / Cerebras</td><td>2024–26</td><td>全片上 SRAM，极低延迟的单用户生成</td></tr>
+</table></div>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">TFLOPS 越高，生成越快。</b>单用户的解码受显存带宽限制，算力大多闲着；生成速度主要看带宽和模型的字节数。</li>
+  <li><b class="m">显存越大越好。</b>显存容量决定能放下多大的模型和多长的上下文，带宽才决定能跑多快；Apple 芯片显存大但带宽较低，大模型能放下但生成不快。</li>
+  <li><b class="m">不同芯片的 TOPS 可以直接比较。</b>要看是稠密还是稀疏（稀疏数字通常翻倍）、什么精度（INT8 与 FP4 不可比），以及实际内核能达到多少。</li>
+  <li><b class="m">同样的计算量，耗时就一样。</b>FlashAttention 与朴素注意力计算量相同，速度差几倍；决定速度的是数据搬运和复用。</li>
+  <li><b class="m">TPU 只能跑 TensorFlow。</b>JAX 和 PyTorch（通过 XLA）都能在 TPU 上运行，Gemini 和部分 Claude 模型都在 TPU 上训练和服务。</li>
 </ul>
 
-<h2 id="demos">已有的相关演示</h2>
-<p class="small muted">这些演示来自旧版章节，正文写好后会重新安排位置。</p>
-<div data-demo="roofline"></div>
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2006–2012</div>
+    <h4>CUDA 与 GPU 上的深度学习</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>神经网络训练在 CPU 上太慢。</dd>
+      <dt>怎么解决</dt><dd>NVIDIA 推出 CUDA（2006），让 GPU 可以做通用计算；AlexNet（2012）用两块游戏显卡训练，赢得 ImageNet。</dd>
+      <dt>代价</dt><dd>GPU 原本为图形设计，深度学习只是“借用”。</dd>
+      <dt>引出</dt><dd>能否为矩阵乘法专门设计硬件？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2016–2020</div>
+    <h4>TPU 与张量核心</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>深度学习的算力需求爆炸，通用 GPU 能效不够。</dd>
+      <dt>怎么解决</dt><dd>Google TPU v1（2016）用 INT8 脉动阵列做推理；NVIDIA V100（2017）加入张量核心；A100（2020）加入 TF32、BF16 与结构化稀疏。</dd>
+      <dt>代价</dt><dd>软件需要专门适配新单元。</dd>
+      <dt>引出</dt><dd>Transformer 的规模化需要更低的精度和更大的互连。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2021–2023</div>
+    <h4>FP8、Triton 与“IO 感知”的内核</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型训练和推理越来越受显存带宽与通信限制。</dd>
+      <dt>怎么解决</dt><dd>H100（2022）引入 FP8 与 Transformer Engine；Triton（2021）降低内核开发门槛；FlashAttention（2022）把“减少数据搬运”变成算法设计的核心原则。</dd>
+      <dt>代价</dt><dd>GPU 供不应求，成为大模型发展的瓶颈。</dd>
+      <dt>引出</dt><dd>继续压低精度，扩大互连域。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024–2025</div>
+    <h4>FP4、机柜级互连与专用芯片崛起</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>万亿参数的 MoE 需要更多显存、更快的通信；推理成本成为主要开支。</dd>
+      <dt>怎么解决</dt><dd>Blackwell 原生 FP4、NVL72 机柜；TPU Ironwood 专为推理设计；Groq、Cerebras 的高速推理云；DeepSeek 开源 FP8 内核与通信库；NVIDIA 与 Groq 的交易。</dd>
+      <dt>代价</dt><dd>功耗与散热成为数据中心的硬约束（单机柜上百千瓦）。</dd>
+      <dt>引出</dt><dd>多种硬件并存，软件栈的可移植性变得关键。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">在出口管制下发展</span>国产 AI 芯片与软件栈</summary><div>美国对高端 GPU 的出口管制促使中国厂商加速自研：华为昇腾（CANN 软件栈）、百度昆仑、阿里平头哥等。2026 年的昇腾 950 使用自研 HBM，并以超大规模集群弥补单芯片的差距。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>HBM4、Rubin 与内存墙</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>算力增长远快于带宽，访存成为主要瓶颈。</dd>
+      <dt>怎么解决</dt><dd>HBM4 把单卡带宽推到约 20 TB/s；Vera Rubin 平台纳入低延迟推理芯片；TPU Ironwood 大规模可用；昇腾 950 商用。</dd>
+      <dt>代价</dt><dd>芯片、内存、电力的供应链成为 AI 发展的硬约束（第 <a class="xref" data-ref="industry"></a> 章）。</dd>
+      <dt>引出</dt><dd>在给定硬件上，怎样用更少的位数表示模型？（第 <a class="xref" data-ref="quantization"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一块芯片的峰值算力 2000 TFLOPS、带宽 8 TB/s，拐点算术强度是多少？单用户用 BF16 解码一个 70B 稠密模型，每个 token 至少要多长时间？</summary><div class="ans">拐点 \(2000/8 = 250\) FLOPs/字节。权重 140 GB，每个 token 至少读一遍：\(140/8000\approx 17.5\) ms，即最多约 57 token/s，与算力无关。</div></details>
+<details class="quiz"><summary>2. 解码时把 64 个用户的请求拼成一批，算术强度大约提高到多少？在上题的芯片上，这时是访存受限还是计算受限？</summary><div class="ans">每读一次权重服务 64 个 token，强度从约 1 提高到约 64（BF16 下每字节约 64 FLOPs）。仍低于拐点 250，仍是访存受限，但吞吐量提高了约 64 倍。批大小超过约 250 才会转为计算受限。</div></details>
+<details class="quiz"><summary>3. 用分块矩阵乘法，FP8（每数 1 字节）下要达到 H100 FP8 的拐点（约 590 FLOPs/字节），分块边长 \(T\) 至少要多大？</summary><div class="ans">强度 \(= T/b = T\)，需要 \(T\ge 590\) 左右（以数为单位）。单个 SM 的片上存储放不下这么大的块，实际依靠 L2 缓存和多个 SM 共享读入的数据来进一步提高复用。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://horace.io/brrr_intro.html">Making Deep Learning Go Brrrr From First Principles</a>（Horace He, 2022）<span class="why">计算、访存、开销三类瓶颈的入门经典。</span></li>
+  <li><a href="https://jax-ml.github.io/scaling-book/">How to Scale Your Model</a>（Google DeepMind, 2025）<span class="why">从 Roofline 到 TPU、GPU 与并行策略的系统教程。</span></li>
+  <li><a href="https://arxiv.org/abs/2403.14123">AI and Memory Wall</a>（Gholami 等, 2024）<span class="why">算力与带宽增长速度的差距。</span></li>
+  <li><a href="https://arxiv.org/abs/1704.04760">In-Datacenter Performance Analysis of a Tensor Processing Unit</a>（Jouppi 等, 2017）<span class="why">第一代 TPU 与脉动阵列。</span></li>
+  <li><a href="https://www.eecs.harvard.edu/~htk/publication/2019-mapl-tillet-kung-cox.pdf">Triton</a>（Tillet 等, 2019）<span class="why">分块级内核编程的思想。</span></li>
+</ol>
+
+<div class="nextq">硬件上，位数越少，算力越高、要搬的数据越少。但模型能承受多低的精度？从 16 位到 4 位，甚至 1.58 位，怎样不掉点？下一章（第 <a class="xref" data-ref="quantization"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://www.nvidia.com/en-us/data-center/h100/">NVIDIA H100</a> · <a href="https://hashrateindex.com/blog/nvidia-vera-rubin-nvl72-specs-breakdown/">Vera Rubin NVL72 规格汇总</a> · <a href="https://blog.barrack.ai/nvidia-rubin-specs-architecture-2026/">Rubin 技术解读</a> · <a href="https://www.theregister.com/2025/11/06/googles_ironwood_tpus_ai/">TPU Ironwood（The Register）</a> · <a href="https://www.anthropic.com/news/expanding-our-use-of-google-cloud-tpus-and-services">Anthropic 扩大使用 TPU</a> · <a href="https://www.huawei.com/en/news/2025/9/hc-xu-keynote-speech">华为昇腾路线图</a> · <a href="https://tech-insider.org/huawei-ascend-950pr-ai-chip-nvidia-china-2026/">昇腾 950PR</a> · <a href="https://www.cerebras.ai/chip">Cerebras WSE-3</a> · <a href="https://github.com/deepseek-ai/DeepGEMM">DeepGEMM</a> · <a href="https://github.com/deepseek-ai/FlashMLA">FlashMLA</a> · <a href="https://github.com/tile-ai/tilelang">TileLang</a> · <a href="https://agents-squads.com/intelligence/ai-chip-landscape-2026/">2026 AI 芯片格局</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

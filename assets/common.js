@@ -25,7 +25,7 @@
     { s: 'moe', t: '混合专家 MoE', st: 'new' },
     { s: 'long-context', t: '长上下文与注意力变体', st: 'new' },
     { part: '五 · 硬件与部署' },
-    { s: 'hardware', t: '芯片、内核与编译器', st: 'todo' },
+    { s: 'hardware', t: '芯片、内核与编译器', st: 'new' },
     { s: 'quantization', t: '量化', st: 'old' },
     { s: 'serving', t: '推理系统', st: 'old' },
     { s: 'training-systems', t: '训练系统', st: 'todo' },
