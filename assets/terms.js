@@ -127,14 +127,14 @@ window.ATLAS_TERMS = {
   memorization: { t: '记忆（训练数据）', en: 'memorization', d: '模型逐字背下并能复现部分训练数据。随模型规模、数据重复次数和提示长度增长，去重可显著缓解。', at: 'data#limits' },
 
   // ---- scaling (scaling.html)
-  'power-law': { t: '幂律', en: 'power law', d: String.raw`\(y = Kx^{-\alpha}\)：在双对数坐标里是斜率为 \(-\alpha\) 的直线。\(x\) 增加 10 倍，\(y\) 变为 \(10^{-\alpha}\) 倍。`, at: 'scaling#powerlaw' },
+  'power-law': { t: '幂律', en: 'power law', d: String.raw`\(y = Kx^{-\alpha}\)：在双对数坐标里是斜率为 \(-\alpha\) 的直线。\(x\) 增加 10 倍，\(y\) 变为 \(10^{-\alpha}\) 倍。`, at: 'scaling#z-loglog' },
   'scaling-law': { t: '规模定律', en: 'scaling law', d: String.raw`损失随参数量、数据量、算力按幂律下降的经验规律，例如 \(L(N,D) = E + A/N^\alpha + B/D^\beta\)。用于从小规模实验外推大模型的表现。`, at: 'scaling#powerlaw' },
-  'irreducible-loss': { t: '不可约损失', en: 'irreducible loss', d: String.raw`规模定律中的常数项 \(E\)：数据本身的熵，无论模型多大、数据多多都消不掉。`, at: 'scaling#powerlaw' },
+  'irreducible-loss': { t: '不可约损失', en: 'irreducible loss', d: String.raw`规模定律中的常数项 \(E\)：数据本身的熵，无论模型多大、数据多多都消不掉。`, at: 'scaling#z-floor' },
   overtraining: { t: '过度训练', en: 'overtraining', d: '用远超训练算力最优值的数据训练较小的模型（如 Llama 3 8B 用 15T token，约每参数 1900 个）。训练多花算力，换来推理更便宜。', at: 'scaling#chinchilla' },
   emergence: { t: '涌现', en: 'emergent abilities', d: '某些任务的表现在模型达到一定规模后看似突然出现。很大程度上可由不连续的评分方式解释（如精确匹配）。', at: 'scaling#emergence' },
   adam: { t: 'Adam', en: 'Adam optimizer', d: String.raw`维护梯度的滑动平均 \(\mathbf m\) 和梯度平方的滑动平均 \(\mathbf v\)，按 \(\hat{\mathbf m}/\sqrt{\hat{\mathbf v}}\) 更新：动量 + 逐参数自适应步长。每个参数多存两份状态。`, at: 'scaling#optim' },
   adamw: { t: 'AdamW', en: 'AdamW', d: '把权重衰减从梯度中解耦、直接作用于参数的 Adam。2017 年起大模型训练的默认优化器。', at: 'scaling#optim' },
-  wsd: { t: 'WSD 调度', en: 'warmup-stable-decay schedule', d: '学习率先预热、再长时间保持恒定、最后 10–20% 快速衰减。可从稳定阶段任意分叉出衰减，便于测规模定律、延长训练和在衰减段换数据。', at: 'scaling#optim' },
+  wsd: { t: 'WSD 调度', en: 'warmup-stable-decay schedule', d: '学习率先预热、再长时间保持恒定、最后 10–20% 快速衰减。可从稳定阶段任意分叉出衰减，便于测规模定律、延长训练和在衰减段换数据。', at: 'scaling#schedule' },
   svd: { t: '奇异值分解', en: 'singular value decomposition (SVD)', d: String.raw`任意矩阵 \(M = U\Sigma V^\top\)：先旋转（\(V^\top\)），再沿各轴按奇异值 \(\sigma_i\ge 0\) 缩放（\(\Sigma\)），再旋转（\(U\)）。最大奇异值即谱范数。`, at: 'scaling#muon' },
   muon: { t: 'Muon', en: 'Muon optimizer', d: String.raw`对隐藏层权重的动量矩阵做正交化后更新：\(W\leftarrow W - \eta\,UV^\top\)，所有奇异方向等幅更新；用牛顿-舒尔茨迭代近似。2025–26 年被 Kimi K2、GLM-4.5、DeepSeek V4 采用。`, at: 'scaling#muon' },
   'loss-spike': { t: '损失尖峰', en: 'loss spike', d: '训练中损失突然暴涨的现象，常与注意力分数或激活值失控有关；严重时需回滚到之前的检查点重来。', at: 'scaling#muon' },
@@ -655,4 +655,16 @@ window.ATLAS_TERMS = {
   superword: { t: "超词", en: "superword token", d: "跨越多个词（含空格）的 token，如 “by the way”。SuperBPE 在训练后期放开“不能跨空格”的预分词规则来学习它们。", at: "tokens#frontier" },
   'ngram-embedding': { t: "n-gram 嵌入", en: "n-gram embedding", d: "给相邻几个 token 的组合也配一个向量，用哈希映射到一张大表里，与单个 token 的嵌入相加。只放大输入端，几乎不增加算力（Over-Tokenized Transformer、Engram）。", at: "tokens#frontier" },
   'entropy-patching': { t: "按熵分组", en: "entropy patching", d: "字节级模型的分组方法：用一个小语言模型估计下一个字节的熵，超过阈值就开一个新组；好猜处组长、难猜处组短（BLT）。", at: "tokens#frontier" },
+
+  // ---- scaling (upgrade 2026-10-20)
+  'compute-optimal': { t: "训练算力最优", en: "compute-optimal", d: "给定训练算力 \\(C\\approx 6ND\\) 时让损失最低的那组参数量和数据量。Chinchilla 的结论是两者同比例增长，约每参数 20 token；最优点附近很平。", at: "scaling#z-budget" },
+  isoflop: { t: "等算力曲线", en: "IsoFLOP curve", d: "固定一个训练算力预算，训练一串大小不同的模型，画出损失对参数量的曲线；最低点就是这笔算力的最优模型大小。Chinchilla 的第二种方法。", at: "scaling#chinchilla" },
+  'data-constrained': { t: "数据受限的规模定律", en: "data-constrained scaling law", d: "Muennighoff 等（2023）：不重复数据只有 \\(U\\) 时，把 Chinchilla 式里的 \\(N\\)、\\(D\\) 换成打折后的有效值。重复约 4 遍几乎等于新数据，有效数据最多约 16 倍；多余参数贬值更快，所以算力应主要加在遍数上。", at: "scaling#repeat" },
+  'exact-match': { t: "精确匹配", en: "exact match", d: "答案必须一字不差才算对的评分方式。逐位正确率 \\(p\\) 平滑上升时，\\(k\\) 位答案的得分 \\(p^k\\) 看起来像突变，是很多“涌现”的来源。", at: "scaling#emergence" },
+  'lr-schedule': { t: "学习率调度", en: "learning-rate schedule", d: "学习率随训练步数的变化方式。常见的是预热后按余弦降到接近 0，或 WSD（长时间恒定、最后快速衰减）。", at: "scaling#schedule" },
+  'noise-floor': { t: "噪声地板", en: "noise floor (SGD)", d: "随机梯度有噪声，学习率不为 0 时参数在谷底附近抖动，带来约 \\(\\eta\\sigma^2/4\\) 的额外损失（\\(\\sigma^2\\) 为梯度噪声方差）。降低学习率可以迅速消掉它，这是衰减段损失骤降的原因。", at: "scaling#schedule" },
+  mup: { t: "μP", en: "maximal update parametrization (μP)", d: "按宽度缩放各层的初始化、学习率和输出乘子（对 Adam：隐藏层学习率 \\(\\propto 1/d\\)），使每步更新对各层输出的影响与宽度无关，小模型上调好的超参数可以直接用于大模型。", at: "scaling#mup" },
+  'weight-decay': { t: "权重衰减", en: "weight decay", d: "每步把参数往 0 拉一点（乘以 \\(1-\\eta\\lambda_{\\text{wd}}\\)），防止参数无限增长。AdamW 把它从梯度里解耦出来、直接作用于参数；Moonlight 发现 Muon 在大规模训练中也需要它。", at: "scaling#optim" },
+  'newton-schulz': { t: "牛顿-舒尔茨迭代", en: "Newton–Schulz iteration", d: "只用矩阵乘法、近似计算矩阵正交化 \\(UV^\\top\\) 的迭代：反复作用一个奇次多项式 \\(X\\leftarrow aX + b(XX^\\top)X + c(XX^\\top)^2X\\)，把所有奇异值推向 1。Muon 用 5 次。", at: "scaling#muon" },
+  'spectral-norm': { t: "谱范数", en: "spectral norm", d: "矩阵的最大奇异值 \\(\\|W\\|_2\\)：它最多能把一个向量放大多少倍。限制更新的谱范数，等于限制一层的输出对任何输入最多变化多少；Muon 是谱范数下的最陡下降。", at: "scaling#muon" },
 };

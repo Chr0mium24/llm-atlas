@@ -53,7 +53,7 @@ document.addEventListener('DOMContentLoaded', () => {
     transformer: '从零开始：一个 4 维向量逐步穿过一个块，数清一层的参数（12d²）与每 token 计算；残差流、MLP 键值记忆与 SwiGLU、Pre-Norm 与 Post-Norm 的梯度、RoPE 推导与上下文扩展、训练稳定性（QK-Norm、门控）、每一代在修什么；2026 年连残差都在改',
     generation: '从零开始：5 个词的词表手算 softmax、交叉熵、困惑度与温度采样；预测即压缩（比特数）、截断采样各砍掉什么、贪心与束搜索为什么陷入循环、约束解码、扩散语言模型的并行生成、每一代解码方法在修什么',
     data: '流水线、MinHash 去重与“去重太狠反而变差”、质量分类器、重复数据值多少、中期训练、改写为什么有效、模型崩溃、数据墙与版权',
-    scaling: '幂律与外推、Chinchilla 推导与 2024 复现、过度训练、涌现之争、预训练撞墙之争；Adam/AdamW、WSD、μP，Muon 的正交化与谱范数推导',
+    scaling: '从零开始：五次玩具训练，在双对数坐标上手算幂律指数并外推；Chinchilla 最优分配推导与 2024 复现、过度训练与推理成本、重复数据的价值、μP 与 WSD、涌现之争、预训练撞墙之争；Adam/AdamW、Muon 的正交化与谱范数推导',
     sft: 'SFT 与浅层对齐假说、Bradley-Terry 奖励模型与古德哈特、DPO 推导与家族、LoRA（RL 秩 1 就够）、模型合并',
     rl: '策略梯度推导、PPO → GRPO → DAPO / GSPO / CISPO、奖励与环境、训练-推理不一致、“发现还是挑选”之争',
     distillation: '软标签与温度、正向 vs 反向 KL、在线蒸馏 = 逐 token 奖励的 RL（推导）、MOPD 解决跷跷板、自蒸馏与持续学习、潜意识学习与蒸馏攻击',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 126], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 128], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
