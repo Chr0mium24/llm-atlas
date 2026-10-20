@@ -259,4 +259,8 @@ window.ATLAS_TERMS = {
   sdedit: { t: 'SDEdit（图生图）', en: 'SDEdit', d: '把输入图加噪到中间时刻 s，再从那里去噪。强度 s 越大，保留原图越少、越自由。', at: 'image#control' },
   controlnet: { t: 'ControlNet', en: 'ControlNet', d: '复制去噪网络的编码器接收边缘、深度、姿态等控制信号，经零初始化的卷积注入冻结的主网络，训练初期不破坏原能力。', at: 'image#control' },
   'unified-model': { t: '理解与生成统一模型', en: 'unified understanding & generation', d: '同一个模型既能看图也能画图，常由语言模型负责理解与规划、扩散或自回归头负责生成像素（GPT-4o、BAGEL 等）。', at: 'image#unified' },
+
+  // ---- video (video.html)
+  'spacetime-patch': { t: '时空 patch', en: 'spacetime patch', d: '把潜视频沿时间和空间切成的小块（常为 1×2×2），每块一个 token；任意时长、分辨率的视频都变成一串 token（Sora, 2024）。', at: 'video#arch' },
+  'diffusion-forcing': { t: 'Diffusion Forcing', en: 'Diffusion Forcing', d: '训练时给每一帧独立的噪声水平，使模型能以“不完美的前帧”为条件逐帧生成，缓解自回归视频的误差累积（2024）。', at: 'video#consistency' },
 };

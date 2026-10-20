@@ -12,57 +12,158 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>视频生成与世界模型：从“动起来的图”到可以玩的世界</h1>
-  <p class="lede">视频生成比图像难在三点：<b>时间上要连贯</b>（同一个人不能每帧换脸），<b>运动要合理</b>（物理、因果），<b>数据量巨大</b>（5 秒 720p 就是一亿多个像素值）。2024 年 Sora 用“时空 patch + DiT”给出了可规模化的答案；到 2026 年，主流模型能直接生成带同步音频的 1080p/4K 多镜头视频，实时可交互的“世界模型”也已经出现。</p>
+  <h1>视频生成：从“动起来的图”到带声音的多镜头影片</h1>
+  <p class="lede">视频生成比图像难在三点：时间上要连贯（同一个人不能每帧换脸），运动要合理（物理、因果），数据量巨大（5 秒 720p 就是一亿多个像素值）。2024 年 Sora 用“时空 patch + DiT”给出了可规模化的答案；到 2026 年，主流模型能直接生成带同步音频的 1080p、4K 多镜头视频。这一章讲视频模型怎样压缩时空、为什么必须整段一起去噪、自回归生成为什么会“漂移”，以及两个仍在争论的问题：视频模型懂物理吗？它们是不是一种通用的视觉模型？</p>
 </header>
 
+<div class="bridge">上一章的图像生成在潜空间里对一张图去噪。视频多了一个时间维度：数据量乘以帧数，而且相邻帧之间必须保持一致。所有技术选择都围绕这两点展开。</div>
+
+<div class="prereq">
+  <ul>
+    <li>潜空间扩散、VAE、DiT、MMDiT：第 <a class="xref" data-ref="image"></a> 章</li>
+    <li>流匹配、CFG、少步蒸馏：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>注意力的平方代价：第 <a class="xref" data-ref="attention"></a> 章；暴露偏差：第 <a class="xref" data-ref="generation"></a> 章</li>
+  </ul>
+</div>
+
 <h2 id="arch">主流架构：3D VAE + 时空 patch + DiT + 流匹配</h2>
-<ol>
-  <li><b>3D 因果 VAE</b>：在空间上压缩 8× 或 16×，在时间上压缩 4×。比如 Wan 的 VAE 是 4×8×8，Seedance 1.0 是 4×16×16。“因果”指每一帧的编码只依赖它之前的帧，第一帧可以单独当图像处理，所以同一个模型可以同时用图像和视频训练。</li>
-  <li><b>时空 patch</b>：潜视频再切成 1×2×2 的小块，每块一个 token。Sora 的技术报告把它叫作 spacetime patches：不同时长、分辨率、宽高比的视频都变成一串长度不一的 token。</li>
-  <li><b>DiT 去噪</b>：所有 token 做 <b>全 3D 注意力</b>（每个 token 看所有帧的所有位置），或者分解成“空间注意力 + 时间注意力”以省算力。文本条件通过交叉注意力或联合注意力注入。</li>
-  <li><b>流匹配训练与采样</b>（第 <a class="xref" data-ref="diffusion">11</a> 章），配合 CFG。</li>
-</ol>
-<p>视频 token 数非常大，注意力代价又是平方级，所以视频生成很贵：</p>
+<p>视频模型几乎都是图像模型的“三维版”：</p>
+<ul>
+  <li><b>3D 因果 VAE</b>：在空间上压缩 8 或 16 倍，在时间上压缩 4 倍。“因果”指每一帧的编码只依赖它之前的帧，第一帧可以单独当图像处理，所以同一个模型可以同时用图像和视频训练。</li>
+  <li><b><dfn data-t="spacetime-patch">时空 patch</dfn></b>：潜视频再切成小块（通常时间 1、空间 2×2），每块一个 token。不同时长、分辨率、宽高比的视频都变成一串长度不一的 token。</li>
+  <li><b>DiT 去噪</b>：所有 token 做全 3D 注意力，或者分解成“空间注意力 + 时间注意力”以省算力。文本条件通过交叉注意力或联合注意力注入。</li>
+  <li><b>流匹配</b>训练与采样，配合 CFG（第 <a class="xref" data-ref="diffusion"></a> 章）。</li>
+</ul>
+<div class="fx">
+\[ n_{\text{token}} = \Big\lceil\frac{T}{\htmlClass{sym-ft}{f_t}}\Big\rceil\times\frac{H}{\htmlClass{sym-fs}{f_s}\,p}\times\frac{W}{f_s\,p} \]
+  <div class="fx-read">\(T\) 帧的视频，时间上压缩 \(f_t\) 倍，空间上压缩 \(f_s\) 倍，再切 \(p\times p\) 的 patch。token 数与时长和面积都成正比。</div>
+  <dl class="fx-syms">
+    <dt data-sym="ft">\(f_t\)</dt><dd>时间压缩倍数，常为 4（第一帧单独编码，所以是 \(1 + (T-1)/4\)）</dd>
+    <dt data-sym="fs">\(f_s\)</dt><dd>空间压缩倍数：Wan 为 8，Seedance 1.0 为 16</dd>
+  </dl>
+  <div class="fx-eg">5 秒、24 帧每秒、720p（1280×720），\(f_t = 4\)，\(f_s = 8\)，\(p = 2\)：121 帧压成 31 个潜帧，每帧 \(45\times 80 = 3600\) 个 token，共约 11 万个。一张 1024² 的图只有约 4000 个 token，一段 5 秒的视频是它的近 30 倍。</div>
+</div>
+<p>视频 token 数巨大，注意力的代价又是平方级，于是有两种选择：</p>
+<div class="fx">
+\[ \underbrace{O\big((N_t N_s)^2\big)}_{\text{全 3D 注意力}}\qquad\text{vs}\qquad \underbrace{O\big(N_t N_s^2 + N_s N_t^2\big)}_{\text{空间 + 时间分解}} \]
+  <div class="fx-read">\(N_t\) 是潜帧数，\(N_s\) 是每帧的 token 数。全 3D 注意力让每个 token 直接看所有帧的所有位置；分解的做法先在每帧内部做空间注意力，再在每个空间位置上沿时间做注意力，代价小得多，但跨帧、跨位置的关系要经过两步才能传递。</div>
+  <div class="fx-eg">\(N_t = 31\)，\(N_s = 3600\)：全 3D 约 \((1.1\times 10^5)^2 = 1.2\times 10^{10}\)；分解约 \(31\times 3600^2 + 3600\times 31^2\approx 4.0\times 10^8\)，便宜约 30 倍。Sora 之后的大模型多用全 3D 注意力换取质量，再用稀疏注意力、窗口注意力降低成本。</div>
+</div>
 <div data-demo="video-tokens"></div>
 
 <h2 id="consistency">为什么要“时空联合”去噪</h2>
-<p>最朴素的想法是用图像模型一帧一帧地生成。问题在于每帧的去噪都是独立随机的：第 1 帧生成了左边的红球，第 2 帧可能生成右边的红球，画面会跳动和闪烁。视频扩散把整段视频当成 <b>一个</b> 样本联合去噪，所有帧在同一个去噪过程里互相“商量”，运动自然连贯。</p>
-<p>下面的玩具用的还是“精确最优去噪器”（第 <a class="xref" data-ref="diffusion">11</a>、<a class="xref" data-ref="image">12</a> 章）。训练集是 72 段 8 帧的小视频：4 种形状 × 3 种颜色 × 6 种运动方式。三种生成方式各自独立运行：</p>
+<p>最朴素的想法是用图像模型一帧一帧地生成。问题在于每帧的去噪都是独立随机的：第 1 帧生成了左边的红球，第 2 帧可能生成右边的红球，画面跳动闪烁。视频扩散把整段视频当成<b>一个</b>样本联合去噪，所有帧在同一个去噪过程里互相“商量”，运动自然连贯。</p>
+<p>下面的玩具用的还是“精确最优去噪器”。训练集是 72 段 8 帧的小视频：4 种形状 × 3 种颜色 × 6 种运动方式。三种生成方式各自独立运行：</p>
 <div data-demo="video-consistency" class="bleed"></div>
 <ul>
-  <li><b>逐帧独立</b>：每帧都是合理的图，但连起来乱跳。这是 2022 年以前用图像模型做视频的典型问题。AnimateDiff（2023）等在图像模型里插入时间注意力模块来缓解。</li>
+  <li><b>逐帧独立</b>：每帧都是合理的图，连起来却乱跳。这是 2022 年以前用图像模型做视频的典型问题；AnimateDiff（2023）等在图像模型里插入时间注意力模块来缓解。</li>
   <li><b>时空联合</b>：整段一起去噪，运动连贯。Sora、Wan、Veo、Kling、Seedance 都是这类。缺点是长度固定，必须一次生成完。</li>
-  <li><b>自回归逐帧（带上下文）</b>：每一帧以前面已经生成的帧为条件去噪，可以无限延长、实时流式输出，也能在中途插入用户的动作。代价是误差会逐帧累积（drift）。Diffusion Forcing（2024）、CausVid、Self-Forcing（2025）等方法专门缓解这个问题，它们是实时世界模型的基础。</li>
+  <li><b>自回归逐帧</b>（带上下文）：每一帧以前面已经生成的帧为条件去噪，可以无限延长、实时流式输出，也能在中途插入用户的动作。代价是误差逐帧累积，画面越来越“漂”。</li>
 </ul>
+<p>自回归视频的漂移，与第 <a class="xref" data-ref="generation"></a> 章的<span class="term" data-t="exposure-bias">暴露偏差</span>是同一个问题：训练时以真实的前帧为条件，生成时以自己生成的、略有瑕疵的前帧为条件，误差无人纠正。几种解法：<dfn data-t="diffusion-forcing">Diffusion Forcing</dfn>（2024）训练时给每一帧独立的噪声水平，让模型习惯“前面的帧不完美”；Self-Forcing（2025）训练时就用模型自己生成的前帧做条件，训练与推理一致。它们是实时世界模型（第 <a class="xref" data-ref="world-models"></a> 章）的基础。</p>
 
 <h2 id="frontier">2024–2026：视频模型的进化</h2>
 <ul>
-  <li><b>原生音频</b>：Veo 3（2025-05）让视频和音频（对白、音效、音乐）一起生成；Sora 2（2025-09）、Seedance 2.0（2026-02，统一的音视频联合生成架构）、Kling 3.0（2026 初，图像 / 视频 / 音频统一，原生 4K，5 种语言口型同步）跟进。</li>
-  <li><b>按噪声水平分工的 MoE</b>：Wan 2.2（2025-07）用两个专家，高噪声阶段的专家负责构图和运动，低噪声阶段的专家负责细节；27B 总参数，每步激活 14B。开源，Apache 2.0。</li>
-  <li><b>参考与多镜头</b>：Seedance 2.5 一次最多接收 50 个参考输入（30 张图、10 段视频、10 段音频），原生 1080p、最长 30 秒；Wan 3.0（2026-08）在多个排行榜上位居第一。</li>
-  <li><b>行业洗牌</b>：OpenAI 在 2026 年 9 月关闭了 Sora 应用和 API；Google 的 Gemini Omni Flash 成为其应用内的默认视频模型，Veo 3.1 面向开发者。</li>
-  <li><b>开源</b>：Wan 2.x、HunyuanVideo、LTX-2.5、MiniMax H3 等；Wan 2.2 的 5B 版本能在 RTX 4090 上生成 720p。</li>
+  <li><b>原生音频</b>：Veo 3（2025-05）让视频和音频（对白、音效、音乐）一起生成；Sora 2（2025-09）、Seedance 2.0（2026-02，统一的音视频联合生成架构）、Kling 3.0（2026 年初，原生 4K、多语言口型同步）跟进。</li>
+  <li><b>按噪声水平分工的 MoE</b>：Wan 2.2（2025-07）用两个专家，高噪声阶段的专家负责构图和运动，低噪声阶段的专家负责细节；27B 总参数，每步激活 14B，开源。这与第 <a class="xref" data-ref="moe"></a> 章按 token 路由的 MoE 不同：它按“去噪的阶段”分工。</li>
+  <li><b>参考与多镜头</b>：一次接收多张参考图、多段参考视频和音频，生成包含多个镜头、角色保持一致的影片；Wan 3.0（2026-08）在多个排行榜上位居前列。</li>
+  <li><b>行业洗牌</b>：据报道，OpenAI 在 2026 年 9 月关闭了 Sora 应用和 API；Google 的 Gemini 应用默认使用其新一代视频模型，Veo 3.1 面向开发者。</li>
+  <li><b>开源</b>：Wan 2.x、HunyuanVideo、LTX、MiniMax 等；Wan 2.2 的 5B 版本能在 RTX 4090 上生成 720p。</li>
 </ul>
 
-<h2 id="world">世界模型：能实时交互的视频</h2>
-<p>如果视频模型能 <b>实时</b> 地、<b>根据用户动作</b> 生成下一帧，它就成了一个可以“玩”的世界。也就是 <b>交互式世界模型</b>。它和游戏引擎的区别是：没有手写的物理和渲染代码，一切从视频数据里学。用途包括游戏原型、自动驾驶和机器人的仿真训练（Waymo 2026 年用 Genie 3 构建了驾驶世界模型）、以及给智能体提供练习场。</p>
-<div data-demo="world-model-toy"></div>
-<p>真实的世界模型要解决的问题，这个玩具里都有缩影：<b>实时性</b>（每帧只能用 1–4 步去噪，靠蒸馏）、<b>动作条件</b>、<b>长时记忆</b>（转身再转回来，房间要和刚才一样；Genie 3 能记住约 1 分钟，Matrix-Game 3.5 用 “Patch Memory”）、<b>误差累积</b>（几分钟后画面崩坏）。</p>
-<ul class="history">
-  <li><span class="d">2018</span>Ha & Schmidhuber《World Models》：在学到的“梦境”里训练智能体</li>
-  <li><span class="d">2022</span>Video Diffusion Models、Make-A-Video、Imagen Video、Phenaki</li>
-  <li><span class="d">2023</span>Gen-2、AnimateDiff、Stable Video Diffusion</li>
-  <li><span class="d">2024-02</span>Sora（时空 patch DiT，“视频生成模型作为世界模拟器”）；Genie（从无标注视频学可控环境）</li>
-  <li><span class="d">2024</span>Kling、Veo / Veo 2、CogVideoX、HunyuanVideo（开源 13B）；GameNGen（神经网络实时“运行” DOOM）；Genie 2；Diffusion Forcing</li>
-  <li><span class="d">2025</span>Wan 2.1（2 月开源）；Veo 3 原生音频（5 月）；Wan 2.2 MoE；Genie 3（8 月，720p / 24fps 实时，可连续交互数分钟）；Sora 2（9 月）；Self-Forcing 实时流式生成</li>
-  <li><span class="d">2026</span>Project Genie 向付费用户开放（1 月）；Seedance 2.0（2 月）；Kling 3.0；Waymo World Model；Matrix-Game 3.0 / 3.5 开源实时世界模型；Wan 3.0（8 月）；Sora 关停（9 月）；NVIDIA Cosmos 3 全模态世界模型</li>
+<h2 id="physics">视频模型懂物理吗</h2>
+<aside class="dispute">
+  <h4>逼真的画面 ≠ 正确的物理</h4>
+  <dl>
+    <dt>乐观</dt><dd>Sora 的技术报告题为“视频生成模型作为世界模拟器”：模型在没有任何物理先验的情况下，从视频中学会了遮挡、碰撞、液体、反光，这说明扩大规模就能逐步学到物理规律。</dd>
+    <dt>质疑</dt><dd>字节跳动的研究（Kang 等, 2024）用简单的 2D 物理场景训练视频模型：在训练分布内表现完美，换一个没见过的速度、质量组合就失败。模型更像是在“检索最相似的训练样例”，优先匹配颜色，其次大小、速度，最后才是形状，而不是学到了运动定律。Google 的 Physics-IQ（2025）测试了多个商用模型，发现即使画面极为逼真，在预测物体运动、液体流动等任务上，物理理解得分都很低。</dd>
+    <dt>现在怎么看</dt><dd>视频模型学到的是“看起来合理”的统计规律，而非可以外推的物理定律；在常见场景下两者难以区分，在罕见场景、长时间预测下差距暴露。这是用视频模型做机器人和自动驾驶仿真（第 <a class="xref" data-ref="world-models"></a> 章）时必须警惕的地方。</dd>
+  </dl>
+</aside>
+<aside class="dispute surprise">
+  <h4>意外：视频模型能“一帧一帧地思考”，零样本解决视觉任务</h4>
+  <dl>
+    <dt>原以为</dt><dd>视频生成模型只会生成好看的视频，做不了检测、分割、推理这类“理解”任务。</dd>
+    <dt>实际发现</dt><dd>Google DeepMind 的 Wiedemer 等（2025）给 Veo 3 一张迷宫图和一句提示“让小球走到终点”，它生成的视频里小球真的走出了迷宫；给一张图让它“画出边缘”“把物体分割出来”“把这个形状对称补全”，它也能零样本完成，许多任务从未专门训练过。作者把这称为“帧链”（chain-of-frames），类比语言模型的思维链：视频的逐帧演化本身就是一步步的推理。</dd>
+    <dt>为什么</dt><dd>与语言模型从“预测下一个词”中学到通用能力一样，视频模型从“预测像素随时间的变化”中学到了大量关于视觉世界的通用知识；任务只要能表述成“画面接下来应该怎样变化”，它就有机会完成。</dd>
+    <dt>现在怎么看</dt><dd>视频模型可能成为视觉领域的“基础模型”，就像语言模型之于文字。但它们在精确推理上仍不可靠，这一方向与上面的物理争议密切相关，也直接引出了世界模型的研究。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">视频生成就是一帧一帧地生成图像。</b>主流模型把整段视频作为一个样本联合去噪，帧与帧之间通过注意力直接交流。</li>
+  <li><b class="m">画面逼真说明模型懂物理。</b>逼真来自统计规律；在没见过的条件下，物理常常出错。</li>
+  <li><b class="m">视频长度可以随便加长。</b>联合去噪的长度受 token 数和显存限制；自回归延长会累积误差、逐渐漂移。</li>
+  <li><b class="m">视频模型只是图像模型加了时间轴，成本差不多。</b>token 数是同分辨率图像的几十倍，注意力是平方级，成本高出一到两个数量级。</li>
+  <li><b class="m">音频是后期配上去的。</b>2025 年后的前沿模型原生联合生成音频与视频，口型和音效与画面同步。</li>
 </ul>
-<p class="src">资料：<a href="https://arxiv.org/abs/2604.14148">Seedance 2.0 技术报告</a>；<a href="https://ocdevel.com/mlg/mla-26">AI Video Generation in 2026</a>；<a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a>；<a href="https://9to5google.com/2026/01/29/google-project-genie/">Project Genie</a>；<a href="https://introl.com/blog/world-models-race-agi-2026">World Models Race 2026</a>。</p>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>从图像扩散到短视频</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>GAN 与早期方法只能生成几秒、低分辨率、抖动的视频。</dd>
+      <dt>怎么解决</dt><dd>Video Diffusion Models、Make-A-Video、Imagen Video、Phenaki（2022）；Gen-2、AnimateDiff、Stable Video Diffusion（2023）。</dd>
+      <dt>代价</dt><dd>时长短、分辨率低，运动不自然。</dd>
+      <dt>引出</dt><dd>怎样像语言模型一样规模化？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>Sora：时空 patch 与规模化</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>U-Net 难以扩展，不同时长与分辨率难以统一处理。</dd>
+      <dt>怎么解决</dt><dd>Sora（2024-02）用时空 patch + DiT 处理任意时长、分辨率的视频，展示出一分钟的连贯视频；Kling、Veo、CogVideoX、HunyuanVideo（开源 13B）相继发布；Diffusion Forcing。</dd>
+      <dt>代价</dt><dd>生成昂贵；物理错误常见；没有声音。</dd>
+      <dt>引出</dt><dd>怎样加入声音、提高可控性？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>原生音频与开源追赶</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>视频与音频分开生成，难以同步；开源模型落后。</dd>
+      <dt>怎么解决</dt><dd>Wan 2.1 开源（2 月）、Wan 2.2 的噪声分阶段 MoE（7 月）；Veo 3 原生音频（5 月）；Sora 2（9 月）；Self-Forcing 实时流式生成；“视频模型是零样本学习者”。</dd>
+      <dt>代价</dt><dd>深度伪造风险上升。</dd>
+      <dt>引出</dt><dd>多镜头、长时长、可交互。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>多镜头影片与行业洗牌</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>长视频的一致性、复杂的多角色叙事；高昂的推理成本。</dd>
+      <dt>怎么解决</dt><dd>Seedance 2.0 的音视频统一架构、Kling 3.0 的原生 4K、Wan 3.0；多参考输入与多镜头生成。据报道，Sora 应用与 API 于 9 月关停。</dd>
+      <dt>代价</dt><dd>商业模式尚未跑通，单次生成成本高。</dd>
+      <dt>引出</dt><dd>如果视频能实时地根据动作生成下一帧，它就成了一个可以交互的世界（第 <a class="xref" data-ref="world-models"></a> 章）。在那之前，先看另一种常被忽视的模态：声音（第 <a class="xref" data-ref="audio"></a> 章）。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">持续发展</span>自回归与实时视频</summary><div>Diffusion Forcing、CausVid、Self-Forcing 等让视频可以一帧帧地流式生成、无限延长，并接受中途的控制，成为交互式世界模型的技术基础。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 10 秒、24 帧每秒、1080p（1920×1080）的视频，时间压缩 4 倍、空间压缩 16 倍、patch 为 1（不再切）。大约多少个 token？</summary><div class="ans">241 帧压成 \(1 + 240/4 = 61\) 个潜帧；每帧 \(120\times 67.5\approx 8100\) 个 token（按 \(1920/16\times 1080/16\)）；共约 49 万个。</div></details>
+<details class="quiz"><summary>2. 为什么逐帧独立生成会闪烁，而联合去噪不会？</summary><div class="ans">逐帧生成时，每帧从各自独立的噪声出发、各自做随机的去噪选择，同一个物体在不同帧里被“选”成不同的位置、颜色。联合去噪时，所有帧在同一个去噪过程中通过注意力互相约束，一旦某帧开始形成某个物体，其他帧会朝一致的方向去噪。</div></details>
+<details class="quiz"><summary>3. 自回归视频生成的漂移，和语言模型的暴露偏差有什么共同点？Self-Forcing 的思路对应语言模型中的什么方法？</summary><div class="ans">两者都是训练时以真实的历史为条件、生成时以自己生成的（有误差的）历史为条件，误差逐步累积。Self-Forcing 训练时就用模型自己生成的前帧作条件，对应语言模型中用自己生成的样本训练的方法，如强化学习或在线策略蒸馏（第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="distillation"></a> 章）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://openai.com/index/video-generation-models-as-world-simulators/">Video generation models as world simulators</a>（OpenAI, 2024）<span class="why">Sora 的技术报告与“时空 patch”。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.20314">Wan: Open and Advanced Large-Scale Video Generative Models</a>（2025）<span class="why">开源视频模型的完整技术细节。</span></li>
+  <li><a href="https://arxiv.org/abs/2407.01392">Diffusion Forcing</a>（Chen 等, 2024）<span class="why">自回归与扩散的结合，长视频与世界模型的基础。</span></li>
+  <li><a href="https://arxiv.org/abs/2411.02385">How Far is Video Generation from World Model: A Physical Law Perspective</a>（Kang 等, 2024）<span class="why">视频模型学到的是规律还是案例。</span></li>
+  <li><a href="https://arxiv.org/abs/2509.20328">Video models are zero-shot learners and reasoners</a>（Wiedemer 等, 2025）<span class="why">帧链：视频模型作为通用视觉模型。</span></li>
+</ol>
+
+<div class="nextq">视频有了声音，模型开始“听”和“说”。语音、音乐、环境声怎样变成 token？能实时打断、插话的语音助手是怎样做到的？下一章（第 <a class="xref" data-ref="audio"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2204.03458">Video Diffusion Models</a> · <a href="https://arxiv.org/abs/2307.04725">AnimateDiff</a> · <a href="https://arxiv.org/abs/2412.03603">HunyuanVideo</a> · <a href="https://arxiv.org/abs/2506.08009">Self-Forcing</a> · <a href="https://arxiv.org/abs/2501.09038">Physics-IQ</a> · <a href="https://arxiv.org/abs/2604.14148">Seedance 2.0 技术报告</a> · <a href="https://ocdevel.com/mlg/mla-26">AI Video Generation in 2026</a> · <a href="https://deepmind.google/models/veo/">Veo</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

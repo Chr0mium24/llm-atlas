@@ -34,7 +34,7 @@
     { s: 'vlm', t: '多模态理解', st: 'new' },
     { s: 'diffusion', t: '扩散与流匹配', st: 'new' },
     { s: 'image', t: '文生图与图生图', st: 'new' },
-    { s: 'video', t: '视频生成', st: 'old' },
+    { s: 'video', t: '视频生成', st: 'new' },
     { s: 'audio', t: '语音、音频与音乐', st: 'todo' },
     { s: 'spatial', t: '3D 与空间智能', st: 'todo' },
     { s: 'world-models', t: '世界模型', st: 'todo' },
