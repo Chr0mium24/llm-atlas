@@ -37,7 +37,7 @@
     { s: 'video', t: '视频生成', st: 'new' },
     { s: 'audio', t: '语音、音频与音乐', st: 'new' },
     { s: 'spatial', t: '3D 与空间智能', st: 'new' },
-    { s: 'world-models', t: '世界模型', st: 'todo' },
+    { s: 'world-models', t: '世界模型', st: 'new' },
     { s: 'embodied', t: '具身智能与 VLA', st: 'todo' },
     { part: '七 · 理解与评判' },
     { s: 'interpretability', t: '可解释性', st: 'todo' },

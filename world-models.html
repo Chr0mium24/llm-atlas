@@ -12,24 +12,187 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>世界模型</h1>
-  <p class="lede">视频模型能实时、按动作生成下一帧，就成了可以“玩”的世界。</p>
+  <h1>世界模型：能按动作实时演化的模拟器</h1>
+  <p class="lede">一个模型如果能根据当前的状态和你的动作，预测世界下一刻会变成什么样，它就是一个<b>世界模型</b>。在强化学习里，它让智能体在“想象”中练习；在视频生成里，它让画面可以用键盘实时操控；在自动驾驶和机器人里，它提供可以无限重复、制造罕见危险场景的仿真器。这一章讲世界模型从强化学习到视频生成的两条源流，误差为什么会随时间累积、怎样让它“记得”刚才的场景，以及一场根本的路线之争：世界模型应该预测像素，还是预测抽象的表示？</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（旧版内容在「视频生成」一章）。</div>
+<div class="bridge">第 <a class="xref" data-ref="video"></a> 章的自回归视频模型能一帧帧地生成；第 <a class="xref" data-ref="spatial"></a> 章的三维模型能生成可漫游的场景。把“下一帧”与“用户的动作”联系起来，并且足够快、足够稳，就得到一个可以交互的世界。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>策略、奖励、价值函数、轨迹：第 <a class="xref" data-ref="rl"></a> 章</li>
+    <li>自回归视频、漂移与 Diffusion Forcing：第 <a class="xref" data-ref="video"></a> 章；少步蒸馏：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>视频模型懂物理吗：第 <a class="xref" data-ref="video"></a> 章的争议框</li>
+  </ul>
+</div>
+
+<h2 id="what">世界模型是什么</h2>
+<p><dfn data-t="world-model">世界模型</dfn>学习的是环境的动态：给定到目前为止的观测和动作，下一刻会观测到什么：</p>
+<div class="fx">
+\[ \htmlClass{sym-s}{\mathbf s_{t+1}} \sim p_\theta\big(\mathbf s_{t+1}\ \big|\ \mathbf s_{\le t},\ \htmlClass{c-new}{\htmlClass{sym-a}{\mathbf a_t}}\big) \]
+  <div class="fx-read">\(\mathbf s\) 可以是画面的像素、画面的潜编码，也可以是一个抽象的状态向量；\(\mathbf a\) 是<span style="color:var(--s4)">动作</span>：键盘按键、方向盘角度、机械臂的关节指令。和视频生成的区别只在于多了动作这个条件，而且要足够快地一步步生成。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(\mathbf s_t\)</dt><dd>时刻 \(t\) 的观测或状态</dd>
+    <dt data-sym="a">\(\mathbf a_t\)</dt><dd>时刻 \(t\) 采取的动作</dd>
+  </dl>
+  <div class="fx-eg">Google 的 Genie（2024）从 20 万小时没有动作标注的二维平台游戏视频中学习：它先学出一个“潜在动作”模型，把相邻两帧之间的变化归纳成 8 种离散动作（大致对应左、右、跳等），再以这些潜在动作为条件预测下一帧。用户按键就选择一个潜在动作，世界随之演化。</div>
+</div>
+<p>世界模型有两条源流。一条来自强化学习：先学一个环境模型，让智能体在模型里练习，省下与真实环境交互的代价（Sutton 的 Dyna, 1990；Ha 与 Schmidhuber 的《World Models》, 2018；DeepMind 的 MuZero、Dreamer）。另一条来自视频生成：Sora 的技术报告称视频模型是“世界模拟器”，Genie、GameNGen、Oasis 等让视频模型按动作实时生成。2025–26 年，两条线在机器人和自动驾驶上汇合。</p>
+
+<h2 id="rl">在想象中练习：强化学习里的世界模型</h2>
+<p>真实环境的交互很贵（机器人会摔坏，汽车会出事故，游戏也要一帧帧跑）。如果有一个足够好的世界模型，智能体就可以在模型生成的“想象轨迹”里训练策略。Dreamer 系列（2019–2023）在一个紧凑的潜空间里学习世界模型，然后完全在想象中训练策略：</p>
+<div class="fx">
+\[ \max_{\pi}\ \mathbb E\Big[\sum_{\tau = t}^{t + \htmlClass{sym-H}{H}}\gamma^{\tau - t}\,\hat r(\mathbf z_\tau)\Big],\qquad \mathbf z_{\tau+1}\sim p_\theta(\cdot\mid\mathbf z_\tau,\ \mathbf a_\tau),\ \ \mathbf a_\tau\sim\pi(\cdot\mid\mathbf z_\tau) \]
+  <div class="fx-read">从真实经历中的某个状态出发，用世界模型“想象”出接下来 \(H\) 步的潜状态，用学到的奖励预测器打分，按第 <a class="xref" data-ref="rl"></a> 章的策略梯度和价值函数改进策略。整个过程不需要真实环境。</div>
+  <dl class="fx-syms">
+    <dt data-sym="H">\(H\)</dt><dd>想象的步数，Dreamer 只取 15 步左右（原因见下一节）</dd>
+  </dl>
+  <div class="fx-eg">DreamerV3（2023，2025 年发表于 Nature）用同一套超参数在 150 多个任务上取得好成绩，并成为第一个不借助人类数据、从零开始在《我的世界》中挖到钻石的算法：一个需要连续完成十几个子目标的长任务，而大部分练习发生在世界模型的想象中。</div>
+</div>
+
+<h2 id="drift">误差累积与记忆</h2>
+<p>世界模型的每一步预测都有一点误差，而下一步又以这个有误差的预测为输入，误差会层层放大：</p>
+<div class="fx">
+\[ \|\mathbf e_H\| \lesssim \htmlClass{sym-eps}{\varepsilon}\,\frac{\htmlClass{sym-L}{L}^{H} - 1}{L - 1} \]
+  <div class="fx-read">每一步引入的新误差约为 \(\varepsilon\)；如果模型把输入中的误差放大 \(L\) 倍（\(L > 1\)），\(H\) 步之后累积的误差按 \(L^H\) 指数增长。这就是想象只能走几十步、视频世界模型几分钟后画面崩坏的根源，也是第 <a class="xref" data-ref="video"></a> 章“漂移”和第 <a class="xref" data-ref="generation"></a> 章暴露偏差的定量版本。</div>
+  <dl class="fx-syms">
+    <dt data-sym="eps">\(\varepsilon\)</dt><dd>单步的预测误差</dd>
+    <dt data-sym="L">\(L\)</dt><dd>误差放大系数（模型对输入扰动的敏感程度）</dd>
+  </dl>
+  <div class="fx-eg">\(\varepsilon = 0.01\)，\(L = 1.1\)：15 步后误差约 \(0.01\times(4.18 - 1)/0.1 = 0.32\)；30 步后约 1.6，已经比信号本身还大。降低 \(L\)（训练时让模型习惯有噪声的输入，即 Diffusion Forcing、Self-Forcing 的做法）比降低 \(\varepsilon\) 更有效。</div>
+</div>
+<p>另一个问题是记忆：转过身再转回来，房间应该和刚才一样。只看最近几帧的模型做不到这一点。Genie 2（2024-12）能保持约 10–20 秒的一致，Genie 3（2025-08）提高到约一分钟；2026 年的开源模型 Matrix-Game 3.x 用“补丁记忆”等方法检索并复用之前生成过的画面区域；另一些工作引入隐式的三维记忆。下面的玩具世界模型每一帧都由去噪生成，条件是上一帧和你的按键，可以亲手体验步数、噪声与漂移：</p>
+<div data-demo="world-model-toy"></div>
+
+<h2 id="interactive">可以玩的视频</h2>
 <ul>
-  <li>自回归视频扩散：Diffusion Forcing、Self-Forcing</li>
-  <li>动作条件与少步蒸馏</li>
-  <li>长时记忆：Genie 3 的一分钟、Matrix-Game 3.5 的 Patch Memory</li>
-  <li>路线之争：像素生成、JEPA 抽象预测、显式 3D</li>
-  <li>用途：游戏、自动驾驶仿真、机器人训练</li>
+  <li><b>GameNGen</b>（Google, 2024-08）：一个扩散模型以每秒 20 帧“运行”游戏《毁灭战士》，没有任何游戏引擎代码。人类评分者区分短片段是真实游戏还是模型生成的，正确率只比瞎猜略高。</li>
+  <li><b>Oasis</b>（2024-10）：实时生成可交互的类《我的世界》画面。</li>
+  <li><b>Genie 2 / Genie 3</b>（2024-12 / 2025-08）：从一张图片或一句描述生成可以用键盘探索的三维世界，Genie 3 达到 720p、每秒 24 帧的实时生成，并能在交互中用文字改变世界（“下起雨来”）。2026 年 1 月，Google 以 Project Genie 的形式向付费用户开放。</li>
+  <li><b>开源</b>：Skywork 的 Matrix-Game 2.0、3.0、3.5（2025–26）实时流式生成并加入长时记忆；阿里等也发布了开放式的世界模型。</li>
+</ul>
+<p>实时性要求极高：每秒 24 帧意味着每帧不到 42 毫秒，只能用 1–4 步去噪，依赖第 <a class="xref" data-ref="diffusion"></a> 章的少步蒸馏和第 <a class="xref" data-ref="video"></a> 章的自回归视频技术。</p>
+<aside class="dispute surprise">
+  <h4>意外：一个神经网络就能“运行”一款游戏</h4>
+  <dl>
+    <dt>原以为</dt><dd>游戏需要显式的规则：碰撞检测、血量、弹药、地图，神经网络只能模仿画面，不可能维持游戏状态。</dd>
+    <dt>实际发现</dt><dd>GameNGen 只是一个以“过去的帧 + 按键”为条件的扩散模型，却能在玩家开枪、拾取物品、开门时正确地更新画面上的血量、弹药数和门的状态，持续数分钟。</dd>
+    <dt>为什么</dt><dd>游戏状态都显示在画面上（状态栏、地图），模型通过注意过去的帧就能“读出”状态；训练数据来自强化学习智能体玩了大量局，覆盖了各种状态组合。</dd>
+    <dt>现在怎么看</dt><dd>这说明世界模型可以在没有显式规则的情况下维持相当复杂的状态，但只限于状态能从画面上看出来、且在训练分布中的情况；更长的时间、画面外的状态（被遮挡的敌人）仍然会出错。</dd>
+  </dl>
+</aside>
+
+<h2 id="physical">物理世界：自动驾驶与机器人</h2>
+<p>世界模型对自动驾驶和机器人格外有价值：真实世界中的罕见危险场景（行人突然冲出、暴雪、路上的奇怪障碍物）几乎无法安全地大量采集，而世界模型可以按需生成。</p>
+<ul>
+  <li><b>Waymo World Model</b>（2026-02）：在 Genie 3 的基础上针对驾驶改造，按照驾驶动作、场景布局和文字指令生成摄像头与激光雷达的数据；工程师可以改变天气、加入异常障碍、尝试不同的路线，测试自动驾驶系统如何应对罕见情况，还能把行车记录仪或手机视频变成仿真场景。</li>
+  <li><b>NVIDIA Cosmos</b>（2025-01 起，2026 年的 Cosmos 3 扩展到全模态）：面向“物理 AI”的开放世界基础模型，用于为机器人和自动驾驶生成训练与测试数据。</li>
+  <li><b>V-JEPA 2</b>（Meta, 2025-06）：在一百多万小时视频上自监督训练一个预测抽象表示的世界模型，再用少量机器人数据学会动作条件，在没见过的环境中零样本地规划机械臂的抓取和摆放（见下面的争议）。</li>
+</ul>
+<p>这些世界模型与第 <a class="xref" data-ref="embodied"></a> 章的机器人策略相互配合：世界模型提供练习场和评估器，策略在其中学习和测试，再到真实世界中验证。第 <a class="xref" data-ref="video"></a> 章的物理争议在这里变得关键：模型生成的“看起来合理”的世界，物理上是否足够准确，决定了在其中学到的东西能否迁移到现实。</p>
+
+<h2 id="debate">路线之争：预测像素，还是预测表示</h2>
+<p>LeCun 长期主张：要理解世界，不应该预测每一个像素。树叶怎样摇动、水面的波纹，这些细节既不可预测也不重要；花大量算力去生成它们是浪费。他提出的 <dfn data-t="jepa">JEPA</dfn>（联合嵌入预测架构）只在抽象的表示空间里做预测：</p>
+<div class="fx">
+\[ \mathcal L_{\text{JEPA}} = \Big\|\ \htmlClass{sym-P}{g_\phi}\big(f_\theta(\mathbf x),\ \mathbf a\big) - \operatorname{sg}\big(\htmlClass{sym-fx}{f_\xi}(\mathbf y)\big)\Big\|,\qquad \xi\leftarrow\text{滑动平均}(\theta) \]
+  <div class="fx-read">编码器 \(f_\theta\) 把当前的观测 \(\mathbf x\) 变成表示，预测器 \(g_\phi\) 根据动作预测未来观测 \(\mathbf y\) 的表示；目标表示由一个“慢速更新”的编码器 \(f_\xi\) 给出且不回传梯度。损失只比较表示，不比较像素。</div>
+  <dl class="fx-syms">
+    <dt data-sym="P">\(g_\phi\)</dt><dd>预测器</dd>
+    <dt data-sym="fx">\(f_\xi\)</dt><dd>目标编码器，参数是在线编码器参数的指数滑动平均，用来防止“所有输入都映射到同一个向量”的塌缩</dd>
+  </dl>
+  <div class="fx-eg">如果只最小化表示之间的差距，最省事的解是把一切都映射成同一个常数向量，损失恒为 0，什么也没学到。停止梯度加上慢速更新的目标编码器（以及正则项）打破了这个平凡解，迫使表示保留可预测的结构。</div>
+</div>
+<aside class="dispute">
+  <h4>世界模型应该生成像素吗</h4>
+  <dl>
+    <dt>像素派</dt><dd>生成像素的世界模型（Genie、Sora、Cosmos、Waymo World Model）可以直接看、直接用：作为游戏、作为驾驶仿真器、作为训练视觉策略的数据源；像素也是最通用的接口，不需要预先决定“什么是重要的”。规模化的视频模型已经展现出零样本的视觉推理（第 <a class="xref" data-ref="video"></a> 章的帧链）。</dd>
+    <dt>表示派</dt><dd>预测像素把绝大部分算力花在无关紧要的细节上，还会“编造”逼真但物理上错误的细节；规划需要的是“推这个杯子会怎样”，而不是“杯子上的反光怎样变化”。V-JEPA 2 只用 62 小时的机器人数据，就在新环境中实现了零样本的抓取规划。</dd>
+    <dt>显式三维派</dt><dd>第 <a class="xref" data-ref="spatial"></a> 章的 Marble 等用显式的三维表示，几何天然一致、可以导出到游戏引擎和仿真器，代价是动态与交互的表达能力较弱。</dd>
+    <dt>现在怎么看</dt><dd>三条路线服务于不同的用途：像素模型适合需要“看”的场景（娱乐、仿真数据），表示模型适合高效的规划与控制，显式三维适合需要几何精度的场合。2026 年也出现了融合：在像素世界模型中加入三维记忆，或在表示空间中规划、需要时再解码成画面。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">世界模型就是更好的视频生成模型。</b>关键区别是动作条件和实时性：它要回答“如果我这样做，会发生什么”。</li>
+  <li><b class="m">世界模型生成的画面逼真，所以可以直接替代物理仿真。</b>视觉逼真不等于物理正确；在罕见条件和长时间预测下误差会显现。</li>
+  <li><b class="m">世界模型可以无限地运行下去。</b>误差按指数累积，记忆有限；当前最好的模型保持一致的时间以分钟计。</li>
+  <li><b class="m">世界模型是 2024 年 Sora 之后才有的概念。</b>强化学习中的世界模型可以追溯到 1990 年的 Dyna 和 2018 年的《World Models》。</li>
+  <li><b class="m">要学世界模型必须有动作标注。</b>Genie 从没有动作标注的视频中学出了潜在动作；V-JEPA 2 的大部分训练也不需要动作。</li>
 </ul>
 
-<h2 id="demos">已有的相关演示</h2>
-<p class="small muted">这些演示来自旧版章节，正文写好后会重新安排位置。</p>
-<div data-demo="world-model-toy"></div>
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">1990–2018</div>
+    <h4>强化学习中的环境模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>与真实环境交互的代价高，样本效率低。</dd>
+      <dt>怎么解决</dt><dd>Sutton 的 Dyna（1990）用学到的模型生成额外的练习经验；Ha 与 Schmidhuber（2018）用 VAE 加 RNN 学习游戏的“梦境”，并在梦境中训练智能体。</dd>
+      <dt>代价</dt><dd>模型误差会被策略利用（“在梦里作弊”）。</dd>
+      <dt>引出</dt><dd>怎样学到足够好、足够通用的世界模型？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2019–2023</div>
+    <h4>MuZero 与 Dreamer</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>像素级的模型难学，长时间想象误差大。</dd>
+      <dt>怎么解决</dt><dd>MuZero（2019–2020）只学对规划有用的抽象模型，在围棋、雅达利游戏上达到顶尖水平；Dreamer 系列在潜空间中想象并训练策略，DreamerV3 从零在《我的世界》中挖到钻石。</dd>
+      <dt>代价</dt><dd>局限于游戏和仿真环境，难以迁移到开放的真实世界。</dd>
+      <dt>引出</dt><dd>能否从海量视频中学习通用的世界模型？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>视频模型成为世界模拟器</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>视频生成模型不能交互。</dd>
+      <dt>怎么解决</dt><dd>Sora 的“世界模拟器”报告；Genie 从无标注视频学出潜在动作；GameNGen 用扩散模型运行《毁灭战士》；Oasis；Genie 2；Diffusion Forcing。</dd>
+      <dt>代价</dt><dd>分辨率低、记忆短、几分钟后崩坏。</dd>
+      <dt>引出</dt><dd>能否做到实时、高清、更长的一致性？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>实时高清与物理 AI</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>机器人和自动驾驶缺乏可扩展的仿真与训练数据。</dd>
+      <dt>怎么解决</dt><dd>NVIDIA Cosmos（1 月）；V-JEPA 2 的表示空间世界模型与零样本机器人规划（6 月）；Genie 3 达到 720p、24 帧每秒、约一分钟的一致性（8 月）；Matrix-Game 2.0 开源；Self-Forcing。</dd>
+      <dt>代价</dt><dd>物理准确性存疑；生成成本高。</dd>
+      <dt>引出</dt><dd>走进真实的工业应用。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">路线之争</span>像素、表示与显式三维</summary><div>Genie 与 Cosmos 生成像素，V-JEPA 2 预测表示，World Labs 的 Marble 生成显式三维场景。三者在 2025–26 年并行发展，见上文争议框。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>从演示到工具</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>世界模型能否在真实业务中发挥作用。</dd>
+      <dt>怎么解决</dt><dd>Project Genie 向付费用户开放（1 月）；Waymo World Model 用于驾驶仿真（2 月）；Matrix-Game 3.0 / 3.5 加入长时记忆；Cosmos 3 全模态世界模型；专门评测长时稳定性与多轮交互的基准出现。</dd>
+      <dt>代价</dt><dd>评测世界模型“好不好用”本身仍是难题。</dd>
+      <dt>引出</dt><dd>有了世界模型，下一步是让机器人在其中和真实世界中学会行动（第 <a class="xref" data-ref="embodied"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 单步误差 \(\varepsilon = 0.02\)，放大系数 \(L = 1.05\)。想象 20 步和 60 步后，累积误差大约多少？</summary><div class="ans">\(1.05^{20}\approx 2.65\)：\(0.02\times 1.65/0.05\approx 0.66\)。\(1.05^{60}\approx 18.7\)：\(0.02\times 17.7/0.05\approx 7.1\)。</div></details>
+<details class="quiz"><summary>2. 实时世界模型要达到每秒 24 帧，每帧的预算是多少毫秒？如果一次去噪步需要 15 毫秒，最多能用几步？</summary><div class="ans">约 41.7 毫秒；最多 2 步（还要留出编码、解码等开销）。这就是为什么必须用少步蒸馏。</div></details>
+<details class="quiz"><summary>3. 为什么 JEPA 需要“停止梯度 + 慢速更新的目标编码器”？如果去掉会怎样？</summary><div class="ans">只最小化预测表示与目标表示的距离时，把所有输入映射成同一个向量就能让损失为 0（表示塌缩）。停止梯度让目标不随预测一起“迁就”，慢速更新让目标保持稳定且有信息量，打破这个平凡解。去掉后表示会塌缩，学不到任何东西。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1803.10122">World Models</a>（Ha 与 Schmidhuber, 2018）<span class="why">在梦境中训练智能体，交互式网页版也值得一看。</span></li>
+  <li><a href="https://arxiv.org/abs/2301.04104">Mastering Diverse Domains through World Models</a>（DreamerV3, 2023）<span class="why">在想象中学习的通用算法。</span></li>
+  <li><a href="https://arxiv.org/abs/2402.15391">Genie: Generative Interactive Environments</a>（2024）<span class="why">从无标注视频学出潜在动作。</span></li>
+  <li><a href="https://arxiv.org/abs/2408.14837">Diffusion Models Are Real-Time Game Engines</a>（GameNGen, 2024）<span class="why">神经网络运行游戏。</span></li>
+  <li><a href="https://arxiv.org/abs/2506.09985">V-JEPA 2</a>（Meta, 2025）<span class="why">表示空间的世界模型与零样本机器人规划。</span></li>
+</ol>
+
+<div class="nextq">世界模型让机器人有了练习场。要让机器人真正动起来，还需要把语言模型的理解能力接到电机上：看懂指令和画面，输出关节动作。下一章（第 <a class="xref" data-ref="embodied"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://dl.acm.org/doi/10.1145/122344.122377">Dyna（Sutton 1990）</a> · <a href="https://arxiv.org/abs/1911.08265">MuZero</a> · <a href="https://www.nature.com/articles/s41586-025-08744-2">DreamerV3（Nature 2025）</a> · <a href="https://deepmind.google/discover/blog/genie-2-a-large-scale-foundation-world-model/">Genie 2</a> · <a href="https://en.wikipedia.org/wiki/Genie_(world_model)">Genie（维基百科）</a> · <a href="https://en.wikipedia.org/wiki/Waymo_World_Model">Waymo World Model（维基百科）</a> · <a href="https://arxiv.org/abs/2501.03575">Cosmos</a> · <a href="https://arxiv.org/abs/2606.02800">Cosmos 3</a> · <a href="https://arxiv.org/abs/2508.13009">Matrix-Game 2.0</a> · <a href="https://arxiv.org/abs/2604.08995">Matrix-Game 3.0</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://arxiv.org/abs/2606.31672">WorldRoamBench</a> · <a href="https://www.turingpost.com/p/guide-how-world-models-work-from-dreamer-and-jepa-to-waymo-and-atlas">世界模型指南（Turing Post）</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
