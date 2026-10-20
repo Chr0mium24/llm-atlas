@@ -11,7 +11,7 @@
 <nav id="side"></nav>
 <main><div class="wrap">
 <header class="hero">
-  <div class="kicker">截至 2026 年 10 月 · 34 章 + 序章 + 附录 · 改版进行中</div>
+  <div class="kicker">截至 2026 年 10 月 · 34 章 + 序章 + 附录</div>
   <h1>大模型全景图谱</h1>
   <p class="lede">从 2017 年的 Transformer 讲到 2026 年的前沿：模型怎么工作、怎么训练、怎么部署，图像和视频怎么生成，以及怎么理解、评判和约束它们。每一章讲清原理和推导，历史按“当时卡在哪 → 怎么解决 → 代价是什么 → 引出了什么”的因果链来写，并附上可以直接调参的演示。演示都在浏览器里实时计算，不调用任何外部服务。</p>
 </header>
@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', () => {
   [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 81], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
-  setTerms(); document.addEventListener('atlas-terms', setTerms);
+  if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
 });
 </script>
 </body>
