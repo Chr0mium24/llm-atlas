@@ -13,61 +13,224 @@
 <header>
   <div class="kicker"></div>
   <h1>扩散与流匹配：从纯噪声里“雕”出一张图</h1>
-  <p class="lede">语言模型一次生成一个 token；图像和视频模型的主流做法完全不同：从一团高斯噪声出发，反复做“去掉一点噪声”，几十步后得到清晰的图像。Stable Diffusion、FLUX、Seedream、Wan、Veo、Kling 的底层都是这套方法。2024 年以后它多以 <b>流匹配（flow matching）</b> 的形式出现。</p>
+  <p class="lede">语言模型一次生成一个 token；图像和视频模型的主流做法完全不同：从一团高斯噪声出发，反复做“去掉一点噪声”，几十步后得到清晰的图像。Stable Diffusion、FLUX、Seedream、Wan、Veo、Kling 的底层都是这套方法，2024 年以后多以流匹配的形式出现。这一章从前向加噪讲起，推导为什么用均方误差训练出的去噪器就是“后验均值”、它与分数（对数密度的梯度）有什么关系，用连续性方程和福克-普朗克方程解释为什么随机和确定两种采样能得到同样的分布，再推导无分类器引导，最后是一个意外：完美的去噪器只会背诵训练数据。</p>
 </header>
+
+<div class="bridge">上一章讲多模态模型怎样“看懂”图像。生成图像是另一回事：图像有几十万上百万个像素，彼此高度相关，逐个像素自回归地生成又慢又难。扩散模型换了一个思路：不直接写出图像，而是学会“把一张有噪声的图变得干净一点”，然后反复使用这个能力。</div>
+
+<div class="prereq">
+  <ul>
+    <li>高斯分布、条件期望、梯度：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>均方误差与交叉熵、训练目标：第 <a class="xref" data-ref="generation"></a> 章；扩散语言模型：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>图像 patch 与 ViT：第 <a class="xref" data-ref="vlm"></a> 章</li>
+  </ul>
+</div>
 
 <h2 id="families">生成模型的几条路线</h2>
 <div class="tablewrap"><table>
   <tr><th>路线</th><th>思路</th><th>代表</th><th>现状</th></tr>
-  <tr><td>VAE（2013）</td><td>编码到潜空间再解码，最大化似然下界</td><td>—</td><td>单独生成太模糊；现在作为扩散模型的“压缩器”（第 <a class="xref" data-ref="image">12</a> 章）</td></tr>
+  <tr><td>VAE（2013）</td><td>编码到潜空间再解码，最大化似然下界</td><td>—</td><td>单独生成太模糊；现在作为扩散模型的“压缩器”（第 <a class="xref" data-ref="image"></a> 章）</td></tr>
   <tr><td>GAN（2014）</td><td>生成器和判别器对抗</td><td>StyleGAN</td><td>质量高但难训、多样性差；现在用于少步蒸馏的对抗损失</td></tr>
   <tr><td>自回归</td><td>把图像离散成 token，逐个预测</td><td>DALL·E 1、Parti、VAR、GPT-4o 图像</td><td>2025 年起随原生多模态大模型回归</td></tr>
-  <tr><td><b>扩散 / 流匹配</b></td><td>学习逐步去噪</td><td>DDPM、SD、FLUX、Sora、Wan</td><td>图像和视频的主流</td></tr>
+  <tr><td>扩散 / 流匹配</td><td>学习逐步去噪</td><td>DDPM、SD、FLUX、Sora、Wan</td><td>图像和视频的主流</td></tr>
 </table></div>
 
 <h2 id="forward">前向：往数据里一点点加噪声</h2>
-<p>取一张真实图像 x₀，按时间 t ∈ [0, 1] 混入高斯噪声 ε：</p>
-<div class="eq">x<sub>t</sub> = a<sub>t</sub> · x₀ + b<sub>t</sub> · ε,&nbsp;&nbsp;&nbsp; ε ~ N(0, I)<span class="note">DDPM（方差保持）：a² + b² = 1，比如余弦调度 a = cos(πt/2)；流匹配 / Rectified Flow：a = 1 − t, b = t，是一条直线插值</span></div>
-<p>t=0 是原图，t=1 是纯噪声。这一步不需要学习，任何时刻的 x<sub>t</sub> 都可以一步算出来。</p>
-<h2 id="reverse">反向：学一个去噪器</h2>
-<p>训练一个网络，输入加了噪声的 x<sub>t</sub> 和时间 t，预测 <b>噪声 ε</b>（DDPM）、或 <b>原图 x₀</b>、或 <b>速度 v = ε − x₀</b>（流匹配）。三种参数化可以互相换算。损失就是简单的均方误差：</p>
-<div class="eq">L = E<sub>x₀, ε, t</sub> ‖ v<sub>θ</sub>(x<sub>t</sub>, t) − (ε − x₀) ‖²<span class="note">流匹配的训练目标。随机抽一张图、一个噪声、一个时间，让网络预测这个样本的“流动方向”</span></div>
-<p>一个重要的数学事实：用 MSE 训练出的最优去噪器，等于 <b>后验均值 E[x₀ | x<sub>t</sub>]</b>，也就是“看到这团噪声，原图平均来说应该长什么样”。它和数据分布的 <b>分数（score，对数密度的梯度）</b> 直接相关：<span class="math">∇log p<sub>t</sub>(x) = −ε̂ / b<sub>t</sub></span>。生成就是沿着分数的方向，从噪声一步步走回数据分布。</p>
-<p>下面这个 2D 演示里，“数据”是平面上的一组点。对这种简单分布，最优去噪器 E[x₀ | x<sub>t</sub>] 可以 <b>精确算出来</b>（不需要训练神经网络），所以你看到的就是理想情况下扩散 / 流匹配采样器的真实行为。</p>
-<div data-demo="diffusion-2d" class="bleed"></div>
-
-<h2 id="samplers">采样器：DDPM、DDIM、流匹配</h2>
-<ul>
-  <li><b>DDPM</b>（2020）：每一步去噪后再注入一点新的随机噪声（随机微分方程，SDE）。原版需要 1000 步。</li>
-  <li><b>DDIM</b>（2020）：去掉每步注入的噪声，变成确定性的常微分方程（ODE），同样的初始噪声总是得到同一个结果，50 步左右就够。</li>
-  <li><b>高阶求解器</b>（DPM-Solver 等，2022）：把 ODE 求解做得更精细，20 步左右。</li>
-  <li><b>流匹配 / Rectified Flow</b>（2022）：直接用直线插值 a = 1−t, b = t 定义路径，学速度场 v。路径更直，同样步数误差更小。Stable Diffusion 3（2024）和 FLUX 起成为主流，Wan、HunyuanVideo、Seedance 等视频模型也用它。</li>
-</ul>
-<p>在上面的演示里把步数降到 1–4 步：所有点都缩到数据的“平均位置”附近，图像上表现为模糊、灰蒙蒙。原因是第一步看到的是纯噪声，最优去噪器只能给出所有可能结果的平均。<b>少步生成</b> 需要专门的蒸馏：渐进蒸馏、一致性模型（Consistency Models, 2023）、LCM、对抗蒸馏 ADD（SDXL Turbo）、分布匹配蒸馏 DMD/DMD2、MeanFlow（2025）等。2026 年的商用图像和视频模型普遍提供 4–8 步的快速版本，实时世界模型更是压到每帧 1–2 步。</p>
-
-<h2 id="cfg">无分类器引导（CFG）</h2>
-<p>文生图需要“按条件生成”。<b>CFG</b>（2022）同时训练有条件和无条件两种去噪器（训练时随机丢掉 10% 的条件），采样时把两者的差 <b>放大</b>：</p>
-<div class="eq">ε̂<sub>CFG</sub> = ε̂(x<sub>t</sub>, ∅) + w · ( ε̂(x<sub>t</sub>, c) − ε̂(x<sub>t</sub>, ∅) )<span class="note">w = 1 就是普通的条件生成；w &gt; 1 让结果更“像”条件，代价是多样性下降、颜色过饱和</span></div>
-<p>在演示里选“按类别生成”并调大引导强度 w：样本被推向这个类别里最典型的区域，甚至被推出数据分布之外。这就是 CFG 设得太高时图像过饱和、失真的原因。<b>负面提示词</b> 就是把“无条件”换成“负面条件”，让结果远离它。</p>
+<p>取一张真实图像 \(\mathbf x_0\)，按时间 \(t\in[0, 1]\) 混入高斯噪声，这就是<dfn data-t="diffusion-model">扩散模型</dfn>的前向过程：</p>
+<div class="fx">
+\[ \mathbf x_t = \htmlClass{sym-a}{a_t}\,\mathbf x_0 + \htmlClass{sym-b}{b_t}\,\boldsymbol\varepsilon,\qquad \boldsymbol\varepsilon\sim\mathcal N(0, I) \]
+  <div class="fx-read">\(t = 0\) 是原图，\(t = 1\) 是纯噪声，中间是两者按比例的混合。这一步不需要学习，任何时刻的 \(\mathbf x_t\) 都能一步算出来，所以训练时可以随机抽任意时刻。</div>
+  <dl class="fx-syms">
+    <dt data-sym="a">\(a_t\)</dt><dd>信号的比例，从 1 降到 0</dd>
+    <dt data-sym="b">\(b_t\)</dt><dd>噪声的比例，从 0 升到 1</dd>
+  </dl>
+  <div class="fx-eg">DDPM（方差保持）：\(a^2 + b^2 = 1\)，例如余弦调度 \(a = \cos(\pi t/2)\)、\(b = \sin(\pi t/2)\)。<dfn data-t="flow-matching">流匹配</dfn> / Rectified Flow：\(a = 1 - t\)，\(b = t\)，一条直线插值。\(t = 0.5\) 时，前者是 \(0.71\mathbf x_0 + 0.71\boldsymbol\varepsilon\)，后者是 \(0.5\mathbf x_0 + 0.5\boldsymbol\varepsilon\)。</div>
+</div>
 <div data-demo="noise-schedule"></div>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2015</span>Sohl-Dickstein 等：用非平衡热力学的扩散过程做生成模型</li>
-  <li><span class="d">2019</span>Song & Ermon：分数匹配 + 朗之万动力学（NCSN）</li>
-  <li><span class="d">2020-06</span>DDPM：扩散模型第一次在图像质量上和 GAN 相当</li>
-  <li><span class="d">2020-10</span>DDIM：确定性采样，步数大幅减少</li>
-  <li><span class="d">2021</span>Score SDE 统一框架；“扩散模型打败 GAN”（ADM + 分类器引导）</li>
-  <li><span class="d">2022</span>无分类器引导（CFG）；潜空间扩散（Stable Diffusion）；DPM-Solver；Rectified Flow 与 Flow Matching；12 月 DiT</li>
-  <li><span class="d">2023</span>一致性模型、LCM；SDXL Turbo（对抗蒸馏）</li>
-  <li><span class="d">2024</span>Stable Diffusion 3 / FLUX：Rectified Flow + MMDiT 成为新标准；DMD2</li>
-  <li><span class="d">2025</span>MeanFlow 等一步生成；扩散语言模型（LLaDA、Gemini Diffusion）把扩散带回文本</li>
-  <li><span class="d">2026</span>商用模型普遍提供少步版本；实时交互世界模型用 1–2 步每帧；LLaDA 2.x 扩散语言模型扩展到 100B</li>
+<h2 id="reverse">反向：学一个去噪器</h2>
+<p>训练一个网络，输入加了噪声的 \(\mathbf x_t\) 和时间 \(t\)，预测噪声 \(\boldsymbol\varepsilon\)（DDPM）、或原图 \(\mathbf x_0\)、或速度 \(\mathbf v = \boldsymbol\varepsilon - \mathbf x_0\)（流匹配）。三种参数化可以互相换算，损失都是简单的均方误差：</p>
+<div class="fx">
+\[ \mathcal L = \mathbb E_{\mathbf x_0,\ \boldsymbol\varepsilon,\ t}\ \big\|\,\htmlClass{sym-v}{\mathbf v_\theta(\mathbf x_t, t)} - \htmlClass{c-new}{(\boldsymbol\varepsilon - \mathbf x_0)}\,\big\|^2 \]
+  <div class="fx-read">随机抽一张图、一个噪声、一个时间，算出 \(\mathbf x_t\)，让网络预测这个样本从数据走向噪声的<span style="color:var(--s4)">方向</span>。训练目标里没有任何“生成”：网络只学会看一张有噪声的图，猜它是从哪里来的。</div>
+  <dl class="fx-syms">
+    <dt data-sym="v">\(\mathbf v_\theta\)</dt><dd>网络预测的速度场（图像模型里通常是一个 DiT，第 <a class="xref" data-ref="image"></a> 章）</dd>
+  </dl>
+  <div class="fx-eg">一个像素：原值 \(x_0 = 0.8\)，噪声 \(\varepsilon = -0.3\)，\(t = 0.4\)。\(x_t = 0.6\times 0.8 + 0.4\times(-0.3) = 0.36\)，目标速度 \(-0.3 - 0.8 = -1.1\)。网络看到 0.36 和 \(t = 0.4\)，要尽量输出 \(-1.1\)；但同一个 \(x_t\) 可能来自很多不同的 \((x_0, \varepsilon)\) 组合，网络只能学到它们的平均。</div>
+</div>
+<p>最后那句话是理解扩散模型的关键。同一个带噪的 \(\mathbf x_t\) 可能来自许多不同的原图，均方误差训练出的最优去噪器，给出的是所有可能原图的平均，也就是<b>后验均值</b> \(\mathbb E[\mathbf x_0\mid\mathbf x_t]\)。它与数据分布的<dfn data-t="score">分数</dfn>（对数密度的梯度）直接相关：</p>
+<details class="deep"><summary>推导：均方误差的最优解是条件期望，以及 Tweedie 公式</summary><div class="in">
+<p><b>第一步：均方误差的最优预测是条件期望。</b>对固定的 \(\mathbf x_t\)，要选一个预测 \(\hat{\mathbf x}\) 最小化 \(\mathbb E[\|\mathbf x_0 - \hat{\mathbf x}\|^2\mid\mathbf x_t]\)。展开：</p>
+\[ \mathbb E\big[\|\mathbf x_0 - \hat{\mathbf x}\|^2\mid\mathbf x_t\big] = \mathbb E\big[\|\mathbf x_0 - \boldsymbol\mu\|^2\mid\mathbf x_t\big] + \|\boldsymbol\mu - \hat{\mathbf x}\|^2,\qquad \boldsymbol\mu = \mathbb E[\mathbf x_0\mid\mathbf x_t] \]
+<p>（交叉项的期望为 0。）第一项与 \(\hat{\mathbf x}\) 无关，第二项在 \(\hat{\mathbf x} = \boldsymbol\mu\) 时为 0。所以只要网络足够强、数据足够多，它学到的就是后验均值。</p>
+<p><b>第二步：Tweedie 公式。</b>\(\mathbf x_t\) 的边缘密度是 \(p_t(\mathbf x) = \int p_0(\mathbf x_0)\,\mathcal N(\mathbf x;\ a\mathbf x_0,\ b^2I)\,d\mathbf x_0\)。对 \(\mathbf x\) 求梯度，高斯核的梯度是 \(-(\mathbf x - a\mathbf x_0)/b^2\) 乘以核本身：</p>
+\[ \nabla_{\mathbf x}\log p_t(\mathbf x) = \frac{\int p_0(\mathbf x_0)\,\mathcal N(\cdot)\,\big(-(\mathbf x - a\mathbf x_0)/b^2\big)d\mathbf x_0}{p_t(\mathbf x)} = -\frac{\mathbf x - a\,\mathbb E[\mathbf x_0\mid\mathbf x]}{b^2} = -\frac{\mathbb E[\boldsymbol\varepsilon\mid\mathbf x]}{b} \]
+<p>（最后一步用 \(\mathbf x = a\mathbf x_0 + b\boldsymbol\varepsilon\)。）也就是说：预测噪声、预测原图、估计分数，是同一件事的三种写法。</p>
+<p><b>这个推导告诉我们：</b>去噪器隐含地知道“往哪个方向走，数据的概率密度上升得最快”。生成就是从噪声出发，沿着这个方向一步步走回数据分布。这也解释了步数太少时图像模糊：第一步看到的几乎是纯噪声，后验均值是所有可能图像的平均，一团灰色。</p>
+</div></details>
+
+<h2 id="ode">生成：沿速度场把噪声“流”回数据</h2>
+<p>训练好速度场后，生成就是解一个常微分方程：从 \(t = 1\) 的纯噪声出发，沿着速度场倒着走到 \(t = 0\)：</p>
+<div class="fx">
+\[ \frac{d\mathbf x}{dt} = \mathbf v_\theta(\mathbf x, t)\qquad\Longrightarrow\qquad \mathbf x_{t - \Delta t} = \mathbf x_t - \htmlClass{sym-dt}{\Delta t}\cdot\mathbf v_\theta(\mathbf x_t, t) \]
+  <div class="fx-read">把时间切成若干步，每一步沿当前位置的速度方向倒退一小段（欧拉法）。步数越多越精确，步数越少越快。速度场的路径越“直”，用很少的步数也能走得准，这正是流匹配用直线插值的原因。</div>
+  <dl class="fx-syms">
+    <dt data-sym="dt">\(\Delta t\)</dt><dd>步长：50 步时为 0.02，4 步时为 0.25</dd>
+  </dl>
+  <div class="fx-eg">一个像素从 \(x_1 = 0.5\)（纯噪声）出发，分 2 步。\(t = 1\) 时网络预测速度 \(v = 0.9\)，走到 \(x_{0.5} = 0.5 - 0.5\times 0.9 = 0.05\)；\(t = 0.5\) 时预测 \(v = -0.7\)，走到 \(x_0 = 0.05 + 0.35 = 0.4\)。若速度场处处是直线、且每条路径不交叉，一步就能精确到达。</div>
+</div>
+<details class="deep"><summary>为什么“条件速度的平均”能把整个分布正确地搬过去：连续性方程</summary><div class="in">
+<p>训练时，每个样本的目标速度是一条直线的方向 \(\boldsymbol\varepsilon - \mathbf x_0\)（条件速度）。网络学到的是它在 \(\mathbf x_t\) 处的平均：\(\mathbf v(\mathbf x, t) = \mathbb E[\boldsymbol\varepsilon - \mathbf x_0\mid\mathbf x_t = \mathbf x]\)（边缘速度）。为什么沿着这个平均速度走，得到的分布恰好是 \(p_t\)？</p>
+<p>物理上，一团“概率流体”在速度场 \(\mathbf v\) 中运动时，密度满足连续性方程（概率守恒，和流体力学里质量守恒的方程一样）：</p>
+\[ \frac{\partial p_t}{\partial t} + \nabla\cdot\big(p_t\,\mathbf v\big) = 0 \]
+<p>每一条“单样本路径”（固定 \(\mathbf x_0\)、\(\boldsymbol\varepsilon\)）各自满足这个方程。把所有路径按概率叠加，左边对 \(p_t\) 线性；右边的“通量” \(p_t\mathbf v\) 恰好等于各条路径通量之和，只要把速度取成按概率加权的平均：</p>
+\[ p_t(\mathbf x)\,\mathbf v(\mathbf x, t) = \int p_t(\mathbf x\mid\mathbf x_0,\boldsymbol\varepsilon)\,(\boldsymbol\varepsilon - \mathbf x_0)\,p(\mathbf x_0)p(\boldsymbol\varepsilon)\,d\mathbf x_0 d\boldsymbol\varepsilon \quad\Longleftrightarrow\quad \mathbf v = \mathbb E[\boldsymbol\varepsilon - \mathbf x_0\mid\mathbf x_t = \mathbf x] \]
+<p>这就是 Lipman 等（2022）的流匹配定理：用条件速度做回归，学到的边缘速度场能生成正确的边缘分布。</p>
+<p><b>这个推导告诉我们：</b>虽然每个训练样本的路径都是直线，但它们在中间会交叉；平均之后的边缘速度场是弯曲的。弯曲越厉害，少步采样误差越大。Rectified Flow 的“重流”（reflow）就是用模型自己生成的配对再训练一次，把路径拉直。</p>
+</div></details>
+<p>下面这个 2D 演示里，“数据”是平面上的一组点。对这种简单分布，最优去噪器 \(\mathbb E[\mathbf x_0\mid\mathbf x_t]\) 可以精确算出来（不需要训练神经网络），你看到的就是理想情况下采样器的真实行为：</p>
+<div data-demo="diffusion-2d" class="bleed"></div>
+
+<h2 id="samplers">采样器：随机的与确定的</h2>
+<ul>
+  <li><b>DDPM</b>（2020）：每一步去噪后再注入一点新的随机噪声，对应一个随机微分方程（SDE）。原版需要 1000 步。</li>
+  <li><b>DDIM</b>（2020）：去掉每步注入的噪声，变成确定性的常微分方程（ODE），同样的初始噪声总得到同一个结果，50 步左右就够。</li>
+  <li><b>高阶求解器</b>（DPM-Solver 等, 2022）：把 ODE 求解做得更精细（类似从欧拉法换成龙格-库塔法），20 步左右。</li>
+  <li><b>流匹配 / Rectified Flow</b>（2022）：用直线插值定义路径，学速度场。路径更直，同样步数误差更小。Stable Diffusion 3（2024）和 FLUX 起成为主流，Wan、HunyuanVideo 等视频模型也用它。</li>
 </ul>
+<details class="deep"><summary>随机采样和确定性采样为什么能得到同一个分布：福克-普朗克方程</summary><div class="in">
+<p>把前向加噪写成随机微分方程 \(d\mathbf x = \mathbf f(\mathbf x,t)\,dt + g(t)\,d\mathbf W\)（\(d\mathbf W\) 是布朗运动）。物理上熟悉的福克-普朗克方程描述了密度怎样演化：</p>
+\[ \frac{\partial p_t}{\partial t} = -\nabla\cdot(\mathbf f\,p_t) + \frac{g^2}{2}\nabla^2 p_t = -\nabla\cdot\Big[\Big(\mathbf f - \frac{g^2}{2}\nabla\log p_t\Big)p_t\Big] \]
+<p>（用了 \(\nabla^2 p = \nabla\cdot(p\nabla\log p)\)。）右边被写成了连续性方程的形式：扩散项可以被一个确定性的“等效速度” \(\mathbf f - \tfrac{g^2}{2}\nabla\log p_t\) 替代。也就是说，存在一个没有任何随机性的 ODE（“概率流 ODE”），它产生的每个时刻的边缘分布与 SDE 完全相同（Song 等, 2021）。</p>
+<p>反向生成时同理：随机的反向 SDE（DDPM）和确定的概率流 ODE（DDIM）走到 \(t = 0\) 时得到同一个分布，只是单条轨迹不同。两者都只需要分数 \(\nabla\log p_t\)，也就是去噪器。</p>
+<p><b>这个推导告诉我们：</b>DDPM 的随机注入不是必需的，它的作用类似朗之万动力学中的热噪声，能在采样中纠正累积误差，代价是需要更多步；确定性 ODE 更快、可以用高阶数值方法，也让“同一个噪声对应同一张图”成为可能，这是图像编辑和反演的基础。</p>
+</div></details>
+<p>在演示里把步数降到 1–4 步：所有点都缩到数据的“平均位置”附近，图像上表现为模糊、灰蒙蒙。<b>少步生成</b>需要专门的蒸馏：渐进蒸馏、一致性模型（2023，训练一个函数，从轨迹上任何一点直接跳到终点）、对抗蒸馏（SDXL Turbo）、分布匹配蒸馏（DMD2）、MeanFlow（2025，直接学一段时间内的平均速度）等。2026 年的商用图像和视频模型普遍提供 4–8 步的快速版本，实时世界模型更是压到每帧 1–2 步（第 <a class="xref" data-ref="world-models"></a> 章）。</p>
+
+<h2 id="cfg">无分类器引导：让结果更“像”条件</h2>
+<p>文生图需要“按条件生成”。<dfn data-t="cfg">无分类器引导</dfn>（CFG, 2022）同时训练有条件和无条件两种去噪器（训练时随机丢掉 10% 的条件），采样时把两者的差放大：</p>
+<div class="fx">
+\[ \hat{\boldsymbol\varepsilon}_{\text{CFG}} = \hat{\boldsymbol\varepsilon}(\mathbf x_t, \varnothing) + \htmlClass{sym-w}{w}\cdot\big(\hat{\boldsymbol\varepsilon}(\mathbf x_t, \htmlClass{sym-c}{c}) - \hat{\boldsymbol\varepsilon}(\mathbf x_t, \varnothing)\big) \]
+  <div class="fx-read">先算“不看提示词”时的去噪方向，再算“看提示词”时的方向，两者的差就是“提示词带来的改变”。把这个改变放大 \(w\) 倍。</div>
+  <dl class="fx-syms">
+    <dt data-sym="w">\(w\)</dt><dd>引导强度。\(w = 1\) 是普通的条件生成；常用 3–8</dd>
+    <dt data-sym="c">\(c\)</dt><dd>条件（提示词的编码）；\(\varnothing\) 表示空条件</dd>
+  </dl>
+  <div class="fx-eg">某个像素位置，无条件预测的噪声是 0.20，有条件是 0.32，差 0.12。\(w = 5\)：\(0.20 + 5\times 0.12 = 0.80\)。结果更贴合提示词，但被推得很远，\(w\) 太大时颜色过饱和、细节失真。负面提示词就是把“无条件”换成“负面条件”，让结果远离它。</div>
+</div>
+<details class="deep"><summary>推导：CFG 在从“锐化的条件分布”中采样</summary><div class="in">
+<p>由贝叶斯公式 \(p(\mathbf x\mid c)\propto p(\mathbf x)\,p(c\mid\mathbf x)\)，取对数再求梯度：</p>
+\[ \nabla\log p(\mathbf x\mid c) = \nabla\log p(\mathbf x) + \nabla\log p(c\mid\mathbf x) \]
+<p>第二项是一个“分类器”的梯度：往哪个方向走，这张图更像条件 \(c\)。CFG 把它放大 \(w\) 倍：</p>
+\[ \nabla\log p(\mathbf x) + w\,\nabla\log p(c\mid\mathbf x) = \nabla\log\big[p(\mathbf x)\,p(c\mid\mathbf x)^w\big] \]
+<p>分数和噪声预测只差一个 \(-1/b\) 的系数（Tweedie 公式），所以上式写成噪声预测，正好是卡片里的公式（\(\nabla\log p(c\mid\mathbf x)\) 用有条件与无条件的差来估计，不需要单独训练分类器，故名“无分类器”）。</p>
+<p><b>这个推导告诉我们：</b>CFG 采样的目标分布是 \(p(\mathbf x)p(c\mid\mathbf x)^w\)：\(w > 1\) 时，那些“特别像 \(c\)”的图像概率被指数放大，结果更典型、更贴题，多样性随之下降；\(w\) 过大时被推出数据分布之外，出现过饱和与伪影。在 2D 演示里选“按类别生成”并调大 \(w\)，能直接看到样本被推向类别最典型的区域甚至推出分布。</p>
+</div></details>
+
+<h2 id="memorize">完美的去噪器只会背书</h2>
+<aside class="dispute surprise">
+  <h4>意外：去噪器越完美，越不会生成新东西</h4>
+  <dl>
+    <dt>原以为</dt><dd>去噪器越接近理论最优，生成的图像越好。</dd>
+    <dt>实际发现</dt><dd>如果训练数据只有有限的 \(n\) 张图，那么真正的最优去噪器（对这 \(n\) 张图精确计算的后验均值）会让每一次采样都落回某一张训练图上：它只会复现训练数据。上面的 2D 演示用的恰恰是这种精确的最优去噪器，仔细看就会发现生成的点都紧贴在原有数据点附近。实际的扩散模型却能生成训练集里没有的新图像。Kadkhodaie 等（ICLR 2024 杰出论文）做了一个实验：把训练数据分成互不重叠的两半，分别训练两个模型，数据足够多时，两个模型从同一个噪声生成了几乎相同的新图像。</dd>
+    <dt>为什么</dt><dd>泛化来自“不完美”：神经网络的结构偏好（平滑、局部、多尺度）让它学不会精确的最优去噪器，只能学到一个更平滑的近似，这个近似恰好对应一个比训练集更大的分布。数据少时，模型确实会记住训练图像：Carlini 等（2023）从 Stable Diffusion 中提取出了训练集里的近似原图，主要是在训练数据中重复了很多次的那些。</dd>
+    <dt>现在怎么看</dt><dd>扩散模型的创造力和记忆是同一枚硬币的两面：数据量与模型容量之比决定了它更偏向哪一边。这对版权问题（第 <a class="xref" data-ref="data"></a> 章）有直接意义，也说明对扩散模型“越训越准”不一定是好事。</dd>
+  </dl>
+</aside>
+<aside class="dispute">
+  <h4>图像生成：扩散还是自回归</h4>
+  <dl>
+    <dt>扩散派</dt><dd>扩散和流匹配是 2022 年以来图像与视频生成的绝对主流：一次生成整张图、天然支持并行和编辑、质量最好。视频模型几乎全部基于扩散。</dd>
+    <dt>自回归派</dt><dd>GPT-4o（2025-03）的原生图像生成用自回归方式，在遵循复杂指令、渲染文字、多轮编辑上表现突出；VAR（NeurIPS 2024 最佳论文）把“下一个 token”换成“下一个尺度”，从粗到细地生成，质量和速度都追上了扩散。自回归能与语言模型共用同一套结构和训练方法，便于做“理解与生成统一”的模型。</dd>
+    <dt>现在怎么看</dt><dd>融合是趋势：许多统一模型用自回归的语言模型负责“理解和规划”，再接一个扩散头负责高保真的像素生成（第 <a class="xref" data-ref="image"></a> 章）。扩散也在反向进入文本：扩散语言模型（第 <a class="xref" data-ref="generation"></a> 章）。两条路线的界限越来越模糊。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">扩散模型是一步步“画”出图像的。</b>它是一步步“去噪”：每一步都对整张图做一次全局修正，早期决定构图，后期决定细节。</li>
+  <li><b class="m">步数越多，图像越好。</b>超过一定步数后几乎没有改善；好的求解器 20 步、蒸馏后 4 步就能接近。</li>
+  <li><b class="m">CFG 越大越贴题越好。</b>过大会过饱和、失真、多样性崩溃；常用 3–8。</li>
+  <li><b class="m">扩散模型只是在“拼贴”训练图像。</b>数据充足时，它学到的是一个能生成新样本的平滑分布；但在数据重复多的地方，确实可能复现训练图像。</li>
+  <li><b class="m">DDPM 和流匹配是两种不同的模型。</b>它们只是加噪路径和参数化不同，网络、训练方式几乎一样，可以互相换算。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2015–2019</div>
+    <h4>从热力学到分数匹配</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>GAN 难以训练、多样性差，VAE 生成模糊。</dd>
+      <dt>怎么解决</dt><dd>Sohl-Dickstein 等（2015）借用非平衡热力学的扩散过程定义生成模型；Song 与 Ermon（2019）用分数匹配加朗之万动力学（NCSN）生成图像。</dd>
+      <dt>代价</dt><dd>质量仍不如 GAN，采样很慢。</dd>
+      <dt>引出</dt><dd>能否把质量做上去？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2020–2021</div>
+    <h4>DDPM 与统一的 SDE 框架</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>扩散模型的训练目标复杂，质量不稳定。</dd>
+      <dt>怎么解决</dt><dd>DDPM（2020-06）用简单的噪声预测损失达到 GAN 的质量；DDIM（2020-10）确定性采样大幅减少步数；Score SDE（2021）统一了各种扩散模型；“扩散模型打败 GAN”（2021）。</dd>
+      <dt>代价</dt><dd>在像素空间直接扩散，高分辨率极其昂贵。</dd>
+      <dt>引出</dt><dd>怎样做大分辨率、按文字生成？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022</div>
+    <h4>CFG、潜空间扩散与流匹配</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>条件生成需要额外的分类器；像素空间太贵。</dd>
+      <dt>怎么解决</dt><dd>无分类器引导；潜空间扩散（Stable Diffusion，第 <a class="xref" data-ref="image"></a> 章）；DPM-Solver；Rectified Flow 与 Flow Matching；DiT 用 Transformer 替代 U-Net。</dd>
+      <dt>代价</dt><dd>采样仍需几十步。</dd>
+      <dt>引出</dt><dd>能否一两步生成？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">退居辅助</span>GAN</summary><div>2014–2021 年的图像生成主流，StyleGAN 的人脸至今令人惊叹，但训练不稳定、难以覆盖多样的分布，被扩散取代。它的“对抗损失”在扩散模型的少步蒸馏中以新的形式活了下来。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>少步生成与流匹配成为标准</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>几十步的采样让实时应用不可能。</dd>
+      <dt>怎么解决</dt><dd>一致性模型、LCM、SDXL Turbo 的对抗蒸馏；Stable Diffusion 3 与 FLUX 用 Rectified Flow + MMDiT 成为新标准；DMD2；扩散模型泛化与记忆的机理研究。</dd>
+      <dt>代价</dt><dd>少步版本质量和多样性略降。</dd>
+      <dt>引出</dt><dd>扩散走向视频和文本。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>一步生成、扩散语言模型与实时世界模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>视频与交互场景需要实时生成；文本生成的串行瓶颈。</dd>
+      <dt>怎么解决</dt><dd>MeanFlow 等一步生成；扩散语言模型（LLaDA 2.x、Gemini Diffusion、Mercury 2）；实时世界模型每帧 1–2 步；自回归与扩散的混合。</dd>
+      <dt>代价</dt><dd>一步模型的可控性与多样性仍在改进。</dd>
+      <dt>引出</dt><dd>怎样把扩散用在百万像素的真实图像上，并让它听懂复杂的提示词？（第 <a class="xref" data-ref="image"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 用流匹配的直线路径，\(t = 0.25\) 时 \(\mathbf x_t\) 中原图和噪声各占多少？目标速度是什么？</summary><div class="ans">\(\mathbf x_{0.25} = 0.75\,\mathbf x_0 + 0.25\,\boldsymbol\varepsilon\)；目标速度 \(\boldsymbol\varepsilon - \mathbf x_0\)，与 \(t\) 无关。</div></details>
+<details class="quiz"><summary>2. 为什么 1 步采样得到的图像是模糊的？用后验均值解释。</summary><div class="ans">从纯噪声出发的第一步，\(\mathbf x_1\) 几乎不含原图的信息，最优去噪器给出 \(\mathbb E[\mathbf x_0\mid\mathbf x_1]\approx\mathbb E[\mathbf x_0]\)，即所有训练图像的平均，一团模糊。多步采样中，每一步只走一小段，后续步骤能基于越来越清晰的 \(\mathbf x_t\) 逐渐“选定”一张具体的图。</div></details>
+<details class="quiz"><summary>3. CFG 的引导强度 \(w = 4\)，相当于从什么分布中采样？为什么多样性会下降？</summary><div class="ans">\(p(\mathbf x)\,p(c\mid\mathbf x)^4\)：“像条件 \(c\)”的概率被取 4 次方，最典型的图像被极大放大，不那么典型但仍合理的图像被压低，所以多样性下降。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2006.11239">Denoising Diffusion Probabilistic Models</a>（Ho 等, 2020）<span class="why">现代扩散模型的起点。</span></li>
+  <li><a href="https://arxiv.org/abs/2011.13456">Score-Based Generative Modeling through SDEs</a>（Song 等, 2021）<span class="why">SDE 与概率流 ODE 的统一框架。</span></li>
+  <li><a href="https://arxiv.org/abs/2210.02747">Flow Matching for Generative Modeling</a>（Lipman 等, 2022）<span class="why">流匹配与边缘速度场定理。</span></li>
+  <li><a href="https://arxiv.org/abs/2207.12598">Classifier-Free Diffusion Guidance</a>（Ho 与 Salimans, 2022）<span class="why">CFG。</span></li>
+  <li><a href="https://arxiv.org/abs/2310.02557">Generalization in diffusion models arises from geometry-adaptive harmonic representations</a>（Kadkhodaie 等, 2024）<span class="why">记忆与泛化的转变。</span></li>
+  <li><a href="https://lilianweng.github.io/posts/2021-07-11-diffusion-models/">What are Diffusion Models?</a>（Lilian Weng）<span class="why">推导详尽的综述。</span></li>
+</ol>
+
+<div class="nextq">原理讲清了。把它用到真实的文生图上，还要解决几个问题：百万像素太大，怎样先压缩到潜空间？去噪网络从 U-Net 换成了什么？提示词怎样影响生成，图生图、局部重绘、保持角色一致又是怎样做到的？下一章（第 <a class="xref" data-ref="image"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1503.03585">Sohl-Dickstein 等 2015</a> · <a href="https://arxiv.org/abs/1907.05600">NCSN</a> · <a href="https://arxiv.org/abs/2010.02502">DDIM</a> · <a href="https://arxiv.org/abs/2206.00927">DPM-Solver</a> · <a href="https://arxiv.org/abs/2209.03003">Rectified Flow</a> · <a href="https://arxiv.org/abs/2303.01469">Consistency Models</a> · <a href="https://arxiv.org/abs/2405.14867">DMD2</a> · <a href="https://arxiv.org/abs/2505.13447">MeanFlow</a> · <a href="https://arxiv.org/abs/2301.13188">从扩散模型中提取训练数据</a> · <a href="https://arxiv.org/abs/2404.02905">VAR</a> · <a href="https://arxiv.org/abs/2403.03206">Stable Diffusion 3</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

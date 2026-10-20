@@ -244,4 +244,10 @@ window.ATLAS_TERMS = {
   llava: { t: 'LLaVA', en: 'Large Language and Vision Assistant', d: '视觉编码器 + 投影层 + 语言模型的多模态范式（2023）：先训投影层对齐，再做视觉指令微调。', at: 'vlm#llava' },
   projector: { t: '投影层', en: 'projector', d: '把视觉编码器输出的向量映射到语言模型嵌入维度的小网络（线性层或两层 MLP），通常配合 2×2 patch 合并。', at: 'vlm#llava' },
   'native-multimodal': { t: '原生多模态', en: 'native multimodal', d: '从预训练阶段就混合图文（及音视频）数据训练的模型，而不是先训好语言模型再“装上眼睛”。', at: 'vlm#llava' },
+
+  // ---- diffusion (diffusion.html)
+  'diffusion-model': { t: '扩散模型', en: 'diffusion model', d: String.raw`前向把数据逐步混入高斯噪声 \(\mathbf x_t = a_t\mathbf x_0 + b_t\boldsymbol\varepsilon\)，训练网络去噪；生成时从纯噪声出发反复去噪。图像与视频生成的主流方法。`, at: 'diffusion#forward' },
+  'flow-matching': { t: '流匹配', en: 'flow matching / rectified flow', d: String.raw`用直线插值 \(\mathbf x_t = (1-t)\mathbf x_0 + t\boldsymbol\varepsilon\) 定义路径，回归速度 \(\boldsymbol\varepsilon - \mathbf x_0\)，生成时解 ODE。路径更直、少步误差更小；SD3、FLUX 起的标准。`, at: 'diffusion#forward' },
+  score: { t: '分数', en: 'score', d: String.raw`对数概率密度的梯度 \(\nabla_{\mathbf x}\log p_t(\mathbf x)\)，指向密度上升最快的方向。由 Tweedie 公式，它等于 \(-\mathbb E[\boldsymbol\varepsilon\mid\mathbf x_t]/b_t\)，即去噪器隐含的信息。`, at: 'diffusion#reverse' },
+  cfg: { t: '无分类器引导（CFG）', en: 'classifier-free guidance', d: String.raw`\(\hat\varepsilon = \hat\varepsilon(\varnothing) + w(\hat\varepsilon(c) - \hat\varepsilon(\varnothing))\)：放大条件带来的改变，相当于从 \(p(\mathbf x)p(c\mid\mathbf x)^w\) 采样。更贴题、多样性下降。`, at: 'diffusion#cfg' },
 };
