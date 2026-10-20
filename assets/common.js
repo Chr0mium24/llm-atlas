@@ -31,7 +31,7 @@
     { s: 'training-systems', t: '训练系统', st: 'new' },
     { s: 'on-device', t: '本地与端侧部署', st: 'new' },
     { part: '六 · 多模态' },
-    { s: 'vlm', t: '多模态理解', st: 'old' },
+    { s: 'vlm', t: '多模态理解', st: 'new' },
     { s: 'diffusion', t: '扩散与流匹配', st: 'old' },
     { s: 'image', t: '文生图与图生图', st: 'old' },
     { s: 'video', t: '视频生成', st: 'old' },

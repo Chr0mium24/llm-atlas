@@ -12,100 +12,218 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>多模态理解：让大模型看图、看视频、听声音</h1>
-  <p class="lede">2023 年，GPT-4 让大众第一次用上能看图的大模型。到 2026 年，Kimi K3、Muse Spark Open 这样的旗舰模型都原生支持图像和视频输入，Qwen3.5-Omni 这类全模态模型还能实时听和说。基本做法都一样：把图像、视频、音频变成一串向量，和文字 token 拼进同一条序列，交给语言模型处理。这一章讲这串向量是怎么得到的，以及它们要占多少 token。</p>
+  <h1>多模态理解：让语言模型看图、看视频</h1>
+  <p class="lede">2023 年，GPT-4 让大众第一次用上能看图的大模型。到 2026 年，Kimi K3、Muse Spark Open 这样的旗舰模型都原生支持图像和视频输入。基本做法都一样：把图像、视频变成一串向量，和文字 token 拼进同一条序列，交给语言模型处理。这一章讲这串向量是怎么得到的（ViT 与 CLIP 的对比学习），怎样接到语言模型上，一张图、一段视频要占多少 token，以及一个尴尬的问题：多模态模型真的“看见”了吗？</p>
 </header>
 
-<h2 id="vit" data-short="ViT">ViT：把图像切成 patch</h2>
-<p>第 <a class="xref" data-ref="tokens">1</a> 章讲过，文字要先切成 token 再变成向量，图像也一样。<b>ViT</b>（Vision Transformer，2020）把一张 224×224 的图切成 16×16 像素的小方块（patch），一共 14×14 = 196 块。每块展平成 16×16×3 = 768 个数，乘一个矩阵变成一个向量，再加上位置编码，就得到 196 个“视觉 token”。后面是标准的 Transformer 编码器（第 <a class="xref" data-ref="transformer">3</a> 章），只是不加因果掩码，每个 patch 都能看到其他所有 patch。</p>
-<p>卷积网络（CNN）自带两条假设：相邻像素相关，物体平移后还是同一个物体。有了这些先验，CNN 在小数据上学得快。ViT 没有这些假设，全靠数据去学，所以 ViT 论文要先用 3 亿张图预训练，才能超过 CNN。数据足够多时，ViT 的扩展性更好。现在几乎所有多模态模型的视觉编码器都是 ViT。</p>
-<ul>
-  <li><b>patch 大小</b>：CLIP 的 ViT-L/14 用 14 像素，Qwen3-VL 用的 SigLIP 2 编码器是 16 像素。patch 越小，同一张图切出的 token 越多。</li>
-  <li><b>位置编码</b>：原版 ViT 用可学习的绝对位置编码，换分辨率时要插值。2024 年以后主流改用 2D RoPE（第 <a class="xref" data-ref="transformer">3</a> 章的旋转位置编码，横、纵两个方向各用一半维度），任意尺寸的图都能直接处理。</li>
-</ul>
+<div class="bridge">第六部分转向多模态。第 <a class="xref" data-ref="tokens"></a> 章说文字要先切成 token 再变成向量，后面的一切（注意力、生成、训练）都只与向量序列打交道。只要能把图像也变成一串合适的向量，语言模型的全部机制就可以原样复用。</div>
 
-<h2 id="clip" data-short="CLIP 对比学习">CLIP：用对比学习对齐图和文</h2>
-<p>ViT 只是一个网络结构，还需要一个训练目标。2021 年 OpenAI 的 <b>CLIP</b> 从网上收集了 4 亿对“图片 + 配文”，同时训练一个图像编码器和一个文本编码器。每次取一批 N 对，算出 N 张图和 N 段文字两两之间的余弦相似度，得到一个 N×N 的矩阵。目标是让 <b>对角线上（真正配对的）分数高，其余分数低</b>。按行看，是给每张图找它的配文；按列看，是给每段文字找它的图。两个方向各算一次交叉熵：</p>
-<div class="eq">L = ½ [ CE(按行 softmax(S/τ), 对角线) + CE(按列 softmax(S/τ), 对角线) ]，　S<sub>ij</sub> = cos(图<sub>i</sub>, 文<sub>j</sub>)<span class="note">τ 是温度。CLIP 把 log(1/τ) 当作参数一起学，初值 τ = 0.07，上限截在 1/τ = 100。批大小 32,768，即每对样本有三万多个负例</span></div>
-<p>训练好以后，图和文落在同一个向量空间里。这时做分类不需要再训练：把每个类别写成“一张……的照片”，看图像向量离哪一句最近，这叫 <b>零样本分类</b>。下面的玩具用 6 种颜色 × 6 种形状的小图标训练一个迷你 CLIP。其中 6 种组合在训练中从未出现，专门用来测零样本：</p>
+<div class="prereq">
+  <ul>
+    <li>嵌入、余弦相似度、softmax 与温度：第 <a class="xref" data-ref="tokens"></a>、<a class="xref" data-ref="generation"></a> 章</li>
+    <li>Transformer、RoPE、交叉注意力：第 <a class="xref" data-ref="attention"></a>、<a class="xref" data-ref="transformer"></a> 章</li>
+    <li>交叉熵：第 <a class="xref" data-ref="generation"></a> 章；平方级代价与长上下文：第 <a class="xref" data-ref="long-context"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="vit">ViT：把图像切成小方块</h2>
+<p><dfn data-t="vit">ViT</dfn>（Vision Transformer, 2020）把图像也切成“token”：把一张图切成 \(P\times P\) 像素的小方块（<dfn data-t="patch">patch</dfn>），每块展平成一个向量，乘一个矩阵投影到模型维度，加上位置编码，后面接标准的 Transformer 编码器（不加因果掩码，每个 patch 都能看到其他所有 patch）。</p>
+<div class="fx">
+\[ n_{\text{patch}} = \frac{\htmlClass{sym-H}{H}}{\htmlClass{sym-P}{P}}\times\frac{\htmlClass{sym-W}{W}}{P},\qquad n_{\text{token}} = \frac{n_{\text{patch}}}{\htmlClass{c-new}{4}}\ \ (\text{2×2 合并后}) \]
+  <div class="fx-read">一张 \(H\times W\) 的图切成边长 \(P\) 的方块，数量与面积成正比。多模态模型通常再把相邻的 2×2 个 patch 拼成一个 token，数量变为四分之一。</div>
+  <dl class="fx-syms">
+    <dt data-sym="P">\(P\)</dt><dd>patch 边长：CLIP ViT-L/14 是 14 像素，SigLIP 2 是 16 像素</dd>
+    <dt data-sym="H">\(H, W\)</dt><dd>图像的高和宽（像素）</dd>
+  </dl>
+  <div class="fx-eg">224×224 的图，\(P = 16\)：\(14\times 14 = 196\) 个 patch，每个展平为 \(16\times 16\times 3 = 768\) 个数。一张 1920×1080 的截图按 Qwen3-VL 的方式（每个 token 对应 32×32 像素）约 \(60\times 34\approx 2000\) 个 token，相当于一千多个汉字。</div>
+</div>
+<p>卷积网络自带两条假设：相邻像素相关，物体平移后还是同一个物体。有了这些先验，它在小数据上学得快。ViT 没有这些假设，全靠数据去学，所以 ViT 论文要先用 3 亿张图预训练才能超过卷积网络；数据足够多时，ViT 的扩展性更好。现在几乎所有多模态模型的视觉编码器都是 ViT。位置编码方面，原版 ViT 用可学习的绝对位置，换分辨率要插值；2024 年以后主流改用 2D RoPE（横、纵两个方向各用一半维度，第 <a class="xref" data-ref="transformer"></a> 章），任意尺寸的图都能直接处理。</p>
+
+<h2 id="clip">CLIP：用对比学习对齐图和文</h2>
+<p>ViT 只是网络结构，还需要训练目标。2021 年 OpenAI 的 <dfn data-t="clip">CLIP</dfn> 从网上收集了 4 亿对“图片 + 配文”，同时训练一个图像编码器和一个文本编码器。每次取一批 \(N\) 对，算出 \(N\) 张图和 \(N\) 段文字两两之间的余弦相似度，得到 \(N\times N\) 的矩阵，目标是让对角线上（真正配对的）分数高、其余分数低。这叫<dfn data-t="contrastive">对比学习</dfn>：</p>
+<div class="fx">
+\[ \mathcal L = -\frac{1}{2N}\sum_{i=1}^{N}\Big[\log\frac{e^{S_{ii}/\htmlClass{sym-tau}{\tau}}}{\sum_j e^{S_{ij}/\tau}} + \log\frac{e^{S_{ii}/\tau}}{\sum_j e^{S_{ji}/\tau}}\Big],\qquad \htmlClass{sym-S}{S_{ij}} = \cos(\text{图}_i,\ \text{文}_j) \]
+  <div class="fx-read">按行看，每张图要在 \(N\) 段文字中认出自己的配文（一个 \(N\) 选 1 的分类，用交叉熵）；按列看，每段文字要认出自己的图。两个方向取平均。同一批里的其他 \(N-1\) 对都是“负例”。</div>
+  <dl class="fx-syms">
+    <dt data-sym="S">\(S_{ij}\)</dt><dd>第 \(i\) 张图与第 \(j\) 段文字的余弦相似度</dd>
+    <dt data-sym="tau">\(\tau\)</dt><dd>温度。CLIP 把它当参数一起学，初值 0.07，\(1/\tau\) 上限截在 100</dd>
+  </dl>
+  <div class="fx-eg">批大小 \(N = 32768\)：每对样本有三万多个负例。若某张图与自己配文的相似度是 0.30，与最像的错误配文是 0.25，\(\tau = 0.01\) 时两者的 logit 是 30 和 25，正确配对的概率约 \(e^{5}/(e^5 + \cdots)\)；温度越低，这 0.05 的差距被放得越大。</div>
+</div>
+<details class="deep"><summary>对比学习在优化什么：互信息的下界</summary><div class="in">
+<p>把一批数据看成：从真实的图文对中抽一对 \((x, y)\)，再从别处抽 \(N-1\) 段无关的文字。对比损失要求模型从 \(N\) 段文字中挑出真正的那一段。可以证明（van den Oord 等, 2018 的 InfoNCE 推导）：</p>
+\[ I(X;\ Y) \ \ge\ \log N - \mathcal L_{\text{InfoNCE}} \]
+<p>其中 \(I(X;Y)\) 是图和文之间的互信息：知道一张图能让你对它的配文少多少不确定性。最小化对比损失，就是在抬高这个下界。下界不会超过 \(\log N\)，这解释了为什么 CLIP 需要极大的批量：\(N\) 越大，能“测量”的互信息上限越高，模型被迫学到越细的区分。</p>
+<p><b>这个推导告诉我们：</b>对比学习不要求模型生成任何东西，只要求它把“配对”和“不配对”分开，学到的是两种模态共享的信息。图片里有、文字里没提的内容（背景细节、精确位置），对比学习不会刻意去学，这正是后面“视觉盲点”的一个来源。</p>
+</div></details>
+<p>训练好以后，图和文落在同一个向量空间里。做分类不需要再训练：把每个类别写成“一张……的照片”，看图像向量离哪一句最近，这叫零样本分类。下面的玩具用 6 种颜色 × 6 种形状的小图标训练一个迷你 CLIP，其中 6 种组合在训练中从未出现，专门用来测零样本：</p>
 <div data-demo="mini-clip" class="bleed"></div>
-<p>温度决定 softmax 有多“尖”。τ 太大，所有配对的概率都差不多，梯度很弱；τ 太小，训练只盯着最难的几个负例，容易不稳定。批越大，负例越多，任务越难，学到的表示也越细。后来的 <b>SigLIP</b>（2023）把 softmax 换成逐对的 sigmoid，每一对单独判断“是不是一对”，不需要在整批上归一化，大批量训练更省通信，小批量时效果也更好。<b>SigLIP 2</b>（2025-02）加入了多语言和原生宽高比，是 2025–26 年开源多模态模型最常用的视觉编码器，Qwen3-VL 用的就是它。Meta 的 <b>Perception Encoder</b>（2025）也属于这一类，Muse Spark Open 用了一个 1.8B 参数的版本。</p>
+<p>温度决定 softmax 有多“尖”：太大时所有配对的概率都差不多，梯度很弱；太小时训练只盯着最难的几个负例，容易不稳定。后来的 SigLIP（2023）把整批的 softmax 换成逐对的 sigmoid：</p>
+<div class="fx">
+\[ \mathcal L_{\text{SigLIP}} = -\frac1N\sum_{i,j}\log\sigma\big(z_{ij}\,(t\,S_{ij} + b)\big),\qquad z_{ij} = \begin{cases}+1 & i = j\\ -1 & i\ne j\end{cases} \]
+  <div class="fx-read">每一对图文单独做一个“是不是一对”的二分类，不再需要在整批上归一化。大批量训练时省去了跨设备收集所有相似度的通信，小批量时效果也更好。</div>
+  <div class="fx-eg">SigLIP 2（2025-02）加入多语言和原生宽高比，是 2025–26 年开源多模态模型最常用的视觉编码器，Qwen3-VL 用的就是它；Meta 的 Perception Encoder（2025）也属于这一类。</div>
+</div>
 
-<h2 id="llava" data-short="编码器 + 投影 + LLM">编码器 + 投影层 + 语言模型</h2>
-<p>CLIP 能判断图和文配不配，但不会“看图说话”。2023 年 4 月的 <b>LLaVA</b> 给出了一个出奇简单的办法：</p>
-<ol>
-  <li>用现成的 CLIP 视觉编码器（ViT-L/14）把图变成 256 个向量（LLaVA-1.5 输入 336×336，是 576 个）；</li>
-  <li>用一个 <b>投影层</b>（最初是一个线性层，LLaVA-1.5 换成两层 MLP）把每个向量映射到语言模型的嵌入维度；</li>
-  <li>把这些视觉 token 放在文字 token 前面，一起送进语言模型。</li>
-</ol>
-<p>训练分两步。第一步只训练投影层，用 55.8 万对图文描述，让视觉向量能被语言模型“读懂”。第二步解冻语言模型，用 GPT-4 生成的视觉问答、对话和推理数据做 <b>视觉指令微调</b>（LLaVA-1.5 用了 66.5 万条）。LLaVA-1.5 的完整训练在一台 8 卡 A100 上大约一天就能跑完。</p>
-<p>视觉编码器和语言模型之间的连接方式有几种：</p>
+<h2 id="llava">编码器 + 投影层 + 语言模型</h2>
+<p>CLIP 能判断图和文配不配，但不会“看图说话”。2023 年 4 月的 <dfn data-t="llava">LLaVA</dfn> 给出了一个出奇简单的办法：用现成的 CLIP 视觉编码器把图变成一串向量，用一个<dfn data-t="projector">投影层</dfn>（最初是一个线性层，LLaVA-1.5 换成两层 MLP）把每个向量映射到语言模型的嵌入维度，把这些“视觉 token”放在文字前面一起送进语言模型。训练分两步：先只训练投影层，用 55.8 万对图文描述，让视觉向量能被语言模型“读懂”；再解冻语言模型，用 GPT-4 生成的视觉问答和对话数据做视觉指令微调。LLaVA-1.5 的完整训练在一台 8 卡 A100 上约一天就能完成。</p>
 <div class="tablewrap"><table>
   <tr><th>连接方式</th><th>代表</th><th>做法</th><th>图像 token 数</th></tr>
-  <tr><td>线性 / MLP 投影</td><td>LLaVA、Qwen-VL 系列、Kimi</td><td>每个 patch 向量直接映射；通常先做 2×2 合并（相邻 4 个 patch 拼成一个再投影，token 变为 1/4）</td><td>随分辨率变化</td></tr>
-  <tr><td>Q-Former / Resampler</td><td>BLIP-2、Flamingo</td><td>用固定数量（如 32、64 个）的可学习查询向量，对图像特征做交叉注意力，读出一段固定长度的摘要</td><td>固定且很少</td></tr>
+  <tr><td>线性 / MLP 投影</td><td>LLaVA、Qwen-VL 系列、Kimi</td><td>每个 patch 向量直接映射，通常先做 2×2 合并</td><td>随分辨率变化</td></tr>
+  <tr><td>Q-Former / Resampler</td><td>BLIP-2、Flamingo</td><td>用固定数量（如 32、64 个）的可学习查询向量，对图像特征做交叉注意力，读出固定长度的摘要</td><td>固定且很少</td></tr>
   <tr><td>交叉注意力层</td><td>Flamingo、Llama 3.2 Vision</td><td>视觉特征不进入序列，语言模型的部分层插入交叉注意力去“看”图</td><td>不占序列</td></tr>
   <tr><td>不用视觉编码器</td><td>Fuyu</td><td>patch 直接线性投影进语言模型</td><td>随分辨率变化</td></tr>
 </table></div>
-<p>2024 年以后，MLP 投影加 patch 合并几乎成了标准做法：结构最简单，信息损失最少，token 太多的问题交给合并和动态分辨率处理。Qwen3-VL 的 <b>DeepStack</b> 又往前走了一步：把视觉编码器中间几层的特征也分别注入语言模型的前几层，序列长度不变。</p>
-<p>训练方式也在变。早期是“先有语言模型，再给它装上眼睛”。到 2026 年，旗舰模型越来越多是 <b>原生多模态</b> 的：预训练阶段就大量加入图文混合数据。Kimi K2.5（2026-01）在 K2 的基础上，用约 15T 图文混合 token 继续预训练；Kimi K3（2026-07）的视觉编码器 MoonViT-V2 约 4 亿参数，据报道是从头训练的，而不是从 SigLIP 初始化；Meta 的 Muse Spark Open（2026-10）用 1.8B 参数的 Perception Encoder，原生支持文本、图像、视频、音频输入。</p>
+<p>2024 年以后，MLP 投影加 patch 合并几乎成了标准：结构最简单，信息损失最少，token 太多的问题交给合并和动态分辨率处理。Qwen3-VL 的 DeepStack 又往前走了一步，把视觉编码器中间几层的特征也分别注入语言模型的前几层。</p>
+<p>训练方式也在变。早期是“先有语言模型，再给它装上眼睛”。到 2026 年，旗舰模型越来越多是<dfn data-t="native-multimodal">原生多模态</dfn>的：预训练阶段就大量加入图文混合数据。Kimi K2.5（2026-01）在 K2 的基础上用约 15 万亿图文混合 token 继续预训练；Kimi K3 的视觉编码器 MoonViT-V2 约 4 亿参数，据报道是从头训练的；Meta 的 Muse Spark Open（2026-10）用 18 亿参数的 Perception Encoder，原生支持文本、图像、视频、音频输入。</p>
+<aside class="dispute">
+  <h4>原生多模态预训练比“后装眼睛”更好吗</h4>
+  <dl>
+    <dt>原生派</dt><dd>从预训练开始就混合图文，模型的内部表示从一开始就为两种模态共同塑造；不会出现“后装的眼睛读不懂”的对齐问题，图文交错的推理、看图写代码等能力更强。前沿闭源模型（GPT-4o 起）和 2026 年的 Kimi、Meta 旗舰都走这条路。</dd>
+    <dt>后装派</dt><dd>后装的成本低得多：复用最强的语言模型和最强的视觉编码器，几天就能训好，开源社区的大部分多模态模型都这样做，效果也很有竞争力。</dd>
+    <dt>现在怎么看</dt><dd>Apple 的研究（2025）比较了早融合（原生）与晚融合（后装）的规模定律：晚融合并没有原以为的优势，早融合在参数较少时略好，但两者差距不大。差距更多来自数据：原生预训练能用上海量的图文交错网页、视频，这是后装的少量指令数据无法比的。头部实验室走向原生多模态，开源社区仍大量使用“强编码器 + 投影 + 强语言模型”的组合，并在中期训练加入大量多模态数据，两者的界限在模糊。</dd>
+  </dl>
+</aside>
 
-<h2 id="res" data-short="分辨率与 token 数">分辨率与图像 token 数</h2>
-<p>一张图该用多少个 token？LLaVA-1.5 固定用 336×336，576 个 token。可在这个分辨率下，截图里的小字、表格里的数字根本看不清。提高分辨率，token 数按面积增长，注意力的计算量又按 token 数的平方增长（第 <a class="xref" data-ref="attention">2</a>、<a class="xref" data-ref="long-context">8</a> 章）。主流方案有这几种：</p>
+<h2 id="res">分辨率与图像 token 数</h2>
+<p>一张图该用多少个 token？LLaVA-1.5 固定用 336×336、576 个 token，可在这个分辨率下，截图里的小字、表格里的数字根本看不清。提高分辨率，token 数按面积增长，注意力的计算又按 token 数的平方增长。主流方案：</p>
 <ul>
-  <li><b>固定分辨率</b>（LLaVA-1.5）：先补成正方形，再缩放到 336×336。宽高比悬殊的图（手机长截图、横幅）损失最大。</li>
-  <li><b>切片</b>（LLaVA-NeXT 的 AnyRes，2024-01；InternVL 1.5 起的动态切片）：按宽高比选一个网格，把原图切成若干块 336 或 448 像素的小图分别编码，再加一张缩略图看全局。InternVL 每块 448×448，经像素重排（pixel shuffle）后得到 256 个 token，默认最多 12 块。</li>
-  <li><b>原生动态分辨率</b>（NaViT 2023；Qwen2-VL 2024 起）：不切块，把图缩放到 patch 大小的整数倍，切出多少 patch 就有多少 token，再做 2×2 合并。Qwen2.5-VL 每个 token 对应 28×28 像素，Qwen3-VL 对应 32×32。token 数用像素数的上下限来控制。</li>
-  <li><b>商用 API</b>：Gemini 3 用 media_resolution 参数控制每张图最多用多少 token：低 280、中 560、高 1120（默认）、超高 2240。GPT-4o 的计费规则（2024 年）是把图缩放后按 512×512 切块，每块 170 token，再加 85。</li>
+  <li><b>固定分辨率</b>（LLaVA-1.5）：先补成正方形再缩放。宽高比悬殊的图（手机长截图）损失最大。</li>
+  <li><b>切片</b>（LLaVA-NeXT 的 AnyRes, 2024；InternVL 1.5 起的动态切片）：按宽高比选一个网格，把原图切成若干块分别编码，再加一张缩略图看全局。</li>
+  <li><b>原生动态分辨率</b>（NaViT 2023；Qwen2-VL 2024 起）：不切块，把图缩放到 patch 大小的整数倍，切出多少 patch 就有多少 token，再做 2×2 合并；用像素数的上下限控制 token 数。</li>
+  <li><b>商用 API</b>：Gemini 3 用 media_resolution 参数控制每张图最多用多少 token（低 280、中 560、高 1120、超高 2240）。</li>
 </ul>
 <div data-demo="image-tokens" class="bleed"></div>
-<p>文档图片有一个反直觉的现象：<b>用图像表示文字，有时比文字本身更省 token</b>。DeepSeek-OCR（2025-10）把一页 1024×1024 的文档编码成 256 个视觉 token，而同一页的文字可能要一两千个 token。论文报告，压缩比在 10 倍以内时 OCR 准确率约 97%，20 倍时降到 60% 左右。作者还设想过把很久以前的对话历史渲染成越来越小的图片，模拟“记忆逐渐模糊”。DeepSeek-OCR 2（2026-01）改进了编码器，让视觉 token 按阅读顺序排列，而不是固定的从左到右、从上到下。</p>
+<aside class="dispute surprise">
+  <h4>意外：用图片表示文字，比文字本身更省 token</h4>
+  <dl>
+    <dt>原以为</dt><dd>一页文档最紧凑的表示就是它的文字，转成图片只会更贵。</dd>
+    <dt>实际发现</dt><dd>DeepSeek-OCR（2025-10）把一页 1024×1024 的文档编码成 256 个视觉 token，而同一页的文字可能要一两千个 token。论文报告，压缩比在 10 倍以内时 OCR 准确率约 97%，20 倍时降到 60% 左右。作者还设想把很久以前的对话历史渲染成越来越小的图片，模拟“记忆逐渐模糊”。</dd>
+    <dt>为什么</dt><dd>一个视觉 token 是一个高维连续向量，可以同时编码一小块区域里的多个字符和它们的排版；文字 token 则是离散的、平均每个只对应一两个汉字（第 <a class="xref" data-ref="tokens"></a> 章）。连续向量的“带宽”远大于离散编号。</dd>
+    <dt>现在怎么看</dt><dd>“光学压缩”成了长上下文的一个新思路，DeepSeek-OCR 2（2026-01）进一步让视觉 token 按阅读顺序排列。它在多大程度上能替代文字上下文、会损失哪些精确信息，仍在研究中。</dd>
+  </dl>
+</aside>
 
-<h2 id="video" data-short="视频理解">视频理解</h2>
-<p>视频就是一串图像，再加上时间。如果每一帧都当成一张图处理，token 数会爆炸：1 分钟、每秒 30 帧的 720p 视频有 1,800 帧，按 Qwen3-VL 的算法每帧约 900 个 token，总共 160 多万。实际做法是一层层压缩：</p>
-<ul>
-  <li><b>降低帧率</b>：大多数理解任务每秒取 1–2 帧就够了。Gemini 默认每秒 1 帧。</li>
-  <li><b>时间方向合并</b>：Qwen 系列把相邻 2 帧合成一个时空 patch（2×16×16），token 再减半。第 <a class="xref" data-ref="video">13</a> 章视频生成里的时空 patch 也是这个思路。</li>
-  <li><b>降低每帧的分辨率</b>：Gemini 3 处理视频时，每帧默认只用 70 个 token，要看清画面里的小字时才用 280。</li>
-  <li><b>标注时间</b>：要回答“第几分钟发生了什么”，模型必须知道每一帧的时间。Qwen2-VL 的 M-RoPE 把位置编码拆成时间、高、宽三部分；Qwen3-VL 改为让三部分在维度上交错排列，并在帧前插入文字时间戳。Muse Spark Open 也把时间戳作为 token 写进序列。</li>
-</ul>
-<p>下面的计算器估算一段视频在不同设置下要用多少 token，以及 256K、1M 的上下文分别能放下多长的视频：</p>
+<h2 id="video">视频理解</h2>
+<p>视频就是一串图像，再加上时间。每一帧都当成一张图处理，token 数会爆炸。一层层压缩：</p>
+<div class="fx">
+\[ n_{\text{token}} \approx \htmlClass{sym-T}{T}\times\htmlClass{sym-fps}{f}\times\frac{\htmlClass{sym-tok}{n_{\text{帧}}}}{\htmlClass{c-new}{k_t}} \]
+  <div class="fx-read">时长 \(T\) 秒，每秒取 \(f\) 帧，每帧 \(n_{\text{帧}}\) 个 token，再把相邻 \(k_t\) 帧合并成一个时空 patch。四个旋钮分别是：时长、采样帧率、每帧分辨率、时间方向的合并。</div>
+  <dl class="fx-syms">
+    <dt data-sym="fps">\(f\)</dt><dd>采样帧率：理解任务每秒 1–2 帧通常够用，Gemini 默认每秒 1 帧</dd>
+    <dt data-sym="tok">\(n_{\text{帧}}\)</dt><dd>每帧的 token 数：Gemini 3 处理视频时每帧默认只用 70 个</dd>
+    <dt data-sym="kt">\(k_t\)</dt><dd>时间合并：Qwen 系列把相邻 2 帧合成一个时空 patch，token 减半</dd>
+  </dl>
+  <div class="fx-eg">1 分钟、每秒 30 帧的 720p 视频按每帧约 900 个 token 全部处理：\(60\times 30\times 900\approx 160\) 万。改为每秒 2 帧、时间合并 2 倍：\(60\times 2\times 900/2 = 5.4\) 万。再把每帧压到 70 个 token、每秒 1 帧：4200 个。</div>
+</div>
+<p>回答“第几分钟发生了什么”，模型必须知道每一帧的时间：Qwen2-VL 的 M-RoPE 把位置编码拆成时间、高、宽三部分，Qwen3-VL 改为让三部分在维度上交错排列，并在帧前插入文字时间戳。下面的计算器估算一段视频在不同设置下要用多少 token，以及 256K、1M 的上下文分别能放下多长的视频：</p>
 <div data-demo="video-budget"></div>
-<p>再长的视频（几小时的监控录像、一整季剧集）放不进任何上下文，就要用第 <a class="xref" data-ref="agents">15</a> 章的方法：先粗看一遍建立索引，再按需检索关键片段，这就是“视频智能体”。</p>
+<p>再长的视频（几小时的监控录像、一整季剧集）放不进任何上下文，就要用第 <a class="xref" data-ref="agents"></a> 章的方法：先粗看一遍建立索引，再按需检索关键片段，这就是“视频智能体”。语音和音频的理解与生成，以及能实时听说的全模态模型，见第 <a class="xref" data-ref="audio"></a> 章。</p>
 
-<h2 id="omni" data-short="语音与全模态">语音与全模态</h2>
-<p>早期的语音助手是三段式：语音识别（ASR）→ 语言模型 → 语音合成（TTS）。每一段都有延迟，GPT-4 时期 ChatGPT 的语音模式平均要 5.4 秒才开口；而且语气、笑声、背景声这些信息在转成文字时就丢了。<b>GPT-4o</b>（2024-05）用一个模型端到端处理文本、图像和音频，平均 320 毫秒就能回应，接近人与人对话的节奏。</p>
-<p>音频进入模型的方式和图像差不多，有两种表示：</p>
-<ul>
-  <li><b>连续特征</b>（用于理解）：音频编码器（类似 Whisper）把声音切成帧，每帧一个向量，投影后送进语言模型。Gemini 每秒音频约 25 个 token；Muse Spark Open 每 80 毫秒一个 token，即每秒 12.5 个。</li>
-  <li><b>离散编码</b>（用于生成）：神经音频编解码器用残差向量量化（RVQ）把每一帧压成几个码本编号。第一个码本记录大致的声音，后面的码本一级级补上残差细节。模型像生成文字一样生成这些编号，再解码成波形。</li>
-</ul>
-<p>阿里 Qwen 系列的 <b>Thinker–Talker</b> 结构很有代表性（Qwen2.5-Omni 2025-03 → Qwen3-Omni 2025-09 → Qwen3.5-Omni 2026-03）。Thinker 是一个多模态语言模型，负责听、看、思考，输出文字；Talker 读取 Thinker 的输出和隐藏状态，流式地生成语音编码，做到边想边说。Qwen3.5-Omni 的 Thinker 和 Talker 都采用混合注意力 MoE，上下文 256K，可以输入约 10 小时音频，或 400 秒的 720p 视频（每秒 1 帧）；语音识别支持 113 种语言和方言，语音合成支持 36 种。另一条路线是 Kyutai 的 Moshi（2024-09）这样的 <b>全双工</b> 模型：同时处理“用户正在说的”和“自己正在说的”两路音频，可以随时被打断，也能插话。</p>
+<h2 id="see">模型真的“看见”了吗</h2>
+<aside class="dispute">
+  <h4>多模态模型的视觉是真的，还是“读图说话”</h4>
+  <dl>
+    <dt>质疑</dt><dd>Tong 等（2024）的 “Eyes Wide Shut” 找出一批“CLIP 盲对”：两张在人看来明显不同的图，CLIP 的向量却几乎一样；基于这类编码器的多模态模型在相应问题上接近随机猜测（如“蝴蝶的脚是否可见”“图中有几只鸟”）。“VLMs are Blind”（2024）发现，数两条线交叉几次、判断两个圆是否重叠这类小学生都会的任务，当时最强的模型也频频出错。一个解释是：对比学习只学图文共享的信息，而网上的配文很少描述精确的几何和数量。</dd>
+    <dt>反驳</dt><dd>2025–26 年的模型在这些测试上进步很大：高分辨率输入、更好的编码器训练目标、大量合成的几何和计数数据，以及“用图像思考”（下面）都有帮助。Kimi K3 等在数学视觉推理基准上已达到很高的分数。</dd>
+    <dt>现在怎么看</dt><dd>语义层面的“看懂”（这是什么、发生了什么）已经很强；精确的空间关系、计数、细小元素的定位仍是弱项，也是“看屏幕的智能体”最常出错的地方。评测时要区分这两类能力。</dd>
+  </dl>
+</aside>
 
-<h2 id="now" data-short="2025–26 进展">2025–26：从“看懂”到“用眼睛做事”</h2>
+<h2 id="now">2025–26：从“看懂”到“用眼睛做事”</h2>
 <ul>
   <li><b>用图像思考</b>：从 o3（2025-04）开始，推理模型可以在思维链中途裁剪、放大、旋转图片再看，视觉推理成绩大幅提高。据 NVIDIA 的模型页，Kimi K3 在 MathVision 上不用工具 94.3%，用工具 97.8%。</li>
-  <li><b>看屏幕的智能体</b>：计算机使用和浏览器智能体以截图为输入，输出点击坐标和键盘操作（第 <a class="xref" data-ref="agents">15</a> 章的 OSWorld）。模型要在高分辨率截图里准确定位很小的按钮，所以动态分辨率变得很重要。</li>
-  <li><b>看着画面写代码</b>：根据设计稿或一段操作录屏直接写出前端代码。Kimi K2.5 把它作为主打能力之一，训练数据里有大量“截图–代码”配对。</li>
-  <li><b>文档理解</b>：OCR 从专用模型变成了多模态模型的基本功，DeepSeek-OCR 系列、PaddleOCR-VL、MinerU 等开源模型在 OmniDocBench 等文档评测上竞争。</li>
-  <li><b>理解与生成统一</b>：同一个模型既能看图也能画图（第 <a class="xref" data-ref="image">12</a> 章）。</li>
+  <li><b>看屏幕的智能体</b>：计算机使用和浏览器智能体以截图为输入，输出点击坐标和键盘操作（第 <a class="xref" data-ref="agents"></a> 章的 OSWorld）。要在高分辨率截图里准确定位很小的按钮，动态分辨率变得很重要。</li>
+  <li><b>看着画面写代码</b>：根据设计稿或操作录屏直接写出前端代码，是 Kimi K2.5 主打的能力之一。</li>
+  <li><b>文档理解</b>：OCR 从专用模型变成了多模态模型的基本功，DeepSeek-OCR、PaddleOCR-VL、MinerU 等开源模型在文档评测上竞争。</li>
+  <li><b>理解与生成统一</b>：同一个模型既能看图也能画图（第 <a class="xref" data-ref="image"></a> 章）。</li>
 </ul>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2020-10</span>ViT：图像切成 patch，用 Transformer 处理</li>
-  <li><span class="d">2021</span>CLIP、ALIGN：从网络图文对学到对齐的表示，零样本分类</li>
-  <li><span class="d">2022-04</span>Flamingo：交叉注意力 + Perceiver Resampler，图文交错的少样本学习</li>
-  <li><span class="d">2023</span>BLIP-2 的 Q-Former（1 月）；GPT-4 支持图像输入、SigLIP（3 月）；LLaVA 视觉指令微调（4 月）；NaViT 原生分辨率（7 月）；LLaVA-1.5、Fuyu（10 月）</li>
-  <li><span class="d">2024</span>LLaVA-NeXT AnyRes（1 月）；InternVL 1.5 动态切片（4 月）；GPT-4o 端到端全模态（5 月）；Qwen2-VL 动态分辨率 + M-RoPE、Moshi 全双工语音、Llama 3.2 Vision（8–9 月）</li>
-  <li><span class="d">2025</span>Qwen2.5-VL、SigLIP 2（2 月）；Qwen2.5-Omni Thinker–Talker（3 月）；o3 “用图像思考”、Perception Encoder（4 月）；Qwen3-VL、Qwen3-Omni（9 月）；DeepSeek-OCR 光学压缩（10 月）；Gemini 3 media_resolution（11 月）</li>
-  <li><span class="d">2026</span>Kimi K2.5 原生多模态、DeepSeek-OCR 2（1 月）；Qwen3.5-Omni（3 月）；Kimi K3 + MoonViT-V2（7 月）；Muse Spark Open：1.8B Perception Encoder，文本 / 图像 / 视频 / 音频输入（10 月）</li>
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">多模态模型“看”图的方式和人一样。</b>它看到的是一串 patch 向量；分辨率不够、编码器没学到的细节（精确数量、细线、位置）它就看不见。</li>
+  <li><b class="m">一张图只占很少的 token。</b>高分辨率截图可能要一两千个 token，视频动辄几万到几十万，直接影响成本和上下文。</li>
+  <li><b class="m">CLIP 的分数高说明图文意思一致。</b>对比学习只保证“配对的比不配对的更像”，对数量、否定、空间关系常常不敏感。</li>
+  <li><b class="m">视频理解就是逐帧看图。</b>还要处理时间（时间戳、时序位置编码）、大幅压缩帧数与分辨率，长视频还要检索。</li>
+  <li><b class="m">文字永远是最省的表示。</b>DeepSeek-OCR 表明，在一定压缩率内，把文字渲染成图片反而更省 token。</li>
 </ul>
-<p class="src">资料：<a href="https://arxiv.org/abs/2010.11929">ViT</a>；<a href="https://arxiv.org/abs/2103.00020">CLIP</a>；<a href="https://arxiv.org/abs/2303.15343">SigLIP</a>；<a href="https://arxiv.org/abs/2304.08485">LLaVA</a>；<a href="https://arxiv.org/abs/2310.03744">LLaVA-1.5</a>；<a href="https://arxiv.org/abs/2511.21631">Qwen3-VL 技术报告</a>；<a href="https://arxiv.org/abs/2510.18234">DeepSeek-OCR</a>；<a href="https://arxiv.org/abs/2601.20552">DeepSeek-OCR 2</a>；<a href="https://ai.google.dev/gemini-api/docs/media-resolution">Gemini media resolution</a>；<a href="https://qwen.ai/blog?id=qwen3.5-omni">Qwen3.5-Omni</a>；<a href="https://github.com/MoonshotAI/Kimi-K2.5">Kimi K2.5</a>；<a href="https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k3">Kimi K3（NVIDIA 模型页）</a>；<a href="https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B">Muse Spark Open 模型卡</a>；<a href="https://vllm.ai/blog/2026-10-15-muse-spark-open">vLLM：Muse Spark Open</a>。</p>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2020–2021</div>
+    <h4>ViT 与 CLIP</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>视觉模型依赖人工标注的类别，无法理解开放的语言描述。</dd>
+      <dt>怎么解决</dt><dd>ViT（2020-10）用 Transformer 处理图像 patch；CLIP、ALIGN（2021）从网络图文对学到对齐的表示，实现零样本分类。</dd>
+      <dt>代价</dt><dd>只能判断图文是否匹配，不能生成描述或回答问题。</dd>
+      <dt>引出</dt><dd>怎样让语言模型“看”？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2023</div>
+    <h4>把眼睛装到语言模型上</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大语言模型很强，但只能读文字。</dd>
+      <dt>怎么解决</dt><dd>Flamingo（2022）用交叉注意力与重采样器；BLIP-2 的 Q-Former（2023-01）；GPT-4 支持图像输入、SigLIP（2023-03）；LLaVA 的视觉指令微调（2023-04）；NaViT 原生分辨率；LLaVA-1.5、Fuyu。</dd>
+      <dt>代价</dt><dd>低分辨率，看不清文字和细节。</dd>
+      <dt>引出</dt><dd>怎样处理高分辨率和任意宽高比？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">逐渐少用</span>Q-Former 与固定长度的重采样</summary><div>用几十个可学习查询向量把整张图压成固定长度的摘要，token 很省，但丢失细节，处理文档和截图时吃亏。2024 年后多数开源模型改用“MLP 投影 + patch 合并 + 动态分辨率”，用更多 token 换更少的信息损失。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>动态分辨率与端到端全模态</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>文档、截图、长图需要高分辨率；语音交互延迟高。</dd>
+      <dt>怎么解决</dt><dd>LLaVA-NeXT 的 AnyRes、InternVL 的动态切片、Qwen2-VL 的原生动态分辨率与 M-RoPE；GPT-4o 端到端处理文本、图像、音频（第 <a class="xref" data-ref="audio"></a> 章）。</dd>
+      <dt>代价</dt><dd>高分辨率带来大量 token。</dd>
+      <dt>引出</dt><dd>怎样让模型用视觉去推理、去操作？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>用图像思考与光学压缩</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多模态推理弱；视觉盲点。</dd>
+      <dt>怎么解决</dt><dd>SigLIP 2、Perception Encoder；o3 在思维链中裁剪放大图片；Qwen3-VL；DeepSeek-OCR 的光学压缩；Gemini 3 的分辨率控制。</dd>
+      <dt>代价</dt><dd>精确的空间与计数能力仍弱。</dd>
+      <dt>引出</dt><dd>多模态从后装走向原生。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>原生多模态旗舰</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>后装的视觉与语言能力割裂。</dd>
+      <dt>怎么解决</dt><dd>Kimi K2.5 用约 15 万亿图文 token 继续预训练；DeepSeek-OCR 2；Kimi K3 自训的 MoonViT-V2；Muse Spark Open 原生支持文本、图像、视频、音频。</dd>
+      <dt>代价</dt><dd>多模态预训练的数据与算力门槛极高。</dd>
+      <dt>引出</dt><dd>理解之外，模型怎样生成图像和视频？先从扩散模型的原理讲起（第 <a class="xref" data-ref="diffusion"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一张 1344×896 的图，patch 边长 14，再做 2×2 合并，得到多少个 token？</summary><div class="ans">\(1344/14 = 96\)，\(896/14 = 64\)，共 6144 个 patch，合并后 1536 个 token。</div></details>
+<details class="quiz"><summary>2. CLIP 用批大小 \(N = 1024\) 训练，对比损失能证明的图文互信息下界最多是多少比特？换成 32768 呢？</summary><div class="ans">下界不超过 \(\log_2 N\)：1024 时为 10 比特，32768 时为 15 比特。批越大，能衡量的互信息上限越高。</div></details>
+<details class="quiz"><summary>3. 一段 20 分钟的视频，每秒 1 帧，每帧 256 个 token，时间方向合并 2 帧。总共多少 token？256K 的上下文能放下多长的这种视频？</summary><div class="ans">\(1200\times 256/2 = 153600\) 个。256K（262144）约能放 \(262144/128\approx 2048\) 秒，约 34 分钟（还要给文字留空间）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2010.11929">An Image is Worth 16x16 Words</a>（ViT, 2020）<span class="why">把图像当作 token 序列。</span></li>
+  <li><a href="https://arxiv.org/abs/2103.00020">Learning Transferable Visual Models From Natural Language Supervision</a>（CLIP, 2021）<span class="why">对比学习与零样本分类。</span></li>
+  <li><a href="https://arxiv.org/abs/2304.08485">Visual Instruction Tuning</a>（LLaVA, 2023）<span class="why">“编码器 + 投影 + LLM”的范式。</span></li>
+  <li><a href="https://arxiv.org/abs/2401.06209">Eyes Wide Shut?</a>（Tong 等, 2024）<span class="why">多模态模型的视觉盲点。</span></li>
+  <li><a href="https://arxiv.org/abs/2511.21631">Qwen3-VL Technical Report</a>（2025）<span class="why">动态分辨率、时序位置编码与 DeepStack 的工程细节。</span></li>
+  <li><a href="https://arxiv.org/abs/2510.18234">DeepSeek-OCR</a>（2025）<span class="why">视觉光学压缩。</span></li>
+</ol>
+
+<div class="nextq">理解图像之后，下一个问题是生成图像。今天几乎所有的图像、视频生成模型都基于同一个原理：从纯噪声出发，一步步去噪。它为什么能生成以假乱真的图像？下一章（第 <a class="xref" data-ref="diffusion"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1807.03748">InfoNCE（CPC）</a> · <a href="https://arxiv.org/abs/2303.15343">SigLIP</a> · <a href="https://arxiv.org/abs/2502.14786">SigLIP 2</a> · <a href="https://arxiv.org/abs/2310.03744">LLaVA-1.5</a> · <a href="https://arxiv.org/abs/2204.14198">Flamingo</a> · <a href="https://arxiv.org/abs/2301.12597">BLIP-2</a> · <a href="https://arxiv.org/abs/2307.06304">NaViT</a> · <a href="https://arxiv.org/abs/2407.06581">VLMs are Blind</a> · <a href="https://arxiv.org/abs/2504.07951">原生多模态模型的规模定律</a> · <a href="https://arxiv.org/abs/2601.20552">DeepSeek-OCR 2</a> · <a href="https://ai.google.dev/gemini-api/docs/media-resolution">Gemini media resolution</a> · <a href="https://github.com/MoonshotAI/Kimi-K2.5">Kimi K2.5</a> · <a href="https://docs.api.nvidia.com/nim/reference/moonshotai-kimi-k3">Kimi K3（NVIDIA 模型页）</a> · <a href="https://huggingface.co/meta-models/Muse-Spark-Open-816B-A42B">Muse Spark Open 模型卡</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>

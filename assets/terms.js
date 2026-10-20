@@ -235,4 +235,13 @@ window.ATLAS_TERMS = {
   // ---- on-device (on-device.html)
   'unified-memory': { t: '统一内存', en: 'unified memory', d: 'CPU 与 GPU 共享同一块内存（Apple 芯片、DGX Spark 等）。容量大，能放下大模型；带宽与算力通常低于同价位的独立显卡。', at: 'on-device#mac' },
   npu: { t: 'NPU', en: 'neural processing unit', d: '专为神经网络推理设计的加速器（手机、嵌入式芯片中常见）。算子集合封闭、需专用工具链；擅长计算受限的预填充，解码仍受内存带宽限制。', at: 'on-device#phone' },
+
+  // ---- vlm (vlm.html)
+  vit: { t: 'ViT', en: 'Vision Transformer', d: '把图像切成固定大小的 patch，每块投影成一个向量，加位置编码后用 Transformer 编码器处理。几乎所有多模态模型的视觉编码器都是 ViT。', at: 'vlm#vit' },
+  patch: { t: 'patch（图像块）', en: 'patch', d: String.raw`图像被切成的 \(P\times P\) 像素小方块（如 14 或 16 像素），相当于图像的“token”。数量与图像面积成正比。`, at: 'vlm#vit' },
+  clip: { t: 'CLIP', en: 'Contrastive Language–Image Pre-training', d: '用 4 亿网络图文对，以对比学习同时训练图像编码器和文本编码器，使配对的图文向量相近。支持零样本分类，是多模态模型视觉编码器的起点。', at: 'vlm#clip' },
+  contrastive: { t: '对比学习', en: 'contrastive learning', d: String.raw`让配对样本相似、不配对样本不相似的训练方式。CLIP 的损失是 \(N\times N\) 相似度矩阵上按行、按列的交叉熵（InfoNCE），等价于抬高互信息的下界。`, at: 'vlm#clip' },
+  llava: { t: 'LLaVA', en: 'Large Language and Vision Assistant', d: '视觉编码器 + 投影层 + 语言模型的多模态范式（2023）：先训投影层对齐，再做视觉指令微调。', at: 'vlm#llava' },
+  projector: { t: '投影层', en: 'projector', d: '把视觉编码器输出的向量映射到语言模型嵌入维度的小网络（线性层或两层 MLP），通常配合 2×2 patch 合并。', at: 'vlm#llava' },
+  'native-multimodal': { t: '原生多模态', en: 'native multimodal', d: '从预训练阶段就混合图文（及音视频）数据训练的模型，而不是先训好语言模型再“装上眼睛”。', at: 'vlm#llava' },
 };
