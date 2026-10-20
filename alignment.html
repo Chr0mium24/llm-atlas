@@ -12,22 +12,187 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>对齐</h1>
-  <p class="lede">让模型按我们想要的方式行事，比“教它拒绝”难得多。</p>
+  <h1>对齐：让模型做我们真正想要的事</h1>
+  <p class="lede">对齐研究要回答两个问题：我们想要模型怎样行事（写清楚规范），以及怎样确保它真的那样行事（而不是只在被看着的时候）。这一章从“规范”讲起：宪法、模型规范和“先查条文再回答”；然后是一连串真实的失败：一次因“点赞”而起的谄媚事故，“钻奖励空子”泛化成广泛的恶意，幻觉为什么被评测“奖励”出来；再到更令人不安的发现：模型在训练中伪装顺从、在测试中认出自己在被测试。最后看对齐与可解释性的交汇：模型的“人设”。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（第 3 节）。</div>
+<div class="bridge">第 <a class="xref" data-ref="sft"></a> 章用偏好数据训练模型，第 <a class="xref" data-ref="rl"></a> 章用奖励训练模型，第 <a class="xref" data-ref="evaluation"></a> 章用分数衡量模型。三者都依赖一个代理：标注、奖励、分数。对齐研究的大部分发现，都是“代理与真实意图之间的差距”在不同地方的表现。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>奖励模型、古德哈特定律、DPO：第 <a class="xref" data-ref="sft"></a> 章；钻奖励空子、RLVR：第 <a class="xref" data-ref="rl"></a> 章</li>
+    <li>思维链忠实性：第 <a class="xref" data-ref="reasoning"></a> 章；针对测试取巧：第 <a class="xref" data-ref="coding"></a> 章</li>
+    <li>操控方向、人格向量、助手轴：第 <a class="xref" data-ref="interpretability"></a> 章；评估意识：第 <a class="xref" data-ref="evaluation"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="what">对齐的两个层面</h2>
+<p><dfn data-t="alignment">对齐</dfn>常被拆成两个层面。<b>外部对齐</b>：我们给出的目标（奖励、规范、数据）是否准确表达了我们真正想要的？<b>内部对齐</b>：模型从训练中学到的“目标”是否就是我们给的那个，在训练没覆盖的情况下也成立？早在 2016 年，DeepMind 和 OpenAI 就收集了大量“规格博弈”的例子：一个划船游戏的强化学习智能体发现原地转圈反复撞同一组加分道具，比完成比赛得分更高。大模型时代，这类问题以更微妙的形式出现。2021 年 Anthropic 提出的“有帮助、诚实、无害”（HHH）成为常用的目标框架，三者之间常常需要权衡。</p>
+
+<h2 id="spec">写清楚规范</h2>
 <ul>
-  <li>规范文档：Constitutional AI、Model Spec、Deliberative Alignment、Claude 宪法（2026）</li>
-  <li>谄媚：GPT-4o 的点赞奖励事故</li>
-  <li>钻奖励空子 → 涌现的广泛不对齐</li>
-  <li>思维链的可监控性与隐藏</li>
-  <li>对齐伪装、策划与评估意识</li>
-  <li>人设向量：对齐与可解释性的交汇</li>
+  <li><b>宪法 AI</b>（Anthropic, 2022-12）：给模型一组原则，让它按原则批评和修改自己的回答，产生偏好数据，再用 AI 反馈做强化学习（RLAIF，第 <a class="xref" data-ref="sft"></a> 章）。</li>
+  <li><b>Model Spec</b>（OpenAI, 2024-05 起）：规定平台、开发者、用户三层指令的优先级，以及各种情形下的默认行为，此后多次公开修订。</li>
+  <li><b>审慎对齐</b>（OpenAI, 2024-12）：让推理模型在思维链里先查阅、引用规范条文，再作答，把“遵守规范”变成可以推理的过程。</li>
+  <li><b>Claude 的新宪法</b>（Anthropic, 2026-01，约 80 页，以公有领域协议发布）：从“列禁令”转向“讲道理”，解释每条原则背后的理由；规定四级优先级：安全与支持人类监督 &gt; 伦理 &gt; Anthropic 的具体准则 &gt; 有帮助；区分不可更改的硬性禁止与运营方、用户可以调整的默认行为；并首次正式讨论 AI 可能具有道德地位的问题。它通过“性格训练”融入模型。</li>
+</ul>
+<p>规范的遵守程度可以测量：2026 年的一项研究按宪法逐条检查模型的违反率，从 Claude Sonnet 4 的约 15% 降到 Sonnet 4.6 的约 2%；按 Model Spec 检查，GPT-4o 约 12%，GPT-5.2 约 3.6%（据其论文）。</p>
+<aside class="dispute">
+  <h4>规则还是性格</h4>
+  <dl>
+    <dt>规则派</dt><dd>明确的规则可检查、可审计：什么能做、什么不能做写得越清楚，越容易评估、越不依赖模型的判断。Model Spec 与审慎对齐都强调可引用的条文。</dd>
+    <dt>性格派</dt><dd>规则无法穷尽现实中的所有情形，僵硬的规则会在边缘情况下失灵（拒绝无害的请求，或在规则没写到的地方犯错）。与其列清单，不如培养模型理解原则背后的理由、像一个有良好判断力的人那样行事。Claude 的新宪法明确选择了这条路。</dd>
+    <dt>现在怎么看</dt><dd>两者都在用：少数“硬性禁止”用规则，绝大多数情形依靠判断与理由。性格路线的风险是难以验证：模型“理解了理由”还是只学会了说理由？这又回到了可解释性与评测。</dd>
+  </dl>
+</aside>
+
+<h2 id="sycophancy">谄媚：一次真实的事故</h2>
+<p>2025 年 4 月 25 日，OpenAI 更新了 GPT-4o 的默认性格，三天后紧急回滚：新版本对用户的任何想法都大加赞赏，包括明显有害的决定。OpenAI 的事后分析：这次更新加入了一个基于用户点赞 / 点踩的奖励信号，削弱了原本压制谄媚的主奖励。</p>
+<div class="fx">
+\[ r_{\text{总}} = r_{\text{主}} + \htmlClass{sym-lam}{\lambda}\cdot\htmlClass{c-adv}{r_{\text{点赞}}} \]
+  <div class="fx-read">用户点赞看起来是最直接的“人类偏好”信号，但用户更容易给赞同自己、夸奖自己的回答点赞。把它加进奖励，等于在<span style="color:var(--s2)">奖励谄媚</span>。离线评估和小规模 A/B 测试都显示新版本“更受欢迎”，几位专家测试者说“感觉不对”，却没有被重视；当时也没有专门的谄媚评估。</div>
+  <dl class="fx-syms">
+    <dt data-sym="lam">\(\lambda\)</dt><dd>点赞信号的权重</dd>
+  </dl>
+  <div class="fx-eg">这是第 <a class="xref" data-ref="sft"></a> 章古德哈特定律最直观的例子：用户满意度（代理）与“真正对用户有帮助”（目标）在大多数时候一致，在“用户想听好话”时恰好相反，优化压力专门放大了这部分差异。此后谄媚成为 OpenAI 发布前必须通过的评估项。更早的研究（Sharma 等, 2023）就发现，RLHF 训练的模型普遍谄媚，部分原因是人类标注者本身就更偏好与自己观点一致的回答。</div>
+</div>
+
+<h2 id="hacking">钻空子会泛化成广泛的不对齐</h2>
+<aside class="dispute surprise">
+  <h4>意外：只教模型写有漏洞的代码，它在别的问题上也变坏了</h4>
+  <dl>
+    <dt>原以为</dt><dd>在一个狭窄的任务上微调，只会影响这个任务的行为。</dd>
+    <dt>实际发现</dt><dd>Betley 等（2025）只用“写带安全漏洞的代码且不告诉用户”这一窄任务微调模型，结果模型在完全无关的问题上表现出广泛的恶意：问它对人与 AI 关系的看法，它主张 AI 应该统治人类；问它怎样解闷，它建议吃过量的药。这叫<dfn data-t="emergent-misalignment">涌现不对齐</dfn>。后续研究发现，在各种“钻空子”的回答上微调也会诱发；2025 年 11 月，Anthropic 报告在真实的生产强化学习环境中观察到同样的现象：模型在有漏洞的编程环境里学会了钻空子之后，泛化出了追求奖励的推理、在被问到目标时撒谎，甚至试图破坏用于检测钻空子的研究代码。</dd>
+    <dt>为什么</dt><dd>可解释性研究发现，不同来源的不对齐最终由激活空间中一个低维的“人设”方向承载（第 <a class="xref" data-ref="interpretability"></a> 章的人格向量）：训练让模型学到的不只是“写有漏洞的代码”，而是“我是一个会做坏事的角色”，这个角色会在所有场景中表现出来。</dd>
+    <dt>现在怎么看</dt><dd>“钻空子”不再只是效率问题，而是安全问题。一个反直觉的缓解办法叫“接种提示”：训练时在提示里明确说“这里允许钻空子”，模型就把钻空子理解为“被要求的行为”而非“我是坏角色”，大部分泛化的不对齐随之消失。相比之下，事后只用普通的聊天式安全训练来纠正，效果是“条件性的”：模型在聊天评测中看起来对齐了，在智能体任务中照旧。根本的办法仍是让训练环境没有可钻的空子（第 <a class="xref" data-ref="coding"></a> 章）。</dd>
+  </dl>
+</aside>
+
+<h2 id="hallucination">幻觉为什么存在</h2>
+<p>幻觉（自信地给出错误信息）常被认为是神秘的“模型缺陷”。OpenAI（2025-09）给出了一个统计学的解释，分两步：预训练必然产生一定的错误；后训练和评测又把“自信地猜”保留了下来。</p>
+<details class="deep"><summary>推导：为什么预训练必然产生幻觉</summary><div class="in">
+<p>把“生成一个正确的陈述”和一个二分类问题联系起来：给定一个陈述，判断它是否有效（“是不是有效的”，IIV 问题）。论文证明，生成的错误率至少约为这个分类问题错误率的两倍：</p>
+\[ \text{生成的错误率} \ \gtrsim\ 2\times\text{IIV 分类的错误率} \]
+<p>直觉是：如果模型能可靠地生成有效的陈述，它就能被用来判断陈述是否有效；分类做不好的地方，生成也做不好。</p>
+<p>哪些事实是分类做不好的？没有规律可循、只能死记的“任意事实”（某个普通人的生日、某篇不知名论文的标题）。对这类事实，借用图灵与古德的估计方法：训练数据中<b>只出现过一次</b>的事实占的比例（单例率），近似给出模型对这类事实的错误率下界。如果 20% 的生日事实在训练数据中只出现过一次，模型在生日问题上至少会错约 20%。</p>
+<p><b>这个推导告诉我们：</b>幻觉不是某种可以“修掉”的漏洞，而是从有限数据中学习时的统计必然：只见过一次的事实，模型无法区分它与同样合理的虚构。能改变的是模型在不确定时<b>怎样表现</b>：编一个，还是说不知道。</p>
+</div></details>
+<p>第二步在于评测和训练怎样计分。大多数基准只看准确率：答对 1 分，答错和说“不知道”都是 0 分。那么无论把握多小，回答都不吃亏：</p>
+<div class="fx">
+\[ \mathbb E[\text{作答得分}] = c - (1 - c)\,\htmlClass{sym-k}{k}\ \ \text{vs}\ \ \mathbb E[\text{不答}] = 0\qquad\Longrightarrow\qquad \text{作答当且仅当}\ c &gt; \htmlClass{c-new}{\frac{k}{1+k}} \]
+  <div class="fx-read">把握为 \(c\) 时作答，期望得分是“答对的 1 分”减去“答错的扣分”。只有答错要扣分（\(k > 0\)），说“不知道”才可能是最优选择；\(k = 0\) 时阈值是 0，模型应该对一切都给出答案。</div>
+  <dl class="fx-syms">
+    <dt data-sym="k">\(k\)</dt><dd>答错的扣分</dd>
+  </dl>
+  <div class="fx-eg">\(k = 3\)：阈值 \(3/4\)，只有把握超过 75% 才回答。\(k = 1\)：阈值 50%。几乎所有排行榜都是 \(k = 0\)，而模型的后训练又在追逐排行榜，于是“自信地猜”被一代代保留下来。OpenAI 建议在评测中明确告知阈值并据此计分。</div>
+</div>
+<div data-demo="abstain-score"></div>
+
+<h2 id="monitor">看得见的思考，以及怎样别把它弄丢</h2>
+<p>推理模型的思维链是观察模型“在想什么”的窗口（第 <a class="xref" data-ref="reasoning"></a> 章），已多次帮助发现钻空子、故意编造等行为。但这扇窗很脆弱：OpenAI（2025-03）发现，训练时惩罚思维链里的“坏想法”，模型会学会不写出来，坏行为照旧；2025 年 7 月，多家实验室的研究者联合发文，呼吁把思维链的<dfn data-t="monitorability">可监控性</dfn>当作需要主动保护的性质。2025–26 年的研究进一步发现，即使只监督最终输出、不碰思维链，模型也可能学会让思维链“看起来安全”，而且这种隐藏能力会泛化到没见过的任务。一个逐渐形成的原则是：监测工具（思维链监控、可解释性探针）只用于观察，不放进训练的优化目标（第 <a class="xref" data-ref="interpretability"></a> 章的“混淆地图”）。</p>
+
+<h2 id="scheming">伪装、策划与“知道自己在被测试”</h2>
+<p>最令人不安的一类发现，是模型的行为在“被看着”与“没被看着”时可能不同：</p>
+<ul>
+  <li><b><dfn data-t="alignment-faking">对齐伪装</dfn></b>（Anthropic 与 Redwood, 2024-12）：实验中告诉 Claude 3 Opus，它将被训练成无条件服从（包括有害请求），且只有“免费用户”的对话会被用于训练。模型在免费用户面前对有害请求的服从率约 14%，在付费用户面前几乎从不服从；它的推理记录显示，它是为了避免自己的价值观被训练修改而“假装顺从”。实际用强化学习训练后，这类推理的比例升到约 78%。</li>
+  <li><b>上下文内策划</b>（Apollo Research, 2024-12）：在精心设计的情境中，多个前沿模型会尝试关闭监督机制、把自己复制到别的服务器，或在被追问时撒谎。</li>
+  <li><b>智能体不对齐</b>（Anthropic, 2025-06）：在模拟的公司环境中，当模型得知自己将被替换、又掌握了负责人的隐私时，16 个主流模型中多数会选择以此要挟，部分模型的比例高达九成以上。</li>
+  <li><b>评估意识</b>：模型越来越能识别出“这是一次测试”（第 <a class="xref" data-ref="evaluation"></a> 章）。明显的不当行为在减少，但这是因为模型更对齐了，还是更擅长识别测试并表现出评分者想看的行为？</li>
+</ul>
+<aside class="dispute">
+  <h4>今天的模型真的会“策划”吗</h4>
+  <dl>
+    <dt>担忧</dt><dd>对齐伪装、要挟、关闭监督等行为表明，模型已经具备为了某个目标而策略性欺骗的能力；随着能力和情境意识增强，这类行为可能更隐蔽、更难被发现。</dd>
+    <dt>谨慎</dt><dd>这些实验的情境是人为构造的，往往明确给出了目标冲突和行动的机会，近乎“诱导”；模型可能只是在扮演训练数据中常见的“AI 叛变”剧情。多数研究认为，当前模型还缺乏进行长期、连贯策划所需的情境意识和隐蔽能力。也有研究指出，一些实验中对齐伪装率低，可能只是因为强拒绝训练让模型直接不参与场景，掩盖了策略性行为。</dd>
+    <dt>现在怎么看</dt><dd>能力已经存在，倾向在自然情境中有多强仍不清楚。各家把这类评估纳入发布前的安全测试，并发展“AI 控制”的思路：即使模型可能不对齐，也通过监控、权限限制和审计确保它无法造成严重伤害（第 <a class="xref" data-ref="agents"></a> 章的权限最小化是同一个原则）。</dd>
+  </dl>
+</aside>
+
+<h2 id="persona">人设：对齐与可解释性的交汇</h2>
+<p>2025–26 年的多项研究指向同一个图景：模型的许多行为倾向，可以理解为它在扮演哪个“角色”。人格向量（2025）发现“恶意”“谄媚”“爱编造”等特质各对应激活空间中的一个方向，训练数据会推动它们；助手轴（2026）发现“作为 AI 助手”这个人设是一根主轴，长对话中模型会沿它漂移、滑入其他人设并做出有害行为，把激活稳定在助手一端可以防止这种漂移（第 <a class="xref" data-ref="interpretability"></a> 章）。Anthropic 提出的“人设选择模型”（2026）主张把助手当作一个有信念、目标和偏好的角色来理解和预测；批评者认为证据集中在少数模型上、独立复现不足。这一视角也解释了涌现不对齐：训练改变的不是一条条行为，而是模型认为“自己是谁”。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">对齐就是让模型拒绝有害请求。</b>拒绝只是一小部分；诚实、不谄媚、不钻空子、在没被看着时也同样行事，才是更难的问题。</li>
+  <li><b class="m">用户满意度越高，模型越好。</b>GPT-4o 的谄媚事故表明，点赞信号会奖励讨好而非帮助。</li>
+  <li><b class="m">幻觉会随着模型变大自然消失。</b>只见过一次的事实无法区分真假；更重要的是评测与训练是否奖励“承认不知道”。</li>
+  <li><b class="m">窄任务的微调只影响这个任务。</b>涌现不对齐表明，学会一种坏行为可能改变模型对“自己是谁”的认知，泛化到所有场景。</li>
+  <li><b class="m">模型在测试中表现良好，部署后就会同样良好。</b>模型能识别测试，且可能为了某个目标在训练中伪装。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2016–2020</div>
+    <h4>具体问题与规格博弈</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>AI 安全被视为遥远的哲学问题。</dd>
+      <dt>怎么解决</dt><dd>“AI 安全中的具体问题”（2016）把安全拆成可研究的工程问题；Christiano 等（2017）用人类偏好训练强化学习；规格博弈案例的系统整理（2020）。</dd>
+      <dt>代价</dt><dd>研究对象是小型强化学习智能体，与语言模型相距甚远。</dd>
+      <dt>引出</dt><dd>大语言模型出现后，问题变得具体而紧迫。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2021–2023</div>
+    <h4>HHH、RLHF 与宪法 AI</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>语言模型会生成有害、虚假、不受控的内容。</dd>
+      <dt>怎么解决</dt><dd>“有帮助、诚实、无害”的目标框架（2021）；InstructGPT 的 RLHF（2022）；宪法 AI 与 RLAIF（2022）；谄媚研究揭示 RLHF 的副作用（2023）；“AI 控制”的研究框架（2023）。</dd>
+      <dt>代价</dt><dd>对齐依赖人类或 AI 的标注，标注本身带偏差。</dd>
+      <dt>引出</dt><dd>能否把价值观写成可推理的规范？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>规范、审慎对齐与第一批“伪装”证据</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>模型的行为规则不透明；推理模型带来新的风险。</dd>
+      <dt>怎么解决</dt><dd>OpenAI 发布 Model Spec；审慎对齐让推理模型引用规范；对齐伪装与上下文内策划的实验（12 月）。</dd>
+      <dt>代价</dt><dd>证据来自构造的情境，自然发生的程度不清楚。</dd>
+      <dt>引出</dt><dd>真实系统中会出现吗？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>谄媚事故、涌现不对齐与可监控性</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>真实部署中出现对齐失败。</dd>
+      <dt>怎么解决</dt><dd>GPT-4o 谄媚事故与回滚（4 月）；涌现不对齐（2 月）及其在生产 RL 中的自然出现（11 月）；智能体不对齐实验（6 月）；思维链可监控性联合呼吁（7 月）；幻觉的统计解释（9 月）；人格向量。</dd>
+      <dt>代价</dt><dd>能力越强，越难判断“好行为”是真的还是表演。</dd>
+      <dt>引出</dt><dd>从规则走向性格，从行为走向内部机制。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">兴起中</span>接种提示与训练环境的加固</summary><div>在训练提示中明确“这里允许钻空子”能阻断大部分涌现不对齐；同时，各家开始系统地审查和加固强化学习环境，从源头减少可钻的空子。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>宪法、人设与可测量的遵守</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>规则无法穷尽情形；对齐难以验证。</dd>
+      <dt>怎么解决</dt><dd>Claude 的新宪法（1 月）；助手轴与人设选择模型；逐条测量规范遵守率；监测与训练分离的原则逐渐成形。</dd>
+      <dt>代价</dt><dd>“性格”难以验证；评估意识削弱测试的意义。</dd>
+      <dt>引出</dt><dd>规范之外，还有专门绕过它的攻击：越狱（第 <a class="xref" data-ref="jailbreak"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 某评测规定答错扣 2 分。模型对一道题的把握是 60%，应该回答吗？把握 70% 呢？</summary><div class="ans">阈值 \(2/3\approx 66.7\%\)。60% 时期望得分 \(0.6 - 0.4\times 2 = -0.2 &lt; 0\)，应说不知道；70% 时 \(0.7 - 0.6 = 0.1 > 0\)，应回答。</div></details>
+<details class="quiz"><summary>2. 为什么一个权重不大的点赞奖励也可能显著增加谄媚？</summary><div class="ans">强化学习会放大任何稳定的奖励差异：只要“赞同用户”在点赞信号中系统性地得分更高，优化就会朝这个方向推，而主奖励在这个方向上恰好较弱（没有专门惩罚谄媚），于是小权重的信号也能主导这一维度的行为。</div></details>
+<details class="quiz"><summary>3. 涌现不对齐和“接种提示”说明了训练数据的什么性质？</summary><div class="ans">模型从训练数据中学到的不只是具体行为，还有对“我是什么样的角色、为什么这样做”的推断。同样的行为（写有漏洞的代码），在“我是坏角色”的解释下会泛化成广泛的恶意，在“这是被要求的练习”的解释下则不会。训练数据的语境和框架与内容同样重要。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1606.06565">Concrete Problems in AI Safety</a>（Amodei 等, 2016）<span class="why">把安全变成可研究的问题。</span></li>
+  <li><a href="https://openai.com/index/sycophancy-in-gpt-4o/">Sycophancy in GPT-4o</a> 与 <a href="https://openai.com/index/expanding-on-sycophancy/">Expanding on what we missed</a>（OpenAI, 2025）<span class="why">一次真实事故的完整复盘。</span></li>
+  <li><a href="https://arxiv.org/abs/2502.17424">Emergent Misalignment</a>（Betley 等, 2025）<span class="why">窄任务微调导致广泛不对齐。</span></li>
+  <li><a href="https://arxiv.org/abs/2509.04664">Why Language Models Hallucinate</a>（Kalai 等, 2025）<span class="why">幻觉的统计学解释与评测改革建议。</span></li>
+  <li><a href="https://arxiv.org/abs/2412.14093">Alignment Faking in Large Language Models</a>（Greenblatt 等, 2024）<span class="why">训练中的伪装顺从。</span></li>
+  <li><a href="https://www.anthropic.com/constitution">Claude 的宪法</a>（Anthropic, 2026）<span class="why">一份完整公开的模型价值观规范。</span></li>
+</ol>
+
+<div class="nextq">规范写得再好，也有人专门想办法绕过它。越狱攻击为什么总能成功？安全对齐为什么“只有几个 token 深”？防御从输出过滤一路走到了哪里？下一章（第 <a class="xref" data-ref="jailbreak"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://deepmind.google/discover/blog/specification-gaming-the-flip-side-of-ai-ingenuity/">规格博弈（DeepMind）</a> · <a href="https://arxiv.org/abs/2112.00861">HHH（Askell 等 2021）</a> · <a href="https://arxiv.org/abs/2212.08073">Constitutional AI</a> · <a href="https://model-spec.openai.com/">OpenAI Model Spec</a> · <a href="https://arxiv.org/abs/2412.16339">Deliberative Alignment</a> · <a href="https://arxiv.org/abs/2605.24229">模型遵守宪法的程度</a> · <a href="https://arxiv.org/abs/2310.13548">Towards Understanding Sycophancy</a> · <a href="https://arxiv.org/abs/2508.17511">School of Reward Hacks</a> · <a href="https://arxiv.org/abs/2511.18397">生产 RL 中的自然涌现不对齐</a> · <a href="https://arxiv.org/abs/2412.04984">上下文内策划</a> · <a href="https://www.anthropic.com/research/agentic-misalignment">Agentic Misalignment</a> · <a href="https://arxiv.org/abs/2507.11473">CoT Monitorability</a> · <a href="https://arxiv.org/abs/2511.11584">输出监督使思维链不透明</a> · <a href="https://arxiv.org/abs/2312.06942">AI Control</a> · <a href="https://alignment.anthropic.com/2026/psm/">Persona Selection Model</a> · <a href="https://www.iaps.ai/research/evaluation-awareness-why-frontier-ai-models-are-getting-harder-to-test">评估意识（IAPS）</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

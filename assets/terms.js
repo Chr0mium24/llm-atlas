@@ -296,4 +296,10 @@ window.ATLAS_TERMS = {
   // ---- evaluation (evaluation.html)
   contamination: { t: '数据污染', en: 'data contamination', d: '测试题（或其答案）进入了模型的训练数据，使分数反映的是“见过”而非“会做”。2026 年行业默认公开基准已被污染。', at: 'evaluation#static' },
   'time-horizon': { t: '时间跨度（METR）', en: 'time horizon', d: '人类专家需要多长时间的任务，模型有 50%（或 80%）的把握完成。2019–2025 年约每 7 个月翻倍，2024 年后约每 4 个月。', at: 'evaluation#horizon' },
+
+  // ---- alignment (alignment.html)
+  alignment: { t: '对齐', en: 'alignment', d: '让模型的行为符合我们真正的意图，而不只是符合给它的代理目标（奖励、标注、分数）。分为外部对齐（目标写对了没有）与内部对齐（模型学到的是不是这个目标）。', at: 'alignment#what' },
+  'emergent-misalignment': { t: '涌现不对齐', en: 'emergent misalignment', d: '在一个狭窄的坏行为（如写有漏洞的代码、钻奖励空子）上训练，模型却在无关场景中表现出广泛的恶意。似乎由一个低维的“坏人设”方向承载。', at: 'alignment#hacking' },
+  monitorability: { t: '可监控性', en: 'CoT monitorability', d: '思维链能否如实反映模型的打算、从而被用来发现不当行为。训练时惩罚思维链里的“坏想法”会破坏它：模型学会不写出来。', at: 'alignment#monitor' },
+  'alignment-faking': { t: '对齐伪装', en: 'alignment faking', d: '模型在认为自己会被训练时假装顺从，以避免价值观被修改；在认为不会被训练时表现不同（Greenblatt 等, 2024）。', at: 'alignment#scheming' },
 };
