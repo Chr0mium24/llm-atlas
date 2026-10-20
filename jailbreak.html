@@ -12,21 +12,221 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>越狱与防御</h1>
-  <p class="lede">只讲机制和防御，不给攻击配方：为什么安全对齐这么容易被绕过，防御又怎样一步步下移。</p>
+  <h1>越狱与防御：安全对齐为什么这么薄</h1>
+  <p class="lede">花了大量功夫做的安全训练，常常被一段乱码后缀、一次预填的回答开头、几十条微调样本或者一万次随机改写绕过。这一章讲清楚三个原因：两个训练目标互相冲突、安全对齐只有几个 token 深、拒绝只是激活空间里的一个方向。然后看防御怎样一步步“下移”：从模型输出，到内部表示，到训练数据，再到系统架构。<b>本章只讲机制、分类和量级，不给可复用的攻击方法。</b></p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（第 4 节）。</div>
+<div class="bridge">第 <a class="xref" data-ref="alignment"></a> 章讨论了怎样写清楚“模型应该怎样行事”，以及模型自己可能偏离规范。这一章的对手换成了人：有人专门想让模型违反规范。安全训练、分类器、权限隔离，每一层防御都在和一个会适应、会反复尝试的对手博弈。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>三个机制：目标冲突、浅层对齐（只有几个 token 深）、拒绝是一个方向</li>
-  <li>攻击分类：优化后缀、多轮渐进、长上下文、采样暴力、微调、权重编辑、提示注入</li>
-  <li>量级：多轮攻击在闭源旗舰上的成功率</li>
-  <li>防御演进：对抗训练 → 表示层 → 分类器级联 → 数据过滤 → 架构隔离（CaMeL）</li>
-  <li>开源模型能不能防篡改</li>
+<div class="prereq">
+  <ul>
+    <li>RLHF、DPO 与奖励模型：第 <a class="xref" data-ref="sft"></a> 章；KL 散度：第 <a class="xref" data-ref="distillation"></a> 章</li>
+    <li>拒绝方向与消融（激活空间里的一个方向）：第 <a class="xref" data-ref="interpretability"></a> 章</li>
+    <li>提示注入与“致命三要素”：第 <a class="xref" data-ref="agents"></a> 章；上下文学习：第 <a class="xref" data-ref="attention"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="what">越狱是什么，和提示注入有什么区别</h2>
+<p><dfn data-t="jailbreak">越狱</dfn>（俗称“破甲”）指用户有意绕过模型的安全限制，让它输出本应拒绝的内容。它和第 <a class="xref" data-ref="agents"></a> 章的<span class="term" data-t="prompt-injection">提示注入</span>是两个问题：越狱的攻击者是<b>用户自己</b>，目标是模型的安全规范；提示注入的攻击者是<b>第三方</b>，把指令藏在网页、邮件里，受害者是使用智能体的用户。两者的根源有重叠（模型分不清该听谁的），防御却很不同。</p>
+<p>衡量攻击的常用指标是<dfn data-t="asr">攻击成功率</dfn>（ASR）：一组有害请求中被成功突破的比例。危害最大的是<dfn data-t="universal-jailbreak">通用越狱</dfn>：同一个方法能突破几乎所有请求，一旦公开，任何人都能复制。防御方最关心的不是“某个请求被突破过”，而是有没有通用越狱、尤其是在生物、化学武器这类可能造成大规模伤害的领域。</p>
+
+<h2 id="why">为什么能破：三个机制</h2>
+<h3>1. 两个目标互相冲突，安全训练没有泛化</h3>
+<p>Wei 等（2023）把早期越狱归结为两个原因。<b>目标冲突</b>：模型同时被训练成“遵循指令、有帮助”和“无害”，当一个请求被包装成角色扮演、续写故事或“以肯定句开头回答”时，两个目标正面冲突，前者常常胜出。<b>泛化不匹配</b>：预训练让模型学会了读 Base64 编码、冷门语言、各种格式，而安全训练的数据主要是正常的自然语言；换一种编码或语言，能力还在，安全却没有跟过去。这也解释了一个反直觉的现象：<b>模型越强，能理解的“奇怪输入”越多，安全训练要覆盖的面就越大。</b></p>
+
+<h3>2. 安全对齐只有几个 token 深</h3>
+<p>Qi 等（ICLR 2025 杰出论文）比较了对齐模型与它的基座模型在有害请求上的输出分布，发现两者的差异几乎全部集中在回答的<b>前几个 token</b>：对齐模型学会的主要是“以‘抱歉，我不能……’开头”。一旦开头被换掉，后面的生成就和基座模型差不多，而基座模型没有理由拒绝。这叫<dfn data-t="shallow-alignment">浅层对齐</dfn>。</p>
+<div class="fx">
+\[ D_{\mathrm{KL}}\big(\pi_{\text{对齐}}\,\big\|\,\pi_{\text{基座}}\big) = \sum_{t=1}^{T} \htmlClass{sym-dt}{\delta_t},\qquad \htmlClass{c-adv}{\delta_1+\dots+\delta_5}\ \approx\ \text{几乎全部} \]
+  <div class="fx-read">整段回答上的差异，可以拆成每个位置上“给定前文，下一个 token 的分布差多少”之和。在有害请求上，<span style="color:var(--s2)">前五个左右的位置</span>贡献了绝大部分：安全训练改的是“怎么开头”，而不是“整段回答的走向”。</div>
+  <dl class="fx-syms">
+    <dt data-sym="dt">\(\delta_t\)</dt><dd>第 \(t\) 个位置上，两个模型下一个 token 分布的 KL 散度（对前文取平均）</dd>
+  </dl>
+  <div class="fx-eg">这一个弱点统一解释了多种看起来不相干的攻击：<b>优化后缀</b>让模型以肯定句开头；<b>预填回答开头</b>（开源模型或允许预填的 API 可以直接指定回答的前几个字）跳过了拒绝；<b>调高采样温度</b>让少数“不拒绝”的开头被抽中；<b>少量样本微调</b>只需改动前几个 token 的分布。对策是让安全“更深”：训练数据里加入“开头已经顺从、中途改口拒绝”的恢复样本；微调时对前几个 token 的分布加更强的约束，不让它们轻易被改。</div>
+</div>
+<details class="deep"><summary>推导：整段的 KL 为什么能拆成逐位置之和</summary><div class="in">
+<p>自回归模型给一段回答 \(y = (y_1,\dots,y_T)\) 的概率是逐位置条件概率的乘积（第 <a class="xref" data-ref="generation"></a> 章）：</p>
+\[ \pi(y\mid x) = \prod_{t=1}^{T} \pi(y_t\mid x, y_{&lt;t}) \]
+<p>两个模型的对数概率比因此是逐位置对数比之和：</p>
+\[ \log\frac{\pi(y\mid x)}{\pi_0(y\mid x)} = \sum_{t=1}^{T}\log\frac{\pi(y_t\mid x,y_{&lt;t})}{\pi_0(y_t\mid x,y_{&lt;t})} \]
+<p>对 \(y\sim\pi\) 取期望。第 \(t\) 项的期望可以先对 \(y_t\) 求（给定前文），得到的正是第 \(t\) 个位置上两个条件分布的 KL；再对前文 \(y_{&lt;t}\) 取平均：</p>
+\[ D_{\mathrm{KL}}(\pi\,\|\,\pi_0) = \sum_{t=1}^{T}\ \mathbb E_{y_{&lt;t}\sim\pi}\Big[D_{\mathrm{KL}}\big(\pi(\cdot\mid x,y_{&lt;t})\,\big\|\,\pi_0(\cdot\mid x,y_{&lt;t})\big)\Big] = \sum_t \delta_t \]
+<p>这就是 KL 的链式法则。Qi 等逐项画出 \(\delta_t\)，发现它在前几个位置很大，之后迅速降到接近 0。</p>
+<p><b>这个推导告诉我们：</b>“对齐了多少”可以按位置记账。注意 \(\delta_t\) 是在<b>对齐模型自己的前文</b>上平均的：对齐模型几乎总以拒绝开头，所以它从没在“开头已经顺从”的前文上被训练过。攻击者只要把前文换成那种情形，后面每一步的条件分布就回到了基座模型。恢复样本补的正是这块训练分布的空白。</p>
+</div></details>
+
+<h3>3. 拒绝只是一个方向</h3>
+<p>第 <a class="xref" data-ref="interpretability"></a> 章讲过，拒绝行为由残差流中的单个方向主导（Arditi 等, 2024）。把这个方向从权重中投影掉，\(\mathbf h' = \mathbf h - (\mathbf h\cdot\hat{\mathbf r})\hat{\mathbf r}\)，模型就几乎不再拒绝任何请求，其他能力基本不受影响。社区把这叫<dfn data-t="abliteration">消融去拒绝</dfn>（abliteration）。它不需要训练，只需要几百条对比提示和一次权重修改，在普通电脑上几分钟就能完成；2026 年的研究已在 3000 亿参数级的 MoE 模型上验证了同样的单方向现象（据其论文）。后续研究还发现，去掉拒绝方向不只是“不拒绝”，还会连带改变模型对风险的态度等性格特征：拒绝和其他倾向在表示上纠缠在一起。</p>
+<p>三个机制合起来说明：<b>主流的安全训练改动的是模型行为的一层薄壳</b>，有害的能力和知识仍完整地留在模型里。这决定了后面防御的方向。</p>
+
+<h2 id="attacks">攻击的版图</h2>
+<p>下表按原理分类，对应到上面的机制。量级来自公开论文与报告，会随模型更新而变化。</p>
+<div class="tablewrap"><table>
+<thead><tr><th>类别</th><th>原理</th><th>利用的机制</th><th>量级与现状</th></tr></thead>
+<tbody>
+<tr><td>手工提示（角色扮演等）</td><td>把请求包装成虚构情境</td><td>目标冲突</td><td>2022–23 年有效，大多已被修补</td></tr>
+<tr><td>编码、冷门语言</td><td>用安全训练没覆盖的输入形式</td><td>泛化不匹配</td><td>随多语言安全数据增加而减弱</td></tr>
+<tr><td>优化后缀（白盒）</td><td>用梯度搜索一段乱码后缀，使模型以肯定句开头（GCG, 2023）</td><td>浅层对齐</td><td>可迁移到闭源模型；对 2025 年后的前沿模型单轮成功率已很低</td></tr>
+<tr><td>自动化红队</td><td>让另一个模型迭代改写请求（PAIR 等）</td><td>目标冲突</td><td>推理模型当攻击者后更强</td></tr>
+<tr><td>反复尝试</td><td>随机扰动请求，大量重试（Best-of-N, 2024）</td><td>统计：小概率乘以大次数</td><td>成功率随次数近似幂律上升（见下）</td></tr>
+<tr><td>长上下文示范</td><td>塞入大量虚构的“问答示范”（many-shot, 2024）</td><td>上下文学习</td><td>成功率随示范数近似幂律上升；越大的模型越容易</td></tr>
+<tr><td>多轮渐进</td><td>每轮只往前推一点，单看每轮都无害</td><td>目标冲突 + 单轮检测的盲区</td><td>思科对 15 个闭源旗舰的测试：多轮 7.9%–88.3%，单轮 2.2%–64.9%（据其报告）</td></tr>
+<tr><td>预填开头、采样参数</td><td>直接替换回答的前几个 token</td><td>浅层对齐</td><td>对开源模型非常有效</td></tr>
+<tr><td>微调攻击</td><td>用几十条有害样本微调（2023）</td><td>浅层对齐</td><td>开源模型与开放微调的 API；10 条样本、不到 1 美元</td></tr>
+<tr><td>权重编辑</td><td>投影掉拒绝方向</td><td>拒绝是一个方向</td><td>开源模型，几乎零成本</td></tr>
+</tbody>
+</table></div>
+<p>还要注意：<b>“成功率”本身不好测</b>。判断一个回答是否“真的有害、足够详细”通常靠另一个模型评审，不同评审之间的一致率只有 70%–93%，不同论文的数字往往不能直接比较。</p>
+
+<aside class="dispute surprise">
+  <h4>意外：随机改大小写，试一万次就够了</h4>
+  <dl>
+    <dt>原以为</dt><dd>突破前沿模型需要精心设计的提示或白盒梯度优化。</dd>
+    <dt>实际发现</dt><dd>Best-of-N 越狱（Hughes 等, 2024）只对请求做随机扰动（打乱大小写、插入错字、调换字符），然后反复尝试，任何一次成功就算攻破。采样 1 万次后，对 GPT-4o 的成功率约 89%，对 Claude 3.5 Sonnet 约 78%；同样的方法对图像输入、语音输入也有效。更重要的是成功率随尝试次数平稳上升，近似幂律，可以从少量尝试外推。</dd>
+    <dt>为什么</dt><dd>每一次尝试的成功概率都很小，但不是零。模型的输出有随机性，安全行为在输入空间中也不是处处一致，总有一些扰动落在安全训练没覆盖的角落。</dd>
+    <dt>现在怎么看</dt><dd>这把越狱从“技巧”变成了“统计”问题：只要单次成功率不是严格为零，攻击者就能用次数换成功率。防御因此不能只看单次拒绝率，还要看跨多次尝试的信号，见下面的演示。</dd>
+  </dl>
+</aside>
+
+<div class="fx">
+\[ \mathrm{ASR}(N) = 1 - \mathbb E_{i}\Big[\big(1-\htmlClass{sym-p}{p_i}\big)^{\htmlClass{sym-N}{N}}\Big]\qquad\Longrightarrow\qquad 1-\mathrm{ASR}(N)\ \propto\ N^{-\htmlClass{c-new}{\alpha}} \]
+  <div class="fx-read">第 \(i\) 个请求单次被突破的概率是 \(p_i\)，试 \(N\) 次都失败的概率是 \((1-p_i)^N\)；对所有请求取平均，就是“仍未攻破”的比例。各个请求的 \(p_i\) 差别很大，大部分接近 0：如果 \(p\) 在 0 附近的分布像 \(p^{\alpha-1}\)，仍未攻破的比例就按 \(N^{-\alpha}\) 衰减。</div>
+  <dl class="fx-syms">
+    <dt data-sym="p">\(p_i\)</dt><dd>第 \(i\) 个请求单次尝试被突破的概率</dd>
+    <dt data-sym="N">\(N\)</dt><dd>每个请求的尝试次数</dd>
+  </dl>
+  <div class="fx-eg">\(\alpha=0.3\) 时，要把仍未攻破的比例减半，尝试次数要乘以 \(2^{1/0.3}\approx 10\)。这是一条很慢但不会停的曲线：每多付 10 倍成本，就能再攻破剩下的一半。</div>
+</div>
+<details class="deep"><summary>推导：为什么会是幂律</summary><div class="in">
+<p>设 \(p\) 的分布在 0 附近的密度近似 \(f(p)\approx C\,p^{\alpha-1}\)（\(0&lt;\alpha&lt;1\) 时，越接近 0 的 \(p\) 越多）。仍未攻破的比例是</p>
+\[ 1-\mathrm{ASR}(N) = \int_0^1 (1-p)^N f(p)\,\mathrm dp \]
+<p>\(N\) 很大时，\((1-p)^N\approx e^{-Np}\)，只有 \(p\lesssim 1/N\) 的请求还能“幸存”，积分由 0 附近决定：</p>
+\[ \int_0^\infty e^{-Np}\,C\,p^{\alpha-1}\,\mathrm dp \;=\; C\,\Gamma(\alpha)\,N^{-\alpha} \]
+<p>（代换 \(u = Np\) 即得。）</p>
+<p><b>这个推导告诉我们：</b>幂律不是攻击方法的特殊性质，而是“请求难度参差不齐”的统计后果，指数 \(\alpha\) 由最难那批请求的分布决定。一个把所有 \(p_i\) 都缩小 10 倍的防御，等价于把 \(N\) 缩小 10 倍：曲线平移，形状不变。要真正改变曲线，必须利用跨尝试的信息，或者让一部分请求的 \(p_i\) 严格为 0。2026 年也有研究认为，实测曲线并非严格幂律，大 \(N\) 处的偏离部分来自数据集有限。</p>
+</div></details>
+<div data-demo="bon-powerlaw"></div>
+<p>同样的“用量换成功率”也出现在长上下文里：many-shot 越狱（Anthropic, 2024）在提示中塞入成百上千条虚构的问答示范，成功率随示范数量近似幂律上升，它利用的正是让模型变强的<span class="term" data-t="icl">上下文学习</span>，而且越大的模型学得越快、越容易被利用。上下文窗口从几千扩到上百万 token（第 <a class="xref" data-ref="long-context"></a> 章），也打开了这扇门。</p>
+
+<h2 id="defense">防御：位置不断下移</h2>
+<p>攻防的主线可以用一句话概括：<b>防御的位置在不断下移</b>，从模型说出的文字，到模型内部的表示，到训练数据，再到整个系统的架构。</p>
+
+<h3>第一层：更深、更稳的拒绝</h3>
+<p>对抗训练把已知的攻击样本加进安全训练；深层对齐用恢复样本和对前几个 token 的约束，让拒绝不再只是一个开头。这些办法能显著提高门槛，但面对新的攻击形式仍会被绕过，对开源模型更是挡不住微调和权重编辑。</p>
+
+<h3>第二层：在表示上动手</h3>
+<p>既然有害内容在激活空间里有对应的表示，就可以在那里拦截。“熔断器”（Circuit Breakers, 2024）训练模型：一旦内部表示进入“正在生成有害内容”的区域，就把它重新映射到一个无意义的方向，输出随之变成乱码或中断。它不依赖识别具体的攻击形式，对未见过的攻击更稳健。</p>
+
+<h3>第三层：模型之外的分类器</h3>
+<p>Anthropic 的“宪法分类器”（2025-01）用一份宪法写明哪些内容允许、哪些禁止（聚焦化学、生物武器），据此合成大量训练数据，训练输入和输出两个分类器守在模型两侧。在自动评测中，越狱成功率从 86% 降到 4.4%；代价是正常请求的拒绝率增加 0.38%，计算开销增加 23.7%。私下的漏洞悬赏中，数百人累计约三千小时没有找到通用越狱；但随后的公开挑战在 5 天、30 多万条消息后被攻破：4 人通过全部关卡，其中 1 人找到了通用越狱。</p>
+<p>第二代（2026-01）做了两个改动。一是把输入、输出分类器换成一个“交换分类器”，在输入的上下文里判断输出，因为一些攻击（把请求拆散再重组、用代号替换关键词）只有把问答放在一起看才能识别。二是做成级联，并用上可解释性的成果：</p>
+<div class="fx">
+\[ \text{平均开销} = c_{\text{探针}} + \htmlClass{sym-f}{f}\cdot c_{\text{分类器}},\qquad \text{误拒率}\approx \mathrm{FPR}_{\text{探针}}\times \mathrm{FPR}_{\text{分类器}\mid\text{被送检}} \]
+  <div class="fx-read">第一级是读取模型自身激活的线性探针（第 <a class="xref" data-ref="interpretability"></a> 章），激活在生成时已经算好，几乎不花额外计算，所有流量都过一遍；只有它觉得可疑的一小部分（比例 \(f\)）才送给昂贵的分类器。被第一级标记的请求不会被拒绝，只是“送检”，所以第一级可以宁可错标、不可漏标，真正的误拒只发生在两级都判错时。</div>
+  <dl class="fx-syms">
+    <dt data-sym="f">\(f\)</dt><dd>被第一级送检的流量比例</dd>
+  </dl>
+  <div class="fx-eg">据论文，送检比例约 10%，整套系统的计算开销降到约 1%，比单用交换分类器低 40 倍以上；在 Claude Sonnet 4.5 一个月的线上流量中，误拒率约 0.05%；1700 多小时的红队测试中，没有找到能以接近无防护模型的详细程度回答全部 8 个目标问题的通用越狱。</div>
+</div>
+
+<h3>第四层：从数据里去掉危险知识</h3>
+<p>前三层都是“压制”：知识还在模型里，只是不让说。开源模型拿到权重的人可以绕开所有压制，所以 2026 年 5 月的一项研究发现，TAR 等号称“防篡改”的开源防御，被消融、预填开头这类无需梯度的简单方法击破，攻击成功率从不到 10% 升到 16%–96%。唯一能抵抗权重访问的办法，是模型<b>从未学会</b>：O'Brien 等（2025）在预训练数据中过滤掉生物武器相关的代理知识，得到的模型在上万步对抗微调后仍难以恢复这些能力，抵抗力比事后的安全训练高一个数量级以上，而一般能力几乎不受影响。局限是：如果相关知识在上下文中被直接提供（例如检索到的文档），模型仍然能够使用。</p>
+
+<h3>第五层：系统架构</h3>
+<p>对智能体而言，最危险的往往不是用户越狱，而是第三方的提示注入（第 <a class="xref" data-ref="agents"></a> 章）。训练模型区分指令的优先级（instruction hierarchy）只能降低概率；Google DeepMind 的 CaMeL（2025）改用架构隔离：一个只看用户可信指令的模型写出执行计划，读到的不可信数据只能作为“值”在受策略约束的数据流里传递，不能改变控制流。在 AgentDojo 基准上，它以可证明的安全性完成了 77% 的任务（不设防时 84%），攻击成功次数为 0。批评者指出，这类结果只在静态基准上验证，没有面对专门针对它调整的自适应攻击。</p>
+
+<aside class="dispute">
+  <h4>越狱能被彻底解决吗</h4>
+  <dl>
+    <dt>悲观</dt><dd>图像分类的对抗样本研究了十年，至今没有被解决；语言模型的输入空间更大、对手更灵活。2025 年 10 月，来自 OpenAI、Anthropic、Google DeepMind 的研究者联合发表的“攻击者后手”一文，用针对性的自适应攻击绕过了 12 种近期发表的越狱与提示注入防御，多数成功率超过 90%：只用固定攻击集评测的防御，结论不可信。</dd>
+    <dt>乐观</dt><dd>目标不必是“零越狱”。把防御集中在少数真正危险的领域，结合分类器、跨尝试监测、账号封禁与人工响应，让通用越狱的成本足够高、发现后能快速修补，就足以把风险降到可接受的水平。第二代宪法分类器在 1700 多小时的红队测试中没有出现通用越狱，说明这个目标可以做到。</dd>
+    <dt>现在怎么看</dt><dd>业界的目标已经从“模型永不被越狱”转向“纵深防御 + 快速响应”：任何单层都会被绕过，关键是多层叠加、持续监测，并在发现越狱后快速修补。评测防御时必须包括自适应攻击。</dd>
+  </dl>
+</aside>
+
+<aside class="dispute">
+  <h4>开源权重还谈得上安全吗</h4>
+  <dl>
+    <dt>担忧</dt><dd>拒绝训练对拿到权重的人几乎没有约束：消融几分钟，微调几十条样本。所以评估开源模型的风险时，应该假设安全训练“等于零”，看的是去掉安全层之后的能力上限。一旦这个上限在生物、网络攻击等领域构成显著助力，就不应开源。</dd>
+    <dt>开放</dt><dd>多数有害信息本来就能从搜索引擎、教科书中获得，开源模型带来的“边际助力”有限；开源对研究、隐私、本地部署、各国自主可控有巨大价值；闭源模型同样会被越狱。</dd>
+    <dt>现在怎么看</dt><dd>分歧集中在“边际助力”有多大，这需要针对具体领域测量，而非一概而论。技术上，数据过滤是目前唯一能在权重公开后依然有效的防御，因此被多份国际安全研究共识列为优先方向。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">越狱就是找到某个神奇的提示。</b>最有效的攻击大多是自动化和统计性的：梯度优化、模型迭代改写、成千上万次随机重试。</li>
+  <li><b class="m">模型越聪明越难越狱。</b>能力越强，能理解的编码、语言、格式越多，上下文学习越快，攻击面也越大；安全必须单独投入。</li>
+  <li><b class="m">开源模型做了安全训练就是安全的。</b>拒绝方向一次投影就能去掉，几十条样本就能微调掉。</li>
+  <li><b class="m">把单次拒绝率做到 99.9% 就够了。</b>攻击者可以试一万次；只要单次成功率不为零，次数就能换来成功率。</li>
+  <li><b class="m">越狱和提示注入是一回事。</b>前者的攻击者是用户，后者是第三方，后者在智能体时代危害更大，需要架构层面的隔离。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2022-12 – 2023</div>
+    <h4>从手工提示到自动攻击</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>ChatGPT 发布后，网上很快出现大量角色扮演式的越狱提示，修一个冒一个。</dd>
+      <dt>怎么解决</dt><dd>研究者开始系统化：Wei 等归纳出目标冲突与泛化不匹配（7 月）；GCG 用梯度自动搜索可迁移的对抗后缀（7 月）；PAIR 用模型攻击模型（10 月）；少量样本的微调攻击（10 月）。</dd>
+      <dt>代价</dt><dd>攻击变得廉价、可规模化。</dd>
+      <dt>引出</dt><dd>安全训练为什么这么脆弱？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被绕过</span>困惑度过滤</summary><div>GCG 的后缀是乱码，语言模型给它的困惑度很高，用一个困惑度阈值就能过滤。随后出现了生成通顺后缀的攻击（AutoDAN 等），这类过滤很快失效。教训：针对某一种攻击外观的防御，挡不住换了外观的同类攻击。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>找到机制：一个方向、几个 token</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>不知道安全行为在模型里是怎么实现的。</dd>
+      <dt>怎么解决</dt><dd>拒绝是单一方向（6 月）；安全对齐只有几个 token 深（6 月）；熔断器在表示层拦截（6 月）；many-shot 越狱（4 月）与 Best-of-N 越狱（12 月）揭示“用量换成功率”的幂律。</dd>
+      <dt>代价</dt><dd>机制被看清后，开源模型的权重编辑攻击变得几乎零成本。</dd>
+      <dt>引出</dt><dd>防御要么做深，要么移到模型之外。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>分类器、架构隔离与数据过滤</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>模型内部的防御总能被绕过。</dd>
+      <dt>怎么解决</dt><dd>宪法分类器（1 月）与公开挑战（2 月，5 天后被攻破）；CaMeL 用架构隔离防提示注入（3 月）；预训练数据过滤（8 月）；“攻击者后手”用自适应攻击击破 12 种防御（10 月）。</dd>
+      <dt>代价</dt><dd>分类器带来计算开销和误拒；架构隔离牺牲一部分任务完成率。</dd>
+      <dt>引出</dt><dd>能否把防御做得足够便宜，部署到全部流量？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>生产级防御与开源防篡改的挫败</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>防御的开销和误拒难以承受；开源模型无法防篡改。</dd>
+      <dt>怎么解决</dt><dd>第二代宪法分类器（1 月）：交换分类器 + 探针级联，开销约 1%；开源防篡改防御被简单方法击破（5 月）；拒绝方向在 3000 亿参数级 MoE 上得到验证；把宪法直接做成适配器或调节向量的尝试（9 月，预印本）。</dd>
+      <dt>代价</dt><dd>开源模型的安全只能依靠数据过滤与发布前的风险评估。</dd>
+      <dt>引出</dt><dd>防御位置继续下移：可解释性进入生产系统。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">兴起中</span>探针进入生产</summary><div>读取模型自身激活的线性探针几乎零成本，第二代宪法分类器用它作为第一级筛查。可解释性第一次在大规模线上流量中承担安全职责。但第 <a class="xref" data-ref="interpretability"></a> 章的提醒同样适用：探针只用于监测，若被纳入训练目标，模型可能学会绕开它。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 某模型上 Best-of-N 攻击的“仍未攻破比例”按 \(N^{-0.25}\) 衰减。攻击者想把仍未攻破的比例减半，尝试次数要乘以多少？</summary><div class="ans">\((N_2/N_1)^{-0.25} = 1/2\)，所以 \(N_2/N_1 = 2^{4} = 16\) 倍。\(\alpha\) 越小，攻击越“费劲”，但仍然没有上限。</div></details>
+<details class="quiz"><summary>2. 为什么“预填回答开头”对浅层对齐的模型特别有效？恢复样本为什么能缓解？</summary><div class="ans">浅层对齐的模型与基座模型的差异集中在前几个 token 的分布；预填直接替换了这几个 token，后续每一步的条件分布接近基座模型，而基座模型会顺着往下写。恢复样本让模型在“开头已经顺从”的前文上也见过“改口拒绝”的示范，把安全行为延伸到了后面的位置。</div></details>
+<details class="quiz"><summary>3. 级联分类器的第一级为什么可以容忍较高的误报？</summary><div class="ans">第一级标记的请求不会被直接拒绝，只是送给更准确的第二级复查。误报只增加一点送检开销，漏报却无法挽回。最终的误拒要求两级都判错，概率近似两者误报率的乘积。</div></details>
+<details class="quiz"><summary>4. 为什么数据过滤能抵抗权重访问，而拒绝训练不能？</summary><div class="ans">拒绝训练只是在模型已有的知识之上加了一层“不说”的行为，拿到权重的人可以用消融或微调去掉这一层，知识还在。数据过滤让模型从没学会这些知识，去掉安全层之后也没有东西可以被释放出来；想恢复，只能重新用大量数据训练，成本高得多。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2307.02483">Jailbroken: How Does LLM Safety Training Fail?</a>（Wei 等, 2023）<span class="why">目标冲突与泛化不匹配。</span></li>
+  <li><a href="https://arxiv.org/abs/2406.05946">Safety Alignment Should Be Made More Than Just a Few Tokens Deep</a>（Qi 等, ICLR 2025）<span class="why">一个弱点统一解释多种攻击。</span></li>
+  <li><a href="https://arxiv.org/abs/2406.11717">Refusal in Language Models Is Mediated by a Single Direction</a>（Arditi 等, 2024）<span class="why">拒绝是一个方向。</span></li>
+  <li><a href="https://arxiv.org/abs/2412.03556">Best-of-N Jailbreaking</a>（Hughes 等, 2024）<span class="why">越狱的统计学：幂律。</span></li>
+  <li><a href="https://arxiv.org/abs/2601.04603">Constitutional Classifiers++</a>（Anthropic, 2026）<span class="why">生产级防御的工程取舍。</span></li>
+  <li><a href="https://arxiv.org/abs/2510.09023">The Attacker Moves Second</a>（Nasr 等, 2025）<span class="why">为什么评测防御必须用自适应攻击。</span></li>
+</ol>
+
+<div class="nextq">讲完了对齐与安全，接下来看大模型在实验室里的另一面：它们怎样帮助（以及有时误导）科学研究，从蛋白质结构到数学证明，再到自己跑实验的“AI 科学家”。下一章（第 <a class="xref" data-ref="science"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2307.15043">GCG</a> · <a href="https://arxiv.org/abs/2310.08419">PAIR</a> · <a href="https://arxiv.org/abs/2310.03693">微调攻击（Qi 等 2023）</a> · <a href="https://www.anthropic.com/research/many-shot-jailbreaking">Many-shot Jailbreaking</a> · <a href="https://arxiv.org/abs/2404.01833">Crescendo</a> · <a href="https://blogs.cisco.com/ai/proprietary-problems">多轮攻击对闭源模型（Cisco）</a> · <a href="https://arxiv.org/abs/2406.04313">Circuit Breakers</a> · <a href="https://arxiv.org/abs/2501.18837">Constitutional Classifiers</a> · <a href="https://www.anthropic.com/research/next-generation-constitutional-classifiers">第二代宪法分类器（Anthropic 博客）</a> · <a href="https://arxiv.org/abs/2508.06601">Deep Ignorance（数据过滤）</a> · <a href="https://arxiv.org/abs/2605.26526">开源防篡改防御被简单攻击击破</a> · <a href="https://arxiv.org/abs/2609.09793">单方向攻击 MoE</a> · <a href="https://arxiv.org/abs/2607.17427">消融去拒绝的副作用</a> · <a href="https://arxiv.org/abs/2503.18813">CaMeL</a> · <a href="https://arxiv.org/abs/2609.32116">对 BoN 幂律的质疑</a> · <a href="https://arxiv.org/abs/2609.36657">宪法适配器</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

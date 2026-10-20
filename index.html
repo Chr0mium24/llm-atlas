@@ -78,7 +78,7 @@ document.addEventListener('DOMContentLoaded', () => {
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
     evaluation: '误差棒（标准误）、提示格式差 76 分、饱和与污染（GSM1k）、竞技场 Elo 与排行榜幻觉、LLM 评委偏差、METR 时间跨度（拟合与外推）、构念效度与评估意识',
     alignment: '宪法与 Model Spec、谄媚事故、钻空子泛化成涌现不对齐、幻觉的计分根源、思维链可监控性、对齐伪装与人设',
-    jailbreak: '浅层对齐与拒绝方向、攻击分类、防御层次（只讲机制）',
+    jailbreak: '目标冲突、浅层对齐与拒绝方向；越狱的幂律统计；防御从拒绝训练下移到分类器级联、数据过滤与架构隔离（只讲机制）',
     science: 'AlphaFold、AlphaProof、IMO 金牌、AI 科研助手',
     industry: '成本曲线、芯片、版权诉讼、欧盟 AI 法案',
     frontier: '开源格局、各方向在解决什么问题、开放问题',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 75]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 76]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

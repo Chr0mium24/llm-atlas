@@ -43,7 +43,7 @@
     { s: 'interpretability', t: '可解释性', st: 'new' },
     { s: 'evaluation', t: '评测', st: 'new' },
     { s: 'alignment', t: '对齐', st: 'new' },
-    { s: 'jailbreak', t: '越狱与防御', st: 'todo' },
+    { s: 'jailbreak', t: '越狱与防御', st: 'new' },
     { part: '八 · 应用与社会' },
     { s: 'science', t: 'AI for Science 与数学', st: 'todo' },
     { s: 'industry', t: '产业、算力经济与治理', st: 'todo' },
