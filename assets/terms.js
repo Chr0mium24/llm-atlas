@@ -460,4 +460,20 @@ window.ATLAS_TERMS = {
   'all-to-all': { t: "全对全通信", en: "all-to-all", d: "每张卡都向每张卡发送各不相同的数据。MoE 每层两次：分发（dispatch）与收回（combine），每 token 约 k·d·(发+收字节数)。", at: "moe#parallel" },
   'conditional-memory': { t: "条件记忆", en: "conditional memory", d: "按前面几个 token 直接查一张巨大的 n-gram 嵌入表、再与隐藏状态融合；与 MoE 的“条件计算”并列的另一种稀疏（DeepSeek Engram, 2026）。", at: "moe#memory" },
   upcycling: { t: "升级改造", en: "sparse upcycling", d: "把训练好的稠密模型的 MLP 复制成多个专家作为初始值，再加路由器继续训练，复用已花的预训练算力（Komatsuzaki 等, 2022）。", at: "moe#history" },
+
+  // ---- agents (upgrade 2026-10-20)
+  react: { t: "ReAct", en: "ReAct (reasoning + acting)", d: "2022 年提出的智能体写法：在提示中让模型交替写“思考—行动—观察”，行动是调用外部 API，观察是返回结果。今天的智能体循环仍是这个结构。", at: "agents#loop" },
+  observation: { t: "观察", en: "observation", d: "工具执行后写回上下文的结果（命令输出、文件内容、网页、报错信息）。下一次调用时模型读到它，再决定下一步。", at: "agents#a0-exec" },
+  'parallel-tool-calls': { t: "并行工具调用", en: "parallel tool calls", d: "模型在一次输出里同时发出几个互不依赖的调用，harness 并行执行、一起写回，省掉几轮模型调用和等待。", at: "agents#a0-count" },
+  'agentic-rl': { t: "智能体强化学习", en: "agentic RL", d: "在真实或模拟的工具环境（终端、浏览器、代码仓库）里采样多轮“思考—调用—观察”轨迹，按任务结果更新模型。2025 年后模型会用工具、能坚持长任务主要靠它。", at: "agents#a0-map" },
+  'computer-use': { t: "计算机使用", en: "computer use", d: "把整台电脑当作工具：观察是屏幕截图，动作是点击坐标、输入文字、按快捷键。能操作任何给人用的软件，代价是慢、贵、容易点错。Anthropic 2024-10 推出。", at: "agents#tools" },
+  'external-memory': { t: "外部记忆", en: "external memory", d: "把计划、待办、进展笔记写进文件等上下文之外的存储，需要时再读回。长度不受窗口限制，也不会在压缩中丢失。", at: "agents#context" },
+  'context-reset': { t: "上下文重置", en: "context reset", d: "不在原地压缩，而是让智能体把进展和下一步写成交接文件，再开一个全新的上下文从文件读起。用于跨多个会话的长任务。", at: "agents#context" },
+  'dense-retrieval': { t: "稠密检索", en: "dense retrieval", d: "查询和文档各自编码成一个稠密向量，用点积 \\(\\mathbf e_q\\cdot\\mathbf e_d\\) 打分；文档向量离线算好，查询时做近似最近邻搜索。擅长同义改写，不擅长精确匹配。", at: "agents#rag" },
+  'cross-encoder': { t: "交叉编码器", en: "cross-encoder", d: "把查询和文档拼在一起送进同一个模型直接打分，比分开编码更准，但每一对都要算一次，所以只用来给召回的少量候选重排。", at: "agents#rag" },
+  'recall-at-k': { t: "召回率@k", en: "recall@k", d: "在一组测试查询上，正确的文档块出现在前 k 个检索结果里的比例。只衡量“找没找到”，不管排第几。", at: "agents#rag" },
+  'deep-research': { t: "深度研究", en: "deep research", d: "自己决定搜什么、读哪些页面、何时换关键词，连续搜索几十上百次再写成带引用报告的智能体；2025 年起多用端到端 RL 训练。", at: "agents#rag" },
+  'agent-half-life': { t: "半衰期（智能体）", en: "half-life of agent success", d: "每步致命错误率为 \\(\\lambda\\) 时，成功率随步数指数衰减，降到 50% 需要 \\(\\ln 2/\\lambda\\approx 0.69/\\lambda\\) 步；80% 把握的长度约为它的三分之一。", at: "agents#long" },
+  'orchestrator-worker': { t: "编排者-工作者", en: "orchestrator-worker", d: "最常用的多智能体结构：一个主智能体拆分任务、汇总结果，若干子智能体在各自的干净上下文里并行工作。", at: "agents#multi" },
+  'lethal-trifecta': { t: "致命三要素", en: "lethal trifecta", d: "Simon Willison 提出：智能体同时能读私密数据、会接触不可信内容、能向外发送信息时，提示注入就能把私密数据偷出去。去掉任意一项或加人工确认可阻断。", at: "agents#security" },
 };
