@@ -250,4 +250,13 @@ window.ATLAS_TERMS = {
   'flow-matching': { t: '流匹配', en: 'flow matching / rectified flow', d: String.raw`用直线插值 \(\mathbf x_t = (1-t)\mathbf x_0 + t\boldsymbol\varepsilon\) 定义路径，回归速度 \(\boldsymbol\varepsilon - \mathbf x_0\)，生成时解 ODE。路径更直、少步误差更小；SD3、FLUX 起的标准。`, at: 'diffusion#forward' },
   score: { t: '分数', en: 'score', d: String.raw`对数概率密度的梯度 \(\nabla_{\mathbf x}\log p_t(\mathbf x)\)，指向密度上升最快的方向。由 Tweedie 公式，它等于 \(-\mathbb E[\boldsymbol\varepsilon\mid\mathbf x_t]/b_t\)，即去噪器隐含的信息。`, at: 'diffusion#reverse' },
   cfg: { t: '无分类器引导（CFG）', en: 'classifier-free guidance', d: String.raw`\(\hat\varepsilon = \hat\varepsilon(\varnothing) + w(\hat\varepsilon(c) - \hat\varepsilon(\varnothing))\)：放大条件带来的改变，相当于从 \(p(\mathbf x)p(c\mid\mathbf x)^w\) 采样。更贴题、多样性下降。`, at: 'diffusion#cfg' },
+
+  // ---- image (image.html)
+  vae: { t: 'VAE', en: 'variational autoencoder', d: '把图像压缩成小得多的潜表示（每边压缩约 8 倍）并能解码回来的网络。潜空间扩散在它的潜空间里去噪。', at: 'image#latent' },
+  'latent-diffusion': { t: '潜空间扩散', en: 'latent diffusion', d: '先用 VAE 把图像压缩成潜图，在潜图上做扩散，最后解码成像素（Stable Diffusion, 2022）。计算量减少数十倍。', at: 'image#latent' },
+  dit: { t: 'DiT', en: 'Diffusion Transformer', d: '用 Transformer 处理潜图 patch 的去噪网络，时间步和条件经 adaLN 注入。扩展性好，是 Sora 之后大型图像与视频模型的基础。', at: 'image#backbone' },
+  mmdit: { t: 'MMDiT', en: 'multimodal DiT', d: '文本 token 与图像 token 拼成一条序列做联合注意力、两种模态各有权重的 DiT（SD3, 2024）。FLUX、Qwen-Image 沿用。', at: 'image#backbone' },
+  sdedit: { t: 'SDEdit（图生图）', en: 'SDEdit', d: '把输入图加噪到中间时刻 s，再从那里去噪。强度 s 越大，保留原图越少、越自由。', at: 'image#control' },
+  controlnet: { t: 'ControlNet', en: 'ControlNet', d: '复制去噪网络的编码器接收边缘、深度、姿态等控制信号，经零初始化的卷积注入冻结的主网络，训练初期不破坏原能力。', at: 'image#control' },
+  'unified-model': { t: '理解与生成统一模型', en: 'unified understanding & generation', d: '同一个模型既能看图也能画图，常由语言模型负责理解与规划、扩散或自回归头负责生成像素（GPT-4o、BAGEL 等）。', at: 'image#unified' },
 };

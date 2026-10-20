@@ -13,70 +13,200 @@
 <header>
   <div class="kicker"></div>
   <h1>文生图与图生图：潜空间扩散、DiT 与原生多模态</h1>
-  <p class="lede">第 <a class="xref" data-ref="diffusion">11</a> 章讲了去噪的数学。一个真实的文生图系统还要解决三件事：<b>在哪个空间里去噪</b>（像素太贵，要压缩到潜空间）、<b>用什么网络去噪</b>（U-Net → DiT → MMDiT）、<b>怎么听懂提示词并接受各种控制</b>（文本编码器、引导、编辑、参考图）。2025–26 年，这条线又和语言大模型合流了。</p>
+  <p class="lede">上一章讲了去噪的数学。一个真实的文生图系统还要解决三件事：在哪个空间里去噪（像素太贵，要先压缩到潜空间），用什么网络去噪（U-Net → DiT → MMDiT），怎样听懂提示词并接受各种控制（文本编码器、图生图、局部重绘、参考图）。2025–26 年，这条线又和语言大模型合流：GPT-4o、Nano Banana 这类原生多模态模型让“对话式修图”成为常态。这一章依次讲这些部件，最后讨论水印能否识别 AI 图像，以及版权诉讼走到了哪一步。</p>
 </header>
 
+<div class="bridge">第 <a class="xref" data-ref="diffusion"></a> 章的扩散原理对任何数据都成立，但直接用在百万像素的图像上太贵，而且原理本身不涉及“按文字生成”。这一章把原理变成产品。</div>
+
+<div class="prereq">
+  <ul>
+    <li>流匹配、CFG、少步蒸馏：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>交叉注意力：第 <a class="xref" data-ref="attention"></a> 章；ViT 与 patch：第 <a class="xref" data-ref="vlm"></a> 章</li>
+    <li>LoRA：第 <a class="xref" data-ref="sft"></a> 章；层归一化：第 <a class="xref" data-ref="transformer"></a> 章</li>
+  </ul>
+</div>
+
 <h2 id="latent">潜空间：先压缩，再扩散</h2>
-<p>直接在 1024×1024×3 的像素上做扩散，每一步都要处理三百万个数，而且大部分算力花在人眼察觉不到的高频细节上。<b>潜空间扩散（Latent Diffusion, 2022，即 Stable Diffusion）</b> 先训练一个 VAE，把图像压缩 8 倍（每边）成一个小的“潜图”，扩散只在潜图上做，最后再用 VAE 解码器还原成像素。</p>
-<ul>
-  <li>SD 1.x / SDXL：8× 下采样，4 个通道（512² 图像 → 64×64×4）。</li>
-  <li>SD3 / FLUX.1：通道数增加到 16，细节和文字更好。</li>
-  <li>DC-AE（2024）等深度压缩编码器：32× 甚至更高，用于高分辨率和视频。</li>
-</ul>
-<p>Transformer 去噪器（DiT）还要把潜图再切成 2×2 的 patch，每个 patch 就是一个 token。分辨率和 token 数的关系决定了生成速度，因为注意力的代价随 token 数平方增长：</p>
+<p>直接在 1024×1024×3 的像素上做扩散，每一步都要处理三百万个数，而且大部分算力花在人眼察觉不到的高频细节上。<dfn data-t="latent-diffusion">潜空间扩散</dfn>（Latent Diffusion, 2022，即 Stable Diffusion）先训练一个 <dfn data-t="vae">VAE</dfn>（变分自编码器），把图像压缩成一个小得多的“潜图”，扩散只在潜图上做，最后用 VAE 的解码器还原成像素。</p>
+<div class="fx">
+\[ n_{\text{token}} = \frac{H}{\htmlClass{sym-f}{f}\,\htmlClass{sym-p}{p}}\times\frac{W}{f\,p} \]
+  <div class="fx-read">VAE 把每边压缩 \(f\) 倍，Transformer 去噪器再把潜图切成 \(p\times p\) 的 patch，每个 patch 一个 token。token 数决定了每一步的计算量，而注意力的代价随 token 数平方增长。</div>
+  <dl class="fx-syms">
+    <dt data-sym="f">\(f\)</dt><dd>VAE 的下采样倍数：SD 系列为 8；DC-AE 等深度压缩编码器 32 或更高</dd>
+    <dt data-sym="p">\(p\)</dt><dd>DiT 的 patch 边长，常为 2</dd>
+  </dl>
+  <div class="fx-eg">1024×1024，\(f = 8\)，\(p = 2\)：\(64\times 64 = 4096\) 个 token。2048×2048 时变为 16384 个，注意力计算增加 16 倍。通道数也在增加：SD 1.x 的潜图是 4 个通道，SD3 与 FLUX 改为 16 个，细节和文字更好。</div>
+</div>
 <div data-demo="latent-tokens"></div>
 
 <h2 id="backbone">去噪网络：U-Net → DiT → MMDiT</h2>
 <ul>
-  <li><b>U-Net</b>（SD 1.x、SDXL）：卷积编码-解码结构，中间插入自注意力层和 <b>交叉注意力</b> 层。图像特征做 Q，文本向量做 K/V（第 <a class="xref" data-ref="attention">2</a> 章），每个像素位置去“查”提示词里的词。</li>
-  <li><b>DiT</b>（Diffusion Transformer, 2022-12）：直接用 Transformer 处理 patch token，时间步 t 通过 adaLN（自适应层归一化）注入。扩展性和语言模型一样好，是 Sora 和之后所有大模型的基础。</li>
-  <li><b>MMDiT</b>（SD3, 2024）：文本 token 和图像 token 拼成一条序列做 <b>联合注意力</b>，两种模态各有自己的权重。FLUX、Qwen-Image（20B, 2025-08）等沿用这一设计。</li>
-  <li><b>文本编码器</b>：从 CLIP（2021）到 T5-XXL（Imagen, 2022），再到 2025 年后直接用多模态大模型（如 Qwen2.5-VL）编码提示词。模型能理解长而复杂的描述，也能把中文、英文文字准确“写”进图里。</li>
+  <li><b>U-Net</b>（SD 1.x、SDXL）：卷积的编码-解码结构，中间插入自注意力层和交叉注意力层：图像特征做 query，文本向量做 key 和 value，每个像素位置去“查”提示词里的词。</li>
+  <li><b><dfn data-t="dit">DiT</dfn></b>（Diffusion Transformer, 2022-12）：直接用 Transformer 处理 patch token，时间步和条件通过“自适应层归一化”注入。扩展性和语言模型一样好，是 Sora 和之后所有大型图像、视频模型的基础。</li>
+  <li><b><dfn data-t="mmdit">MMDiT</dfn></b>（SD3, 2024）：文本 token 和图像 token 拼成一条序列做联合注意力，两种模态各有自己的一套权重。FLUX、Qwen-Image（20B, 2025-08）等沿用这一设计。</li>
 </ul>
+<div class="fx">
+\[ \operatorname{adaLN}(\mathbf h;\ t, c) = \big(1 + \htmlClass{sym-g}{\boldsymbol\gamma(t, c)}\big)\odot\operatorname{LN}(\mathbf h) + \htmlClass{sym-be}{\boldsymbol\beta(t, c)} \]
+  <div class="fx-read">层归一化之后的缩放和平移系数不再是固定的可学习参数，而是由时间步 \(t\) 和条件 \(c\) 经过一个小网络算出来。同一个网络在不同的噪声水平下，就会以不同的方式处理特征。</div>
+  <dl class="fx-syms">
+    <dt data-sym="g">\(\boldsymbol\gamma\)</dt><dd>逐通道的缩放（初始化为 0，使训练开始时等同普通的层归一化）</dd>
+    <dt data-sym="be">\(\boldsymbol\beta\)</dt><dd>逐通道的平移</dd>
+  </dl>
+  <div class="fx-eg">噪声很大时（\(t\) 接近 1），网络应关注整体构图；噪声很小时，应关注纹理细节。adaLN 让每一层在不同的 \(t\) 下放大或抑制不同的特征通道，相当于为每个噪声水平“调制”出一个略有不同的网络。DiT 论文发现，这比把 \(t\) 当作一个额外的 token 输入效果更好。</div>
+</div>
+<p><b>文本编码器</b>也在升级：从 CLIP（2021）到 T5-XXL（Imagen, 2022），再到 2025 年后直接用多模态大模型（如 Qwen2.5-VL）编码提示词。模型能理解长而复杂的描述，也能把中文、英文文字准确“写”进图里。</p>
+<aside class="dispute surprise">
+  <h4>意外：图像模型多年来“不会写字”，原因在分词器</h4>
+  <dl>
+    <dt>原以为</dt><dd>能画出逼真照片的模型，画几个字母应该不在话下。</dd>
+    <dt>实际发现</dt><dd>DALL·E 2、Stable Diffusion 1.x 生成的招牌、书名几乎全是乱码。Google 的研究（Liu 等, 2022）发现关键在文本编码器：CLIP 和 T5 用子词分词（第 <a class="xref" data-ref="tokens"></a> 章），一个词被切成一两个 token，模型根本不知道“咖啡”这两个字或 “coffee” 由哪几个字母组成；换成按字符编码的 ByT5，拼写准确率大幅提高。</dd>
+    <dt>为什么</dt><dd>要把文字画对，模型必须知道每个字符的形状和顺序；子词 token 把这些信息藏在了一个整体编号里。这和语言模型数不清 “strawberry” 里有几个 r 是同一个问题。</dd>
+    <dt>现在怎么看</dt><dd>2024–25 年，更大的潜空间通道数、字符级或大语言模型作为文本编码器、大量合成的文字渲染数据，让准确的中英文排版成为标配；Qwen-Image 以中文文字渲染见长，GPT-4o 与 Nano Banana Pro 能生成带准确多语言文字的海报和图表。</dd>
+  </dl>
+</aside>
 
 <h2 id="toy">动手：一个能“听懂”提示词的玩具文生图模型</h2>
-<p>下面这个模型的“训练集”是 150 张 32×32 的小图：5 种形状 × 5 种颜色 × 白天/夜晚 × 3 种位置。和第 <a class="xref" data-ref="diffusion">11</a> 章一样，我们直接算出 <b>最优去噪器</b>（对训练集的后验加权平均），用流匹配 + CFG 采样。提示词通过关键词匹配变成条件。它没有真正的泛化能力，只会生成训练集附近的图，但采样过程、CFG、图生图的机制和真实模型完全一样。</p>
+<p>下面这个模型的“训练集”是 150 张 32×32 的小图：5 种形状 × 5 种颜色 × 白天 / 夜晚 × 3 种位置。和上一章一样，直接算出最优去噪器（对训练集的后验加权平均），用流匹配加 CFG 采样，提示词通过关键词匹配变成条件。它没有真正的泛化能力（上一章的“完美去噪器只会背书”），但采样过程、CFG、图生图的机制和真实模型完全一样：</p>
 <div data-demo="toy-t2i" class="bleed"></div>
 
 <h2 id="control">控制与编辑：图生图之后的十年</h2>
+<p>最简单的图生图是 <dfn data-t="sdedit">SDEdit</dfn>（2021）：给输入图加噪到某个中间时刻，再从那里开始去噪。</p>
+<div class="fx">
+\[ \mathbf x_{\htmlClass{sym-s}{s}} = a_s\,\mathbf x_{\text{输入图}} + b_s\,\boldsymbol\varepsilon\quad\longrightarrow\quad \text{从 } t = s \text{ 开始去噪到 } t = 0 \]
+  <div class="fx-read">强度 \(s\) 决定保留多少原图：\(s\) 小时只加一点噪声，结果几乎就是原图加细节修饰；\(s\) 大时原图几乎被噪声淹没，模型按提示词自由重画，只保留大致的颜色和构图。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(s\)</dt><dd>“重绘强度”，0 到 1</dd>
+  </dl>
+  <div class="fx-eg">流匹配下 \(s = 0.3\)：\(\mathbf x_s = 0.7\,\mathbf x_{\text{输入}} + 0.3\,\boldsymbol\varepsilon\)，构图和人物都会保留，只改变画风；\(s = 0.8\)：原图只剩 20%，基本只保留色块的大致位置。一个草图变成精致插画，常用 0.6–0.75。</div>
+</div>
+<p>更精细的控制来自额外的输入。<dfn data-t="controlnet">ControlNet</dfn>（2023-02）复制一份去噪网络的编码器，接收边缘图、深度图、人体姿态等控制信号，通过“零初始化”的连接注入主网络：</p>
+<div class="fx">
+\[ \mathbf y = F(\mathbf x) + \htmlClass{c-new}{Z}\Big(F_{\text{副本}}\big(\mathbf x + \htmlClass{c-new}{Z}(\mathbf c)\big)\Big),\qquad Z\ \text{初始化为全零} \]
+  <div class="fx-read">\(F\) 是冻结的原网络，\(F_{\text{副本}}\) 是它的一份可训练副本，接收控制信号 \(\mathbf c\)。两者之间用<span style="color:var(--s4)">权重初始化为 0 的卷积</span> \(Z\) 连接，所以训练刚开始时 \(\mathbf y = F(\mathbf x)\)，模型的行为与原来完全一样，不会被一开始的随机噪声破坏。</div>
+  <div class="fx-eg">用几万张“人体姿态骨架 → 照片”的配对训练，副本逐渐学会把姿态信息翻译成主网络能用的特征。因为原网络冻结，它生成高质量图像的能力完全保留；不同的 ControlNet（边缘、深度、姿态）可以叠加使用。</div>
+</div>
 <div class="tablewrap"><table>
   <tr><th>技术</th><th>年份</th><th>做法</th></tr>
-  <tr><td>SDEdit（图生图）</td><td>2021</td><td>给输入图加噪到 t = 强度，再从这里开始去噪（就是上面演示的做法）</td></tr>
-  <tr><td>Inpainting 局部重绘</td><td>2022</td><td>掩码外的区域在每一步都替换成原图对应噪声水平的版本，只生成掩码内部</td></tr>
-  <tr><td>DreamBooth / LoRA</td><td>2022–23</td><td>用几张图片微调，让模型学会一个新的人物、画风、物体</td></tr>
-  <tr><td>ControlNet</td><td>2023-02</td><td>复制一份编码器接收边缘图、深度图、人体姿态，通过零初始化的卷积注入主网络</td></tr>
+  <tr><td>局部重绘</td><td>2022</td><td>掩码外的区域在每一步都替换成原图对应噪声水平的版本，只生成掩码内部</td></tr>
+  <tr><td>DreamBooth / LoRA</td><td>2022–23</td><td>用几张图片微调，让模型学会一个新的人物、画风、物体（第 <a class="xref" data-ref="sft"></a> 章）</td></tr>
   <tr><td>IP-Adapter</td><td>2023</td><td>把参考图像的特征当作额外的“提示词”注入交叉注意力</td></tr>
   <tr><td>InstructPix2Pix</td><td>2022-11</td><td>用一句指令编辑图片（“把天空变成晚霞”）</td></tr>
-  <tr><td>FLUX.1 Kontext、Qwen-Image-Edit</td><td>2025</td><td>上下文内编辑：把参考图 token 和目标图 token 放在同一条序列里，人物一致性和文字编辑大幅提升</td></tr>
-  <tr><td>Nano Banana / Pro（Gemini 图像）</td><td>2025-08 / 11</td><td>对话式多轮编辑；Pro 版支持最多 14 张参考图融合、5 个人物保持一致、4K 输出和准确的多语言文字</td></tr>
+  <tr><td>FLUX.1 Kontext、Qwen-Image-Edit</td><td>2025</td><td>上下文内编辑：参考图 token 和目标图 token 放在同一条序列里，人物一致性和文字编辑大幅提升</td></tr>
+  <tr><td>Nano Banana / Pro（Gemini 图像）</td><td>2025-08 / 11</td><td>对话式多轮编辑；Pro 版支持多张参考图融合、多个人物保持一致、4K 输出和准确的多语言文字</td></tr>
 </table></div>
 
 <h2 id="unified">原生多模态：自回归回来了</h2>
-<p>扩散之外，另一条路线是 <b>把图像也变成 token，让语言模型直接生成</b>。早期的 DALL·E（2021）、Parti（2022）质量不如扩散；2024 年以后几项突破改变了局面：</p>
+<p>扩散之外，另一条路线是把图像也变成 token，让语言模型直接生成。早期的 DALL·E（2021）、Parti（2022）质量不如扩散；2024 年以后几项突破改变了局面：</p>
 <ul>
-  <li><b>VAR</b>（2024，NeurIPS 最佳论文）：不按像素顺序，而是“由粗到细”预测下一个分辨率尺度。Infinity 再把 token 换成按比特（bitwise）预测。</li>
+  <li><b>VAR</b>（2024, NeurIPS 最佳论文）：不按像素顺序，而是“由粗到细”预测下一个分辨率尺度。Infinity 再把 token 换成按比特预测。</li>
   <li><b>MAR / Transfusion</b>（2024）：自回归负责结构和语义，每个 token 用一个小扩散头生成连续值，避免离散化带来的损失。</li>
-  <li><b>GPT-4o 图像生成</b>（2025-03）：语言模型原生生成图像，提示词理解、文字渲染、多轮编辑明显领先，让“统一模型”路线成为主流方向之一。</li>
-  <li><b>统一理解与生成</b>：Janus、BAGEL、HunyuanImage 3.0（80B MoE，自回归框架）等，同一个模型既能看图又能画图。2026 年 GPT Image 2、Nano Banana 2 / Pro 处在榜首，开源的 FLUX.2、Qwen-Image-2.0、Seedream 5.0 紧随其后。</li>
+  <li><b>GPT-4o 图像生成</b>（2025-03）：语言模型原生生成图像，提示词理解、文字渲染、多轮编辑明显领先，让“统一模型”成为主流方向之一。</li>
+  <li><b><dfn data-t="unified-model">理解与生成统一</dfn></b>：Janus、BAGEL、HunyuanImage 3.0（80B MoE，自回归框架）等，同一个模型既能看图又能画图。2026 年 GPT Image 2、Nano Banana 2 / Pro 处在榜首，开源的 FLUX.2、Qwen-Image-2.0、Seedream 5.0 紧随其后。</li>
 </ul>
-<p>为什么文本用自回归、图像用扩散？文本是离散、顺序性强的；图像是连续、空间上整体相关的，扩散擅长同时调整所有像素。统一模型通常把两者结合：语言模型负责“想清楚画什么”，扩散解码器负责“画得精细”。</p>
+<p>为什么文本用自回归、图像用扩散？文本离散、顺序性强；图像连续、在空间上整体相关，扩散擅长同时调整所有像素。统一模型通常把两者结合：语言模型负责“想清楚画什么”，扩散解码器负责“画得精细”（上一章的争议框）。</p>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2014–19</span>GAN 时代：StyleGAN 生成以假乱真的人脸，但很难按文字控制</li>
-  <li><span class="d">2021-01</span>CLIP 与 DALL·E：图文对齐，文生图出现</li>
-  <li><span class="d">2021-12</span>GLIDE；潜空间扩散论文（LDM）</li>
-  <li><span class="d">2022</span>DALL·E 2（4 月）、Imagen（5 月）、Midjourney；8 月 Stable Diffusion 开源；DreamBooth</li>
-  <li><span class="d">2023</span>ControlNet、SDXL、LoRA 生态、LCM 少步生成</li>
-  <li><span class="d">2024</span>SD3（MMDiT + Rectified Flow）、FLUX.1（8 月）；VAR、MAR</li>
-  <li><span class="d">2025</span>GPT-4o 原生图像（3 月）；FLUX.1 Kontext；Qwen-Image（中文文字渲染）；Seedream 4.0；Nano Banana；HunyuanImage 3.0；FLUX.2（11 月）</li>
-  <li><span class="d">2026</span>Nano Banana 2、GPT Image 2、Seedream 5.0（6 月）、Qwen-Image-2.0；多参考图合成、4K、精确文字成为标配</li>
+<h2 id="society">水印与版权</h2>
+<aside class="dispute">
+  <h4>水印能可靠地识别 AI 生成的图像吗</h4>
+  <dl>
+    <dt>支持</dt><dd>Google 的 SynthID 在生成时就把不可见的水印嵌入像素，经过压缩、裁剪、调色仍能检测；C2PA 内容凭证在文件中记录来源与编辑历史，主要相机厂商和平台已支持。欧盟《人工智能法》要求对 AI 生成内容做可机读的标注。</dd>
+    <dt>反对</dt><dd>研究表明，不可见水印可以被“再生成”攻击去除：给图像加噪再用扩散模型去噪，水印随之消失而画面几乎不变（Zhao 等, 2023 证明了这类攻击对一大类水印普遍有效）；元数据可以直接删掉；开源模型的生成结果没有任何水印。检测“这张图是不是 AI 生成”的分类器同样不可靠。</dd>
+    <dt>现在怎么看</dt><dd>水印能为“诚实的”平台提供来源信息，但无法阻止有意的伪造。社会层面更现实的方向是反过来：为真实拍摄的照片提供可信的来源证明（相机签名、C2PA），而不是试图标出所有假图。</dd>
+  </dl>
+</aside>
+<aside class="dispute">
+  <h4>用艺术家的作品训练图像模型，合法吗</h4>
+  <dl>
+    <dt>权利方</dt><dd>图像模型在数十亿张网络图片上训练，其中包括大量受版权保护的作品；模型能模仿在世艺术家的画风，与他们直接竞争。Getty Images 起诉 Stability AI，艺术家集体起诉多家公司。</dd>
+    <dt>模型方</dt><dd>训练学到的是统计规律而非复制作品；画风本身不受版权保护。英国高等法院在 2025 年 11 月的 Getty 诉 Stability 案判决中驳回了 Getty 的大部分主张（模型本身不是侵权复制品），只在商标问题上部分支持 Getty。</dd>
+    <dt>现在怎么看</dt><dd>各国判决尚不一致，美国的 Getty 案仍在审理中（据报道 2026 年 4 月的裁定允许其直接侵权和商标主张继续）。“模型能否逐字复现训练图像”（上一章的记忆问题）是关键事实，各家模型普遍加入了过滤和拒绝生成在世艺术家风格、名人肖像的措施。详见第 <a class="xref" data-ref="data"></a>、<a class="xref" data-ref="industry"></a> 章。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">扩散模型直接在像素上去噪。</b>几乎所有实用模型都在 VAE 的潜空间里去噪，最后一步才解码成像素；VAE 的质量直接决定细节和文字的上限。</li>
+  <li><b class="m">提示词越长越好。</b>取决于文本编码器：CLIP 只能读 77 个 token，长提示后半截被截断；用大语言模型做编码器后，长描述才真正有效。</li>
+  <li><b class="m">图生图就是“照着画”。</b>SDEdit 的强度决定保留多少原图；要精确控制构图和姿态，需要 ControlNet 或参考图注入。</li>
+  <li><b class="m">AI 图像都带水印，很容易识别。</b>开源模型不带水印，现有水印也能被再生成攻击去除。</li>
+  <li><b class="m">原生多模态模型取代了扩散模型。</b>它们常常是“语言模型规划 + 扩散解码”的组合，扩散仍是高保真像素生成的主力。</li>
 </ul>
-<p class="src">资料：<a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench（18 个前沿模型对比）</a>；<a href="https://arxiv.org/abs/2605.10730">Qwen-Image-2.0 技术报告</a>；<a href="https://atlascloud.ai/blog/guides/best-ai-image-generation-models-2026">2026 图像模型对比</a>。</p>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2021</div>
+    <h4>CLIP 与 DALL·E：文生图出现</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>GAN 能生成逼真的人脸，却很难按任意文字控制。</dd>
+      <dt>怎么解决</dt><dd>CLIP 对齐了图像与文字；DALL·E 1 用离散 VAE 把图像变成 token 自回归生成；GLIDE 用扩散按文字生成；潜空间扩散论文发表。</dd>
+      <dt>代价</dt><dd>质量与分辨率有限，计算昂贵。</dd>
+      <dt>引出</dt><dd>怎样做得又好又便宜？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被扩散取代</span>GAN 文生图</summary><div>StyleGAN 系列在单一领域（人脸、动漫）登峰造极，但扩展到开放的文字描述时力不从心，2022 年后基本退出文生图主流。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022</div>
+    <h4>扩散文生图爆发与 Stable Diffusion 开源</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>高质量模型只掌握在少数公司手中。</dd>
+      <dt>怎么解决</dt><dd>DALL·E 2（4 月）、Imagen（5 月）、Midjourney；8 月 Stable Diffusion 开源，消费级显卡即可运行；DreamBooth 实现个性化。</dd>
+      <dt>代价</dt><dd>控制粗糙，文字乱码，手指畸形。</dd>
+      <dt>引出</dt><dd>怎样精确控制？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023</div>
+    <h4>控制与个性化的生态</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>用户需要控制构图、姿态、角色一致性。</dd>
+      <dt>怎么解决</dt><dd>ControlNet、IP-Adapter、LoRA 生态；SDXL；LCM 少步生成。</dd>
+      <dt>代价</dt><dd>U-Net 的扩展性有限，文字渲染仍差。</dd>
+      <dt>引出</dt><dd>换成 Transformer 并扩大规模。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>MMDiT 与流匹配成为标准</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>需要更好的提示词理解、文字渲染和扩展性。</dd>
+      <dt>怎么解决</dt><dd>SD3（MMDiT + Rectified Flow）、FLUX.1（8 月）；VAR、MAR 让自回归图像生成重新具有竞争力。</dd>
+      <dt>代价</dt><dd>模型越来越大，开源模型的显存门槛提高。</dd>
+      <dt>引出</dt><dd>能否和语言模型合为一体？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025–2026</div>
+    <h4>原生多模态与对话式编辑</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多轮编辑、角色一致性、复杂排版。</dd>
+      <dt>怎么解决</dt><dd>GPT-4o 原生图像（2025-03）；FLUX.1 Kontext、Qwen-Image 与其编辑版；Seedream 4.0、Nano Banana / Pro、HunyuanImage 3.0、FLUX.2；2026 年 Nano Banana 2、GPT Image 2、Seedream 5.0、Qwen-Image-2.0，多参考图合成、4K、精确文字成为标配。</dd>
+      <dt>代价</dt><dd>深度伪造与版权问题更加尖锐。</dd>
+      <dt>引出</dt><dd>从单张图像到连续的视频（第 <a class="xref" data-ref="video"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 生成一张 1536×1024 的图，VAE 下采样 8 倍，DiT 的 patch 为 2，共多少个 token？</summary><div class="ans">\((1536/16)\times(1024/16) = 96\times 64 = 6144\) 个。</div></details>
+<details class="quiz"><summary>2. ControlNet 为什么要把连接层初始化为全零？如果随机初始化会怎样？</summary><div class="ans">零初始化让训练开始时副本的输出被乘以 0，整个模型的行为与原模型完全相同，然后逐步学习加入控制。若随机初始化，训练一开始就会向主网络注入大量噪声特征，破坏它已有的生成能力，需要很长时间才能恢复，甚至无法恢复。</div></details>
+<details class="quiz"><summary>3. 想把一张照片变成水彩风格，同时保持人物轮廓不变。SDEdit 的强度该大还是小？如果强度小了风格不够、大了轮廓变形，还可以加什么？</summary><div class="ans">中等偏小（如 0.4–0.6）。若两者无法兼得，可以加上以原图边缘图或深度图为条件的 ControlNet 锁住轮廓，再用较大的强度改变风格。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2112.10752">High-Resolution Image Synthesis with Latent Diffusion Models</a>（Rombach 等, 2022）<span class="why">Stable Diffusion 的原论文。</span></li>
+  <li><a href="https://arxiv.org/abs/2212.09748">Scalable Diffusion Models with Transformers</a>（DiT, 2022）<span class="why">adaLN 与 Transformer 去噪器。</span></li>
+  <li><a href="https://arxiv.org/abs/2403.03206">Scaling Rectified Flow Transformers</a>（SD3, 2024）<span class="why">MMDiT 与流匹配的大规模实践。</span></li>
+  <li><a href="https://arxiv.org/abs/2302.05543">Adding Conditional Control to Text-to-Image Diffusion Models</a>（ControlNet, 2023）<span class="why">零初始化的控制注入。</span></li>
+  <li><a href="https://arxiv.org/abs/2212.10562">Character-Aware Models Improve Visual Text Rendering</a>（Liu 等, 2022）<span class="why">图像模型为什么不会写字。</span></li>
+</ol>
+
+<div class="nextq">图像是一个瞬间，视频是一串连贯的瞬间：要在时间上保持人物、光照、物理的一致，数据量又大了几十倍。视频生成模型怎样压缩时空，怎样保证前后一致？下一章（第 <a class="xref" data-ref="video"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2108.01073">SDEdit</a> · <a href="https://arxiv.org/abs/2208.12242">DreamBooth</a> · <a href="https://arxiv.org/abs/2308.06721">IP-Adapter</a> · <a href="https://arxiv.org/abs/2211.09800">InstructPix2Pix</a> · <a href="https://arxiv.org/abs/2506.15742">FLUX.1 Kontext</a> · <a href="https://arxiv.org/abs/2508.02324">Qwen-Image</a> · <a href="https://arxiv.org/abs/2404.02905">VAR</a> · <a href="https://arxiv.org/abs/2406.11838">MAR</a> · <a href="https://arxiv.org/abs/2408.11039">Transfusion</a> · <a href="https://arxiv.org/abs/2505.14683">BAGEL</a> · <a href="https://arxiv.org/abs/2306.01953">水印可被再生成攻击去除</a> · <a href="https://deepmind.google/science/synthid/">SynthID</a> · <a href="https://c2pa.org/">C2PA</a> · <a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench</a> · <a href="https://arxiv.org/abs/2605.10730">Qwen-Image-2.0</a> · <a href="https://www.nortonrosefulbright.com/en/knowledge/publications/ce8eaa5f/ai-in-litigation-series-an-update-on-ai-copyright-cases-in-2026">2026 年 AI 版权诉讼综述</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>
