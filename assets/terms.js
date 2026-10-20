@@ -285,4 +285,11 @@ window.ATLAS_TERMS = {
   vla: { t: 'VLA', en: 'vision-language-action model', d: '以视觉语言模型为骨干、直接输出机器人动作的模型：动作可离散成 token（RT-2），或由流匹配动作专家生成连续的动作块（π0）。', at: 'embodied#vla' },
   'behavior-cloning': { t: '行为克隆', en: 'behavior cloning', d: String.raw`用监督学习模仿专家在各状态下的动作。偏离示范后的状态没见过，误差累积，代价上界随步数平方增长（\(T^2\varepsilon\)）；DAgger 降为线性。`, at: 'embodied#bc' },
   wam: { t: '世界动作模型', en: 'world action model', d: '以大规模预训练的视频世界模型为骨干，在预测未来画面的同时解码出动作的机器人策略（2026 年兴起，如 NVIDIA DreamZero）。', at: 'embodied#wam' },
+
+  // ---- interpretability (interpretability.html)
+  probe: { t: '线性探针', en: 'linear probe', d: String.raw`在冻结模型的某层激活上训练一个逻辑回归 \(\sigma(\mathbf w\cdot\mathbf h + b)\) 预测某个概念。能读出说明信息存在，不说明模型使用了它。`, at: 'interpretability#tools' },
+  'logit-lens': { t: 'logit lens', en: 'logit lens', d: '把中间层的残差流直接乘以输出矩阵解码，看模型此刻“最想说”哪个词，观察预测逐层形成的过程。', at: 'interpretability#tools' },
+  superposition: { t: '叠加', en: 'superposition', d: '模型用远少于概念数的维度表示概念：稀疏的特征以近似正交的方向共享同一空间，导致神经元多义。', at: 'interpretability#superposition' },
+  sae: { t: '稀疏自编码器（SAE）', en: 'sparse autoencoder', d: String.raw`把激活展开成大量稀疏特征 \(\mathbf f = \operatorname{ReLU}(W_e\mathbf h + \mathbf b)\) 并还原，用 L1 惩罚使特征稀疏、单义。用于拆解叠加。`, at: 'interpretability#superposition' },
+  circuit: { t: '电路（可解释性）', en: 'circuit', d: '若干特征或注意力头相互作用、共同完成某个计算的子网络，如归纳头、多跳推理路径。归因图用来追踪它们。', at: 'interpretability#circuits' },
 };

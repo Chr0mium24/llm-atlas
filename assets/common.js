@@ -40,7 +40,7 @@
     { s: 'world-models', t: '世界模型', st: 'new' },
     { s: 'embodied', t: '具身智能与 VLA', st: 'new' },
     { part: '七 · 理解与评判' },
-    { s: 'interpretability', t: '可解释性', st: 'todo' },
+    { s: 'interpretability', t: '可解释性', st: 'new' },
     { s: 'evaluation', t: '评测', st: 'todo' },
     { s: 'alignment', t: '对齐', st: 'todo' },
     { s: 'jailbreak', t: '越狱与防御', st: 'todo' },

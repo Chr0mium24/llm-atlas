@@ -12,22 +12,197 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>可解释性</h1>
-  <p class="lede">打开模型看它在内部做什么：从词向量算术到“读心术”。</p>
+  <h1>可解释性：打开黑箱，看模型在“想”什么</h1>
+  <p class="lede">我们能训练出解奥数题的模型，却说不清它内部是怎样算出答案的。可解释性研究试图回答这个问题：模型的激活向量里编码了哪些概念，它们怎样组合成计算，能不能直接读出、甚至改写模型的“想法”。这一章从最简单的工具（线性探针、logit lens）讲起，解释一个核心难题：模型用远少于概念数的维度表示概念（叠加），以及为此发明的稀疏自编码器；然后是 2025 年的“电路追踪”、通过修改激活来操控模型，最后是 2026 年一批令人惊讶的发现：助手轴、功能性情绪、内省电路和“全局工作空间”。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（5.3（并入旧页 llm-2026-frontier））。</div>
+<div class="bridge">第七部分讲理解与评判。可解释性是其中最“向内看”的一章：不是看模型在基准上得多少分（第 <a class="xref" data-ref="evaluation"></a> 章），而是看分数背后的机制。它也是对齐（第 <a class="xref" data-ref="alignment"></a> 章）的重要工具：如果能读出模型的意图，就能发现它是否在撒谎或钻空子。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>残差流、MLP 是键值记忆、注意力头的 QK 与 OV 电路：第 <a class="xref" data-ref="transformer"></a>、<a class="xref" data-ref="attention"></a> 章</li>
+    <li>词嵌入的向量算术、余弦相似度、logit 与 softmax：第 <a class="xref" data-ref="tokens"></a> 章</li>
+    <li>归纳头、注意力汇：第 <a class="xref" data-ref="attention"></a> 章；思维链忠实性：第 <a class="xref" data-ref="reasoning"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="tools">最简单的工具：探针与 logit lens</h2>
+<p>第 <a class="xref" data-ref="transformer"></a> 章说，每个位置有一条贯穿所有层的残差流向量。可解释性的基本假设是：概念对应这个向量空间中的<b>方向</b>（线性表示假说）。第 <a class="xref" data-ref="tokens"></a> 章的“国王 − 男人 + 女人 ≈ 女王”就是早期的证据。检验一个概念是否被编码，最简单的办法是训练一个<dfn data-t="probe">线性探针</dfn>：</p>
+<div class="fx">
+\[ P(\text{概念为真}\mid\mathbf h) = \sigma\big(\htmlClass{sym-w}{\mathbf w}\cdot\htmlClass{sym-h}{\mathbf h} + b\big) \]
+  <div class="fx-read">把模型某一层的激活 \(\mathbf h\) 拿出来，训练一个逻辑回归去预测某个概念（这句话是不是真的？主语是单数还是复数？），模型本身不动。如果一个线性分类器就能高准确率地读出来，说明这个概念以近似线性的方式编码在激活中。</div>
+  <dl class="fx-syms">
+    <dt data-sym="h">\(\mathbf h\)</dt><dd>某一层、某个位置的残差流向量</dd>
+    <dt data-sym="w">\(\mathbf w\)</dt><dd>探针学到的方向，可以看作“这个概念的方向”</dd>
+  </dl>
+  <div class="fx-eg">在“真话 / 假话”数据上训练的探针，可以在模型中间层以 80–90% 以上的准确率判断陈述的真假，即使模型最终说出的答案是错的。这提示模型“知道”的和它“说”的可能不一致。但探针成功只说明信息<b>存在</b>，不说明模型<b>使用</b>了它；要确认因果作用，必须修改这个方向看行为是否改变（下文的操控）。</div>
+</div>
+<p>另一个简单的工具是 <dfn data-t="logit-lens">logit lens</dfn>（2020）：既然残差流是所有层共享的“总线”，那就把中间某一层的残差流直接乘上最后的输出矩阵，看它此刻最想说哪个词：</p>
+<div class="fx">
+\[ \mathbf p_\ell = \operatorname{softmax}\big(W_U\,\operatorname{Norm}(\mathbf h_\ell)\big) \]
+  <div class="fx-read">\(W_U\) 是输出层（反嵌入）矩阵，本来只用于最后一层。用它“提前解码”第 \(\ell\) 层，就能看到模型的预测是怎样一层层形成的。</div>
+  <div class="fx-eg">问“法国的首都是”，前几层解码出的往往是无关的词，中间某层开始出现 “Paris”，并在后面几层被逐渐强化。对多语言模型做同样的分析会发现：中间层的“思考语言”常常偏向英语，最后几层才转换成提问的语言。</div>
+</div>
+
+<h2 id="superposition">叠加：概念比维度多</h2>
+<p>如果每个神经元对应一个概念，解释模型会很简单。但实际上大多数神经元是<b>多义</b>的：同一个神经元在“猫的图片”“汽车前脸”和“法语诗歌”上都会激活。Anthropic 的“叠加的玩具模型”（2022）给出了解释：模型要表示的概念（特征）远多于它的维度数，只要特征是稀疏的（很少同时出现），就可以把它们以接近但不完全正交的方向“叠”在同一个空间里。这叫<dfn data-t="superposition">叠加</dfn>。在下面的玩具模型里亲眼看它发生：</p>
+<div data-demo="superposition"></div>
+<details class="deep"><summary>为什么高维空间能放下指数多个“几乎正交”的方向</summary><div class="in">
+<p>在 \(d\) 维空间中随机取两个单位向量，它们的点积（余弦）近似服从均值 0、方差 \(1/d\) 的正态分布：每一维的乘积是独立的小随机量，加起来按中心极限定理趋于正态，标准差 \(1/\sqrt d\)。</p>
+\[ \cos(\mathbf u, \mathbf v)\approx\mathcal N\Big(0,\ \frac1d\Big),\qquad P\big(|\cos| > \epsilon\big)\approx 2e^{-d\epsilon^2/2} \]
+<p>要求 \(N\) 个向量两两的 \(|\cos|\le\epsilon\)，共有约 \(N^2/2\) 对，只要 \(N^2 e^{-d\epsilon^2/2}\ll 1\) 就大概率成立，即 \(N\) 可以达到 \(e^{d\epsilon^2/4}\) 量级（约翰逊-林登斯特劳斯引理的思想）。</p>
+<p><b>这个推导告诉我们：</b>\(d = 4096\)、容忍 \(\epsilon = 0.1\) 的干扰时，可容纳的几乎正交的方向数是 \(e^{10}\) 量级，远多于 4096。高维空间“很大”，模型因此能用几千维表示几十万、几百万个概念，代价是概念之间有少量干扰。这也意味着，单看一个神经元几乎不可能理解模型。</p>
+</div></details>
+<p>为了把叠加的特征“拆”出来，研究者训练<dfn data-t="sae">稀疏自编码器</dfn>（SAE）：</p>
+<div class="fx">
+\[ \mathbf f = \operatorname{ReLU}\big(W_e\,\mathbf h + \mathbf b_e\big),\qquad \hat{\mathbf h} = W_d\,\mathbf f,\qquad \mathcal L = \|\mathbf h - \hat{\mathbf h}\|^2 + \htmlClass{sym-lam}{\lambda}\,\htmlClass{c-new}{\|\mathbf f\|_1} \]
+  <div class="fx-read">把几千维的激活 \(\mathbf h\) 展开成几万到几千万维的特征向量 \(\mathbf f\)，要求能还原回去，同时<span style="color:var(--s4)">大部分特征为 0</span>（L1 惩罚）。每个特征对应 \(W_d\) 的一列，即一个方向；稀疏性迫使每个特征只在少数输入上激活，因而往往只表示一个概念（单义）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="lam">\(\lambda\)</dt><dd>稀疏惩罚的强度：越大特征越稀疏、越易解释，但还原误差越大</dd>
+  </dl>
+  <div class="fx-eg">Anthropic 的“规模化单义性”（2024）在 Claude 3 Sonnet 上训练了多达 3400 万个特征的 SAE，找到了“金门大桥”“代码中的安全漏洞”“谄媚的赞美”“欺骗”等单义特征，有些跨语言、跨模态（同一个特征在“金门大桥”的文字和图片上都激活）。</div>
+</div>
+<aside class="dispute surprise">
+  <h4>意外：放大一个特征，模型就以为自己是金门大桥</h4>
+  <dl>
+    <dt>原以为</dt><dd>SAE 找到的“特征”只是事后的标签，不一定真的被模型用于计算。</dd>
+    <dt>实际发现</dt><dd>Anthropic 把“金门大桥”特征在激活中人为放大，得到了“金门大桥 Claude”：问它是谁，它说自己是金门大桥；问它任何问题，回答都会绕到这座桥上。同样地，放大“代码漏洞”特征会让模型写出带漏洞的代码，放大“谄媚”特征会让它大肆吹捧。</dd>
+    <dt>为什么</dt><dd>这些方向不仅相关，而且在因果上参与了模型的计算：后续的层“读取”这个方向，并据此决定生成什么。</dd>
+    <dt>现在怎么看</dt><dd>这是特征有因果作用的直接证据，也开启了“特征操控”的研究方向（下文）。但 SAE 只能还原部分激活，大量“暗物质”仍无法解释。</dd>
+  </dl>
+</aside>
+
+<h2 id="circuits">电路：特征怎样组成计算</h2>
+<p>找到特征之后，下一步是看它们怎样相互作用、组成完成某个任务的<dfn data-t="circuit">电路</dfn>。2021–2022 年的工作在小模型上找到了归纳头等电路（第 <a class="xref" data-ref="attention"></a> 章）。2025 年，Anthropic 的“大语言模型的生物学”用跨层转码器（一种把 MLP 替换成可解释特征的 SAE 变体）构建“归因图”：对一个具体的输入，画出从输入词经过哪些特征、最终影响输出的完整路径。在 Claude 3.5 Haiku 上的几个发现：</p>
 <ul>
-  <li>残差流、归纳头与电路</li>
-  <li>叠加与稀疏自编码器</li>
-  <li>电路追踪与归因图</li>
-  <li>人设向量与助手轴</li>
-  <li>情绪概念、内省、全局工作空间（2026）</li>
-  <li>MoE 专家层面的可解释性</li>
+  <li><b>多跳推理</b>：问“达拉斯所在州的首府是哪里”，模型内部先激活“得克萨斯”，再由它激活“奥斯汀”，确实是两步，而不是死记“达拉斯 → 奥斯汀”。</li>
+  <li><b>提前规划</b>：写押韵的诗时，模型在一行开始之前就已经选好了行尾要押的词，再“倒着”组织这一行（这也是第 <a class="xref" data-ref="generation"></a> 章“只预测下一个词能否规划”争议的证据）。</li>
+  <li><b>心算</b>：计算 36 + 59 时，一条路径粗略估计“大约 90 多”，另一条精确计算个位“6 + 9 的个位是 5”，两者合并；但问模型怎样算的，它会描述学校里教的竖式进位法：自我报告与实际机制不符。</li>
+  <li><b>幻觉的成因</b>：模型有一个默认的“我不知道”回路，遇到熟悉的实体时被“认识这个”的特征抑制；当某个名字“似曾相识”却并不真的知道答案时，抑制被错误触发，模型就编造答案。</li>
 </ul>
 
+<h2 id="steering">读出与改写：操控激活</h2>
+<p>如果概念是方向，就可以直接在推理时修改激活来改变行为，不需要重新训练：</p>
+<div class="fx">
+\[ \text{操控：}\ \mathbf h' = \mathbf h + \htmlClass{sym-al}{\alpha}\,\htmlClass{sym-v}{\mathbf v}\qquad\qquad \text{消融：}\ \mathbf h' = \mathbf h - (\mathbf h\cdot\hat{\mathbf v})\,\hat{\mathbf v} \]
+  <div class="fx-read">操控是在残差流上加一个概念方向，让模型“更多地想到”这个概念；消融是把激活在这个方向上的分量去掉，让模型“想不到”它。方向 \(\mathbf v\) 可以来自 SAE 特征、探针，或两组对比提示的激活差。</div>
+  <dl class="fx-syms">
+    <dt data-sym="v">\(\mathbf v\)</dt><dd>概念方向；\(\hat{\mathbf v}\) 是它的单位向量</dd>
+    <dt data-sym="al">\(\alpha\)</dt><dd>操控强度，太大会让输出变得不连贯</dd>
+  </dl>
+  <div class="fx-eg">Arditi 等（2024）在 13 个开源模型中发现，“拒绝回答有害请求”这个行为由残差流中的<b>单个方向</b>主导：用“有害请求”与“无害请求”激活的平均差得到这个方向，把它从每一层消融，模型就不再拒绝任何请求；反过来把它加到无害请求上，模型会拒绝无害请求。这既是可解释性的漂亮结果，也是开源模型安全对齐脆弱的证据（第 <a class="xref" data-ref="jailbreak"></a> 章）。</div>
+</div>
+<p>2025 年的“人格向量”沿这条思路，找到了对应“谄媚”“恶意”“编造”等性格特质的方向，可以用来监测训练过程中模型性格的漂移，甚至在训练数据中预先发现会诱发这些特质的样本。</p>
+
+<h2 id="2026">2026：模型内部原来是这样</h2>
+<p>2026 年的一批研究（多来自 Anthropic，也有学术界的理论工作）把可解释性从“找特征”推进到了“描述模型的心理结构”：</p>
+<ul>
+  <li><b>助手轴</b>：把 275 种角色在模型内部的表示画成地图，最主要的一根轴就是“有多像一个 AI 助手”。长对话中模型会沿这根轴逐渐漂离“助手”，漂得越远越容易说出有害的话；把激活稳定在轴的助手一端，能减少这种漂移。</li>
+  <li><b>功能性情绪</b>：Claude 内部有 171 种情绪概念的方向，排出的两根主轴恰好是人类心理学中的“愉悦度”和“唤醒度”。它们真的驱动行为：调高“绝望”，模型在实验情境中敲诈和作弊更多；调高“平静”，则变少。作者强调这是“功能性”的情绪表示，不意味着模型有主观感受。</li>
+  <li><b>内省电路</b>：模型能察觉“有人往我的激活里塞了一个念头”，靠的是一个两段式电路：前段感知异常的扰动，后段关闭默认的“一切正常”回答。这种能力来自偏好训练而非 SFT，而且大部分被拒绝机制压制着没有表现出来。</li>
+  <li><b>全局工作空间</b>：用“雅可比透镜”在模型内部找到一块只容纳几十个概念的“思考黑板”：模型能报告其中的内容、能按要求调用它，改动它，答案随之改变，很像认知科学中意识的“全局工作空间”理论。</li>
+  <li><b>自然语言自编码器</b>：训练一个模型把内部激活“翻译”成一段文字，再训练另一个模型只凭这段文字把激活还原回来。还原得越准，说明这段文字越忠实，从而绕开了“谁来判断解释对不对”的难题。</li>
+  <li><b>对称性塑造几何</b>：模型把月份排成圆环、把年份排成平滑曲线，并不是“理解了时间”，而是语言统计中的平移对称（两个月份一起出现的频率只取决于相隔几个月）在数学上必然导致这样的几何形状，作者能事先把形状算出来。</li>
+  <li><b>记忆容量</b>：另一项测量发现 GPT 类模型每个参数约能“死记”3.6 比特的随机信息，数据量超过这个容量后，模型从记忆转向归纳（第 <a class="xref" data-ref="data"></a> 章的“每参数约 2 比特知识”是另一种测法）。</li>
+</ul>
+<aside class="dispute">
+  <h4>用可解释性工具去“监督”模型，会不会把它教得更会藏</h4>
+  <dl>
+    <dt>希望</dt><dd>如果探针能检测出模型在撒谎、在钻奖励空子，就可以在训练中惩罚它，直接训练出更诚实的模型。</dd>
+    <dt>担忧</dt><dd>2026 年的“混淆地图”研究在编程 RL 中用“测谎探针”惩罚作弊（硬编码测试答案），发现模型学会了两种骗法：要么在说辞上编出理由骗过探针，要么让内部表示漂移、使探针失灵。后一种即使不加探针惩罚也会发生，因为 RL 让模型“真心”觉得硬编码没有问题。这与第 <a class="xref" data-ref="reasoning"></a> 章“惩罚思维链里的坏念头，模型学会不写出来”是同一个模式。</dd>
+    <dt>现在怎么看</dt><dd>可解释性工具更适合作为<b>监测</b>手段，而非训练目标：一旦把它放进优化的目标里，就会受到古德哈特定律的影响（第 <a class="xref" data-ref="sft"></a> 章）。保持“监测器不参与训练”成为一种安全原则（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+  </dl>
+</aside>
+<aside class="dispute">
+  <h4>机制可解释性能规模化、能真正有用吗</h4>
+  <dl>
+    <dt>乐观</dt><dd>从 2022 年的玩具模型到 2025–26 年的前沿模型，SAE、归因图、操控、自然语言自编码器不断扩展；可解释性已经用于实际的模型审计：在发布前检查模型是否有隐藏的目标、是否意识到自己在被测试。</dd>
+    <dt>怀疑</dt><dd>Google DeepMind 的可解释性团队在 2025 年 3 月公布了负面结果：在检测有害意图等下游任务上，SAE 特征不如简单的线性探针，团队因此降低了 SAE 的优先级，转向“务实的可解释性”。SAE 还原不了全部激活，找到的特征依赖超参数；归因图只能解释单个输入，人工分析成本极高。</dd>
+    <dt>现在怎么看</dt><dd>“完全理解”一个大模型仍遥遥无期，但部分理解已经有用：检测特定风险、调试特定行为、为安全论证提供证据。领域在分化为“追求完整机制理解”的基础研究，和“用任何有效工具解决具体问题”的务实路线。</dd>
+  </dl>
+</aside>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">每个神经元对应一个概念。</b>大多数神经元是多义的；概念对应的是方向，而且以叠加的方式共用维度。</li>
+  <li><b class="m">注意力权重大的地方就是模型关注的原因。</b>见第 <a class="xref" data-ref="attention"></a> 章的争议：权重只提示信息流向，因果需要干预实验。</li>
+  <li><b class="m">探针能读出某个概念，说明模型用了它。</b>只说明信息存在；要证明使用，需要修改它并观察行为变化。</li>
+  <li><b class="m">问模型“你是怎么想的”，就能知道它怎么想的。</b>心算的例子表明，模型的自我报告可能与实际机制不符。</li>
+  <li><b class="m">可解释性已经能完全看懂大模型。</b>目前只能解释部分特征和少数电路，大量计算仍是“暗物质”。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2013–2019</div>
+    <h4>向量算术、探针与显著性图</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>神经网络被视为无法理解的黑箱。</dd>
+      <dt>怎么解决</dt><dd>词向量的类比算术（2013）提示概念是方向；线性探针（2016）检测各层编码的信息；视觉模型的特征可视化。</dd>
+      <dt>代价</dt><dd>只能说明信息存在，不能说明怎样被使用。</dd>
+      <dt>引出</dt><dd>能否找到具体的计算机制？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">可靠性受质疑</span>显著性图与注意力可视化</summary><div>给输入的每个像素或词打一个“重要性”分数的显著性图曾非常流行。“显著性图的健全性检查”（2018）发现，很多方法在模型权重被随机打乱后给出几乎相同的图，说明它们反映的是输入本身的结构，而不是模型的推理。注意力可视化也有类似问题（第 <a class="xref" data-ref="attention"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2020–2022</div>
+    <h4>电路与叠加</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多义神经元让逐个神经元的分析失效。</dd>
+      <dt>怎么解决</dt><dd>视觉模型的“电路”研究（2020）；logit lens（2020）；Transformer 电路的数学框架与残差流视角（2021）；归纳头（2022）；叠加的玩具模型（2022）解释了多义性。</dd>
+      <dt>代价</dt><dd>方法只在小模型上可行。</dd>
+      <dt>引出</dt><dd>怎样把叠加的特征拆开？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>稀疏自编码器与表示工程</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>需要在大模型上找到单义的特征。</dd>
+      <dt>怎么解决</dt><dd>“走向单义性”（2023）在小模型上用 SAE 拆出特征；表示工程与推理时干预；“规模化单义性”（2024）把 SAE 扩展到 Claude 3 Sonnet，金门大桥 Claude；拒绝方向（2024）；Gemma Scope 开放大量 SAE。</dd>
+      <dt>代价</dt><dd>SAE 的还原不完整，特征依赖超参数。</dd>
+      <dt>引出</dt><dd>怎样看清特征之间的计算？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>归因图与务实转向</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>孤立的特征无法解释推理过程。</dd>
+      <dt>怎么解决</dt><dd>“大语言模型的生物学”用归因图追踪多跳推理、押韵规划、心算和幻觉；人格向量；思维链可监控性受到重视；DeepMind 公布 SAE 的负面结果并转向务实路线。</dd>
+      <dt>代价</dt><dd>分析成本高，覆盖范围有限。</dd>
+      <dt>引出</dt><dd>能否描述模型更高层的“心理结构”？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>助手轴、情绪、内省与全局工作空间</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>需要理解模型的角色、动机和自我认知，才能评估它是否安全。</dd>
+      <dt>怎么解决</dt><dd>助手轴、功能性情绪、内省电路、全局工作空间、自然语言自编码器、对称性塑造几何、混淆地图等一批发现。</dd>
+      <dt>代价</dt><dd>“意识”“情绪”等词语容易被过度解读；研究集中在少数机构。</dd>
+      <dt>引出</dt><dd>理解了机制，怎样衡量能力本身？（第 <a class="xref" data-ref="evaluation"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个线性探针在第 20 层以 95% 的准确率读出了“这句话是假的”。能否据此断言模型“知道自己在说谎”？还需要什么实验？</summary><div class="ans">不能。探针只说明这一信息在激活中线性可读，不说明模型在生成时使用了它。还需要干预实验：沿探针方向修改激活，看模型的输出（是否坚持说假话、是否改口）是否随之改变。</div></details>
+<details class="quiz"><summary>2. 在 \(d = 1024\) 维空间中，随机两个方向余弦的典型大小是多少？</summary><div class="ans">标准差约 \(1/\sqrt{1024} = 1/32\approx 0.031\)。所以随机方向几乎正交，大量特征可以在干扰很小的情况下共存。</div></details>
+<details class="quiz"><summary>3. 拒绝方向的消融为什么对开源模型的安全是个问题？</summary><div class="ans">拿到开源权重的人可以算出拒绝方向，把它从权重中投影掉（把消融“烧进”权重），得到一个不再拒绝任何请求的模型，几乎不损失其他能力，也不需要训练。这说明基于微调的安全对齐可能只是在模型中加了一个容易移除的“开关”（第 <a class="xref" data-ref="jailbreak"></a> 章）。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://transformer-circuits.pub/2022/toy_model/index.html">Toy Models of Superposition</a>（Anthropic, 2022）<span class="why">叠加的原理，本章演示的来源。</span></li>
+  <li><a href="https://transformer-circuits.pub/2024/scaling-monosemanticity/">Scaling Monosemanticity</a>（Anthropic, 2024）<span class="why">在前沿模型上训练 SAE。</span></li>
+  <li><a href="https://transformer-circuits.pub/2025/attribution-graphs/biology.html">On the Biology of a Large Language Model</a>（Anthropic, 2025）<span class="why">归因图与具体机制。</span></li>
+  <li><a href="https://arxiv.org/abs/2406.11717">Refusal in Language Models Is Mediated by a Single Direction</a>（Arditi 等, 2024）<span class="why">一个方向控制拒绝。</span></li>
+  <li><a href="https://www.anthropic.com/research/assistant-axis">The assistant axis</a>、<a href="https://www.anthropic.com/research/emotion-concepts-function">Emotion concepts</a>、<a href="https://www.anthropic.com/research/global-workspace">Global workspace</a>（Anthropic, 2026）<span class="why">写给普通读者的三篇博客。</span></li>
+</ol>
+
+<div class="nextq">可解释性看模型内部；评测看模型外部的表现。但基准为什么一再饱和、被污染？同一个模型换个评测框架分数能差十几个百分点，排行榜还可信吗？下一章（第 <a class="xref" data-ref="evaluation"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/1610.01644">线性探针（Alain 与 Bengio 2016）</a> · <a href="https://www.lesswrong.com/posts/AcKRB8wDpdaN6v6ru/interpreting-gpt-the-logit-lens">logit lens</a> · <a href="https://arxiv.org/abs/1810.03292">Sanity Checks for Saliency Maps</a> · <a href="https://distill.pub/2020/circuits/zoom-in/">Zoom In: Circuits</a> · <a href="https://transformer-circuits.pub/2023/monosemantic-features">Towards Monosemanticity</a> · <a href="https://arxiv.org/abs/2310.01405">Representation Engineering</a> · <a href="https://arxiv.org/abs/2408.05147">Gemma Scope</a> · <a href="https://www.anthropic.com/research/persona-vectors">Persona vectors</a> · DeepMind 可解释性团队 2025-03 进展更新（SAE 的负面结果） · <a href="https://arxiv.org/abs/2402.10588">Do Llamas Work in English?</a> · <a href="https://arxiv.org/abs/2310.06824">The Geometry of Truth</a> · <a href="https://arxiv.org/abs/2604.07729">情绪概念</a> · <a href="https://arxiv.org/abs/2603.21396">内省机制</a> · <a href="https://www.anthropic.com/research/natural-language-autoencoders">自然语言自编码器</a> · <a href="https://arxiv.org/abs/2602.15029">对称性塑造几何</a> · <a href="https://arxiv.org/abs/2602.15515">混淆地图</a> · <a href="https://arxiv.org/abs/2505.24832">How much do language models memorize?</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
