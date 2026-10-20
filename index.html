@@ -73,7 +73,7 @@ document.addEventListener('DOMContentLoaded', () => {
     video: '从零开始算一段 5 秒视频的 token 与注意力账、3D 因果 VAE、联合去噪为什么一致、自回归漂移与 Self Forcing、少步与实时、每一代在修什么（噪声分工 MoE、原生音频、多镜头）、懂物理之争',
     audio: '从零开始：一秒语音是多少个采样、多少帧梅尔频谱、多少编解码 token；STFT 的时频权衡、RVQ 码率、多码本的排列（延迟模式、深度 Transformer）、语音对话的延迟账与全双工判停、每一代在修什么、音乐生成与版权',
     spatial: '体渲染公式（比尔-朗伯推导）与 NeRF、3D 高斯泼溅的投影与混合、SDS 与雅努斯问题、DUSt3R/VGGT 前馈重建、TRELLIS 三维潜空间、世界生成、空间推理之争',
-    'world-models': '动作条件的动态模型、Dreamer 在想象中练习、误差指数累积与记忆、GameNGen/Genie 可以玩的视频、Waymo 与 Cosmos 的物理仿真、JEPA 与像素/表示/三维路线之争',
+    'world-models': '从零开始：网格世界里世界模型预测什么、怎样在想象中规划；误差累积与最优视野、Dreamer 的潜变量目标、JEPA 为什么不重建像素、Genie 的潜动作、MuZero 的价值等价；每一代在修什么与路线之争',
     embodied: '莫拉维克悖论、动作 token 化（RT-2）与流匹配动作块（π0）、行为克隆 T²ε 与 DAgger、快慢双系统、世界动作模型与 π0.7、数据从哪来、人形机器人之争',
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
     evaluation: '100 题玩具基准：标准误、配对检验与聚类；饱和与污染、pass@k 的无偏估计、竞技场 Elo 与 Bradley-Terry、METR 时间跨度、每一代基准在修什么、评估意识',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 106], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 108], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
