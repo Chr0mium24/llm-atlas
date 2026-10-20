@@ -567,4 +567,14 @@ window.ATLAS_TERMS = {
   'sim-to-real': { t: "仿真到现实的差距", en: "sim-to-real gap", d: "仿真中的摩擦、质量、电机响应、延迟、视觉外观与真实世界的偏差，使仿真里学好的策略到真机上失效。", at: "embodied#sim" },
   'domain-randomization': { t: "域随机化", en: "domain randomization", d: "训练时每一局随机抽取物理和外观参数 \\(\\xi\\)，优化 \\(\\mathbb E_{\\xi}[J(\\pi;\\xi)]\\)，让真实世界只是又一个随机世界（Tobin 等, 2017；OpenAI 的 ADR, 2019）。范围越宽越稳健，也越保守。", at: "embodied#sim" },
   'advantage-conditioning': { t: "优势条件化", en: "advantage conditioning", d: "用价值函数给数据里的动作标上“好 / 不好”，训练以该标签为输入的策略，推理时固定输入“好”。由贝叶斯公式，它等于按“被标为好的概率”给原策略重新加权（π*0.6 的 Recap, 2025）。", at: "embodied#rlft" },
+
+  // ---- on-device (upgrade 2026-10-20)
+  'bw-utilization': { t: "带宽利用率", en: "bandwidth utilization", d: "实际用到的内存带宽与规格带宽之比 \\(\\eta\\)。单用户解码时生成速度 ≈ \\(\\eta\\cdot\\)带宽 ÷ 每 token 要读的字节；llama.cpp 跑分里显卡多在 65–85%，Mac 在 40–85%。", at: "on-device#od0-speed" },
+  'expert-offload': { t: "专家卸载", en: "expert offloading", d: "MoE 放不进显存时，把专家权重放在 CPU 内存（或硬盘）里，注意力、KV 留在显卡上。生成时由 CPU 就地计算专家；每个 token 的时间是各层存储时间之和，由最慢的那一层决定。", at: "on-device#moe-local" },
+  mmap: { t: "内存映射", en: "memory mapping (mmap)", d: "把文件直接映射成一段内存地址，用到哪一页才由操作系统从硬盘读入，内存紧张时再丢掉不常用的页。llama.cpp 默认这样加载模型，所以模型比内存大也能跑，但速度由硬盘决定。", at: "on-device#moe-local" },
+  ple: { t: "逐层嵌入", en: "per-layer embeddings (PLE)", d: "Gemma 3n / Gemma 4 端侧版本的设计：每一层有自己的嵌入表，按 token 编号查表、不参与矩阵乘法，可以放在闪存或 CPU 内存里按需读取；常驻加速器内存的只有“有效参数”（E2B、E4B 中的 E）。", at: "on-device#phone" },
+  'thermal-throttling': { t: "热降频", en: "thermal throttling", d: "芯片温度接近上限时，系统主动降低频率和电压以减少发热。手机长时间运行时的速度 ≈ 能持续散掉的功率 ÷ 每个 token 的能量，常只有峰值的一半左右。", at: "on-device#phone-heat" },
+  dvfs: { t: "动态调频调压", en: "dynamic voltage and frequency scaling (DVFS)", d: "同时调低频率和电压来省电。动态功耗 \\(\\propto CV^2f\\)，电压大致随频率变化时功耗 \\(\\propto f^3\\)；计算受限的任务降频时掉速少，访存为主的解码掉得多。", at: "on-device#phone-heat" },
+  tops: { t: "TOPS", en: "tera operations per second", d: "每秒万亿次运算，NPU 的常用宣传指标，通常指 INT8，且常按 2:4 稀疏标注（稠密约为一半）。大模型解码受内存带宽限制，TOPS 与生成速度关系不大。", at: "on-device#embedded" },
+  'device-cloud': { t: "端云协同", en: "device–cloud collaboration", d: "本地小模型处理简单、隐私敏感或离线的请求，必要时把复杂请求转给云端大模型。手机厂商的主流方案。", at: "on-device#cases" },
 };

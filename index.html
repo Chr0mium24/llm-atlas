@@ -66,7 +66,7 @@ document.addEventListener('DOMContentLoaded', () => {
     quantization: '带宽上限、Δ²/12 误差推导与离群值、分组与微缩放（bpw）、Hadamard 旋转与 GPTQ 推导、量化实验室、STE 与 QAT、过度训练更难量化、三值模型之争',
     serving: '跟着一个请求走一遍；批处理的算术强度、KV 显存账与 GQA/MLA、分页与前缀缓存、排队论与 goodput、投机解码的证明、分块预填充与 P/D 分离、每百万 token 的成本',
     'training-systems': '一个训练步里显存怎么涨落（每参数 16 字节、激活与重计算）；环形全规约、ZeRO、张量 / 流水线 / 专家 / 上下文并行；MFU、低精度训练、故障与检查点间隔（Daly 公式）、RL 训练系统',
-    'on-device': '三本账（内存、生成速度、读提示时间）、格式与运行时、新架构本地反而慢、Mac 统一内存、手机 3B 甜点、TOPS 怎么打折、4070 Ti 跑三值 27B 等实战记录',
+    'on-device': '从零开始：16 GB 显存能跑什么——权重、KV 与生成速度一步步算；带宽决定解码上限、MoE 专家卸载的速度账、端侧投机解码、手机的发热与降频、同样内存下大模型低比特还是小模型高比特、开源与前沿的差距',
     vlm: 'ViT 与 patch 计数、CLIP 对比学习（互信息下界推导）与 SigLIP、编码器 + 投影 + LLM、原生 vs 后装之争、动态分辨率、光学压缩、视频 token 预算、视觉盲点之争',
     diffusion: '前向加噪、后验均值与 Tweedie 公式、速度场与连续性方程、SDE vs ODE（福克-普朗克）、CFG 的贝叶斯推导、少步蒸馏、完美去噪器只会背书、扩散 vs 自回归',
     image: '从零开始走一遍潜扩散流水线：VAE、文本编码器、去噪与 CFG 的账；MMDiT 联合注意力、SDEdit 强度权衡与上下文编辑、DreamBooth 个性化、少步蒸馏、FID 的推导与局限、每一代在修什么',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 110], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 113], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
