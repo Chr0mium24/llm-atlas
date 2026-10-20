@@ -19,7 +19,7 @@
     { s: 'rl', t: '强化学习', st: 'new' },
     { s: 'distillation', t: '蒸馏与能力整合', st: 'new' },
     { s: 'reasoning', t: '推理模型与推理时算力', st: 'new' },
-    { s: 'agents', t: '智能体', st: 'old' },
+    { s: 'agents', t: '智能体', st: 'new' },
     { s: 'coding', t: 'AI 编程', st: 'todo' },
     { part: '四 · 架构演进' },
     { s: 'moe', t: '混合专家 MoE', st: 'old' },

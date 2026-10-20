@@ -163,4 +163,17 @@ window.ATLAS_TERMS = {
   'self-consistency': { t: '多数投票（自洽性）', en: 'self-consistency', d: '同一问题采样多条推理，取出现最多的答案。正确答案是最常见答案时有效；存在常见的陷阱答案时会稳定地选错。', at: 'reasoning#ttc' },
   overthinking: { t: '过度思考', en: 'overthinking', d: '推理模型在简单问题上写出过长的思考、得到答案后反复验证，浪费算力；有时想得越久越差。', at: 'reasoning#budget' },
   'cot-faithfulness': { t: '思维链忠实性', en: 'CoT faithfulness', d: '思维链是否如实反映了决定答案的因素。实验显示模型受暗示影响时常常不在思维链里承认（约 25–39%）。', at: 'reasoning#faithful' },
+
+  // ---- agents (agents.html)
+  'agent-llm': { t: '智能体', en: 'agent', d: '模型 + 一组工具 + 一个循环：模型输出思考和工具调用，外部程序执行并把结果追加回上下文，直到任务完成。', at: 'agents#loop' },
+  harness: { t: 'harness', en: 'agent harness', d: '智能体循环之外的程序：执行工具、管理上下文、处理权限与错误、规划与验证。同一模型换 harness，分数可差十几个百分点。', at: 'agents#loop' },
+  'tool-calling': { t: '工具调用', en: 'tool / function calling', d: '工具用 JSON Schema 描述；模型按约定格式（常包在特殊 token 里）输出调用，harness 解析并执行，结果回填上下文。', at: 'agents#tools' },
+  mcp: { t: 'MCP', en: 'Model Context Protocol', d: '应用与工具服务之间的开放协议（Anthropic, 2024-11），服务器提供 tools、resources、prompts，把 N×M 个集成变成 N+M。2025-12 捐给 Linux 基金会。', at: 'agents#tools' },
+  'context-engineering': { t: '上下文工程', en: 'context engineering', d: '在多步任务中决定每一步往有限上下文里放什么：保持前缀稳定、清理旧结果、压缩、按需检索、外部记忆、子智能体。', at: 'agents#context' },
+  compaction: { t: '压缩（上下文）', en: 'compaction', d: '上下文快满时让模型把历史写成摘要，用摘要替换原文继续工作。会改动前缀、使缓存失效。', at: 'agents#context' },
+  subagent: { t: '子智能体', en: 'subagent', d: '在全新上下文中执行子任务、只把结论交回主智能体的智能体。让主上下文保持干净，代价是额外的调用。', at: 'agents#context' },
+  rag: { t: 'RAG', en: 'retrieval-augmented generation', d: '先从资料库检索相关片段放进上下文，再让模型回答：切块、嵌入、召回、重排、生成。', at: 'agents#rag' },
+  'hybrid-retrieval': { t: '混合检索', en: 'hybrid retrieval', d: String.raw`同时用向量检索（语义）和关键词检索（BM25，精确匹配），常用倒数排名融合 \(\sum 1/(k + \text{rank})\) 合并结果。`, at: 'agents#rag' },
+  'agentic-search': { t: '智能体搜索', en: 'agentic search', d: '由模型自己决定搜什么、读什么、是否换关键词再搜，检索成为循环中的一种动作，而非固定流水线。', at: 'agents#rag' },
+  'prompt-injection': { t: '提示注入', en: 'prompt injection', d: '工具返回的不可信内容（网页、邮件等）中夹带指令，诱使模型执行。根源是模型无法从结构上区分指令和数据。', at: 'agents#security' },
 };
