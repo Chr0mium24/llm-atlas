@@ -241,7 +241,7 @@
   <div class="fx-eg">\(d_h = 128\)：不加保护时，训练中 q、k 都变长 3 倍，分数就放大 9 倍，标准差从 1 变成 9；加了 QK-Norm，分数始终在 \(\pm 11.3\) 以内（乘上学到的系数后上限可调），标准差仍约为 1。</div>
 </div>
 <ul>
-  <li><b>QK-Norm</b>：上面的式子，对 q、k 做 <span class="term" data-t="rmsnorm">RMSNorm</span>（下一章）。ViT-22B（2023）靠它稳住了 220 亿参数的训练，Gemma 3（2025-03）用它替换了 Gemma 2 的软截断，Qwen3（2025-04）也加上了它。</li>
+  <li><dfn data-t="qk-norm">QK-Norm</dfn>：上面的式子，对 q、k 做 <span class="term" data-t="rmsnorm">RMSNorm</span>（下一章）。ViT-22B（2023）靠它稳住了 220 亿参数的训练，Gemma 3（2025-03）用它替换了 Gemma 2 的软截断，Qwen3（2025-04）也加上了它。</li>
   <li><b>logit 软截断</b>：\(s \leftarrow 50\tanh(s/50)\)，分数被平滑地压进 \(\pm 50\)（Gemma 2, 2024）。缺点是和当时常用的 FlashAttention 实现不兼容，额外的 tanh 也要算。</li>
   <li><b><dfn data-t="qk-clip">QK-Clip</dfn></b>：不改前向计算，而在每步更新后检查每个头的最大分数，超过阈值 \(\tau\) 就把这个头的 \(W_Q, W_K\) 按比例缩小。Kimi K2（2025-07）用 \(\tau = 100\)。不加它时，一个激活 90 亿参数的<span class="term" data-t="moe">混合专家</span>试验模型用 <span class="term" data-t="muon">Muon</span> 优化器训练，最大分数很快超过 1000；报告指出这种量级通常带来明显的<span class="term" data-t="loss-spike">损失尖峰</span>，甚至发散。</li>
 </ul>
@@ -304,8 +304,8 @@
 <p>所有分数都低时，权重和接近 0，输出接近 0，不需要占用一个真实的 token。这就是 Evan Miller（2023）提出的“分母加一”，gpt-oss（2025-08）给每个头学一个这样的常数。另一种出口是门控：输出乘一个 0 到 1 之间的门，门关上就是“什么也不做”（下面的门控注意力）。Gu 等还发现，把 softmax 换成不归一化的 sigmoid，10 亿参数以内的模型就不再出现注意力汇。</p>
 <p><b>这个推导告诉我们：</b>注意力汇是“权重和为 1”加上因果掩码之后，模型能找到的最便宜的空操作。显式地给它一个空操作，它就不再需要占用第一个 token。</p>
 </div></details>
-<p>注意力汇常常和另一个现象一起出现。Sun 等（2024）发现，大模型里有极少数激活值比其它的大得多（可以到 10 万倍），叫<b>巨量激活</b>（massive activations）。它们几乎不随输入变化，作用相当于固定的偏置；只把其中 4 个置零，模型就崩溃，换成它们的平均值则没有影响。它们出现在第一个 token 等少数位置上，正是注意力汇所在的地方。对量化来说，这些巨大的数是最难处理的离群值（第 <a class="xref" data-ref="quantization"></a> 章）。</p>
-<p>2025 年，Qwen 团队给出了一个很小的改动：在注意力输出之后、乘 \(W_O\) 之前，按头、按输入乘一个 sigmoid 门，\(\mathbf o_i' = \sigma(\mathbf x_iW_g)\odot\mathbf o_i\)，叫<b>门控注意力</b>（gated attention）。门可以直接把一个头关掉，注意力汇随之消失，训练更稳、可以用更大的学习率，长上下文外推也更好。这篇论文获得 NeurIPS 2025 最佳论文，门控注意力已用在 Qwen3-Next（2025-09）和 Qwen3.5（2026-02）的全注意力层里。</p>
+<p>注意力汇常常和另一个现象一起出现。Sun 等（2024）发现，大模型里有极少数激活值比其它的大得多（可以到 10 万倍），叫<dfn data-t="massive-activations">巨量激活</dfn>（massive activations）。它们几乎不随输入变化，作用相当于固定的偏置；只把其中 4 个置零，模型就崩溃，换成它们的平均值则没有影响。它们出现在第一个 token 等少数位置上，正是注意力汇所在的地方。对量化来说，这些巨大的数是最难处理的离群值（第 <a class="xref" data-ref="quantization"></a> 章）。</p>
+<p>2025 年，Qwen 团队给出了一个很小的改动：在注意力输出之后、乘 \(W_O\) 之前，按头、按输入乘一个 sigmoid 门，\(\mathbf o_i' = \sigma(\mathbf x_iW_g)\odot\mathbf o_i\)，叫<dfn data-t="gated-attention">门控注意力</dfn>（gated attention）。门可以直接把一个头关掉，注意力汇随之消失，训练更稳、可以用更大的学习率，长上下文外推也更好。这篇论文获得 NeurIPS 2025 最佳论文，门控注意力已用在 Qwen3-Next（2025-09）和 Qwen3.5（2026-02）的全注意力层里。</p>
 <aside class="dispute">
   <h4>注意力汇是缺陷还是功能</h4>
   <dl>

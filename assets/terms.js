@@ -624,4 +624,20 @@ window.ATLAS_TERMS = {
   'additive-attention': { t: "加性注意力", en: "additive attention (Bahdanau attention)", d: "Bahdanau 等（2014）的打分方式：\\(\\mathbf w^\\top\\tanh(W_1\\mathbf s + W_2\\mathbf h)\\)，用一个小网络比较解码器状态和编码器某个位置的隐藏状态。每对位置都要单独算一次，不能写成一次矩阵乘法，后来被点积打分取代。", at: "attention#evolution" },
   'sparse-attention': { t: "稀疏注意力", en: "sparse attention", d: "每个 query 只看挑出来的一部分位置，而不是全部。早期用固定模式（Sparse Transformer, 2019：局部 + 跨步，\\(O(n\\sqrt n)\\)），2025 年后改成按内容挑选（NSA、DeepSeek 的 DSA）。", at: "attention#evolution" },
   mqa: { t: "MQA", en: "multi-query attention", d: "多查询注意力（Shazeer, 2019）：所有 query 头共用同一组 K、V，KV 缓存和每步读取量都除以头数 \\(h\\)。质量和训练稳定性有损，后来被折中的 GQA 取代。", at: "attention#evolution" },
+
+  // ---- transformer (upgrade 2026-10-20)
+  'hidden-dim': { t: "隐藏维度", en: "hidden dimension (model width)", d: "每个位置上残差流向量的维数，记作 \\(d\\)。Llama 3 8B 是 4096；注意力、MLP 的输入输出都是 \\(d\\) 维，每层参数约 \\(12d^2\\)。", at: "transformer#zero" },
+  'post-norm': { t: "Post-Norm", en: "post-normalization", d: "原版 Transformer 的做法：先相加再归一化，\\(\\mathbf x_{l+1} = \\operatorname{Norm}(\\mathbf x_l + F(\\mathbf x_l))\\)。残差流每层都被重新缩放，没有恒等的直通路径，深了难训、需要学习率预热。", at: "transformer#norm" },
+  'lr-warmup': { t: "学习率预热", en: "learning-rate warmup", d: "训练开头的几百到几千步里，把学习率从接近 0 逐步升到目标值。Post-Norm 的 Transformer 离不开它；Pre-Norm 可以省掉，但实践中大多保留一段较短的预热。", at: "transformer#norm" },
+  'prenorm-dilution': { t: "PreNorm 稀释", en: "PreNorm dilution", d: "Pre-Norm 结构中，残差流长度随层数约按 \\(\\sqrt l\\) 增长，而每层写入的大小大致固定，越深的层写入的内容占比越小、影响越弱。Attention Residuals 论文的叫法。", at: "transformer#norm" },
+  'sinusoidal-pe': { t: "正弦位置编码", en: "sinusoidal positional encoding", d: "原版 Transformer 的位置编码：位置 \\(m\\) 的向量各维为 \\(\\sin(m\\omega_i)\\)、\\(\\cos(m\\omega_i)\\)，\\(\\omega_i = 10000^{-2i/d}\\)，直接加到嵌入上。平移等于旋转，但相加后绝对位置会混进注意力分数。", at: "transformer#position" },
+  'relative-pos-bias': { t: "相对位置偏置", en: "relative position bias", d: "不改向量，直接给注意力分数加一个只依赖距离的偏置。T5（2019）每个头按距离分 32 个桶查表；ALiBi（2021）取 \\(-c_h|m-n|\\)。", at: "transformer#position" },
+  'pos-interp': { t: "位置插值", en: "position interpolation (PI)", d: "扩展 RoPE 上下文的方法：把位置按比例压缩，\\(m\\to m\\cdot n_{\\text{train}}/n_{\\text{test}}\\)，让旋转角度都落回训练时见过的范围；代价是相邻位置更难分辨。", at: "transformer#position" },
+  yarn: { t: "YaRN", en: "Yet another RoPE extensioN", d: "2023 年的 RoPE 上下文扩展方法：只压缩低频平面、保留高频平面，并对注意力分数做温度修正，少量长文本微调即可把上下文扩大数倍到数十倍。", at: "transformer#position" },
+  nope: { t: "NoPE", en: "no positional encoding", d: "完全不用位置编码的注意力层。带因果掩码时模型能从“能看到几个 token”推出位置；Llama 4、SmolLM3 等每隔几层放一个，Kimi Linear 的全注意力层全部不用。", at: "transformer#position" },
+  'qk-norm': { t: "QK-Norm", en: "query-key normalization", d: "点积之前给 q、k 各做一次归一化（按头），\\(s = \\operatorname{Norm}(\\mathbf q)\\cdot\\operatorname{Norm}(\\mathbf k)/\\sqrt{d_h}\\)，把注意力分数锁在有界范围内，防止训练中分数失控。Gemma 3、Qwen3、OLMo 2 等采用。", at: "attention#scale" },
+  'gated-attention': { t: "门控注意力", en: "gated attention", d: "在注意力的加权和上（乘 \\(W_O\\) 之前）逐头逐维乘一个由当前 token 决定的 sigmoid 门：\\(\\mathbf o_i' = \\sigma(\\mathbf x_iW_g)\\odot\\mathbf o_i\\)。Qwen 团队 2025 年提出，去掉了注意力汇和巨量激活，训练更稳；用于 Qwen3-Next。", at: "attention#patterns" },
+  mhc: { t: "mHC", en: "manifold-constrained hyper-connections", d: "流形约束超连接（DeepSeek, 2025-12）：把残差流扩成 n 条并行的流，用被约束为双随机矩阵的可学习矩阵混合，信号放大被限制在约 1.6 倍。用于 DeepSeek V4。", at: "transformer#residual-2026" },
+  'attn-res': { t: "Attention Residuals", en: "Attention Residuals (AttnRes)", d: "Kimi 2026 年提出的残差连接：每层用学到的查询向量，对之前各层（或各块）的输出做 softmax 注意力，取代等权相加 \\(\\mathbf x_0 + \\sum_l F_l\\)，缓解 PreNorm 稀释。用于 Kimi K3。", at: "transformer#residual-2026" },
+  'massive-activations': { t: '巨量激活', en: 'massive activations', d: '大模型里极少数比其它大几个数量级（可达十万倍）的激活值，几乎不随输入变化，作用像固定偏置；常与注意力汇同时出现，给量化带来麻烦（Sun 等, 2024）。', at: 'attention#patterns' },
 };

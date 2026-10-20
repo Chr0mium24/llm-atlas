@@ -4,7 +4,7 @@ A.defineDemo('block-diagram', function (mount) {
   const INFO = {
     emb: ['词嵌入', '把 token id 换成 d 维向量（' + A.cref('tokens') + '）。从这里开始，每个位置的向量就是一条“残差流”。'],
     norm1: ['RMSNorm', '只按均方根缩放：x / sqrt(mean(x²)) · g。没有减均值和偏置，比 LayerNorm 更便宜。放在子层<b>之前</b>（Pre-Norm），残差路径上就没有归一化，梯度可以直接传过去。'],
-    attn: ['多头自注意力（GQA + RoPE）', '先算 Q、K、V，对 Q、K 施加 RoPE 旋转，再做带因果掩码的缩放点积注意力。GQA 让多个 Q 头共享一组 K/V 头（比如 64 个 Q 头配 8 个 KV 头），KV cache 变成原来的 1/8。这是唯一在 token 之间交换信息的地方。'],
+    attn: ['多头自注意力（GQA + RoPE）', '先算 Q、K、V，对 Q、K 施加 RoPE 旋转，再做带因果掩码的缩放点积注意力。GQA 让多个 Q 头共享一组 K/V 头（比如 64 个 Q 头配 8 个 KV 头），KV cache 变成原来的 1/8。这是唯一在 token 之间交换信息的地方。2025 年后的很多模型还在点积前给 q、k 各做一次 RMSNorm（QK-Norm），或在注意力输出上乘一个门（门控注意力）。'],
     add1: ['残差相加', 'x ← x + Attn(Norm(x))。注意力的输出是在原向量上“增量修改”，不是替换。'],
     norm2: ['RMSNorm', '同上，给 MLP 用的那一份。'],
     ffn: ['SwiGLU 前馈网络（MLP）', 'FFN(x) = W₂ · (SiLU(W₁x) ⊙ W₃x)。三个矩阵，中间维度通常约为 8/3·d 再取整（Llama 3 8B：d=4096，中间维度 14336）。每个 token 独立计算，参数量约占整层的 2/3。大模型里这一块常换成 MoE：一组专家 MLP 加一个路由器。'],
