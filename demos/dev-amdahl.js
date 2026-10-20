@@ -25,7 +25,7 @@ A.defineDemo('dev-amdahl', function (mount) {
   function draw() {
     const t = 1 - f + f / s + o, ideal = 1 / (1 - f + f / s);
     stats.innerHTML = '';
-    [['用 AI 后的总时间', t.toFixed(2) + '（' + (t < 1 ? '快了 ' + A.pct(1 - t, 0) : '慢了 ' + A.pct(t - 1, 0)) + '）'], ['没有开销时的理论加速', ideal.toFixed(2) + ' 倍'], ['即使 s 无穷大，最多', (1 / (1 - f + o)).toFixed(2) + ' 倍']]
+    [['用 AI 后的总时间', t.toFixed(2) + '（' + (t < 1 ? '快了 ' + A.pct(1 - t, 0) : '慢了 ' + A.pct(t - 1, 0)) + '）'], ['没有开销时的理论加速', ideal.toFixed(2) + ' 倍'], ['即使 s 无穷大，最多', (1 / (1 - f + o)).toFixed(2) + ' 倍'], ['不吃亏的开销上限 f(1 − 1/s)', A.pct(f * (1 - 1 / s), 0)]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, v))));
     hint.innerHTML = 'AI 只加速了“写代码”这一部分，理解需求、读代码、调试、沟通都不变，所以整体加速有上限 1/(1 − f)（阿姆达尔定律）。更重要的是新增的开销：写提示、等模型、读懂并审查它生成的代码、修正它的错误。在熟悉的大型代码库里，资深开发者本来写得就快、要求又高，o 很容易超过 f(1 − 1/s)，结果反而变慢，这是 METR 2025 年随机对照试验的一种解释。而“感觉变快了”可能来自写代码这部分确实轻松了很多。';
     view.redraw();
