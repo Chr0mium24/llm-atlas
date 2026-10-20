@@ -76,7 +76,7 @@ document.addEventListener('DOMContentLoaded', () => {
     'world-models': '动作条件的动态模型、Dreamer 在想象中练习、误差指数累积与记忆、GameNGen/Genie 可以玩的视频、Waymo 与 Cosmos 的物理仿真、JEPA 与像素/表示/三维路线之争',
     embodied: '莫拉维克悖论、动作 token 化（RT-2）与流匹配动作块（π0）、行为克隆 T²ε 与 DAgger、快慢双系统、世界动作模型与 π0.7、数据从哪来、人形机器人之争',
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
-    evaluation: '污染与饱和、榜单幻觉、新一代评测、METR 时间跨度',
+    evaluation: '误差棒（标准误）、提示格式差 76 分、饱和与污染（GSM1k）、竞技场 Elo 与排行榜幻觉、LLM 评委偏差、METR 时间跨度（拟合与外推）、构念效度与评估意识',
     alignment: '规范文档、谄媚、钻奖励空子与涌现不对齐、思维链可监控性',
     jailbreak: '浅层对齐与拒绝方向、攻击分类、防御层次（只讲机制）',
     science: 'AlphaFold、AlphaProof、IMO 金牌、AI 科研助手',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 73]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 74]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

@@ -292,4 +292,8 @@ window.ATLAS_TERMS = {
   superposition: { t: '叠加', en: 'superposition', d: '模型用远少于概念数的维度表示概念：稀疏的特征以近似正交的方向共享同一空间，导致神经元多义。', at: 'interpretability#superposition' },
   sae: { t: '稀疏自编码器（SAE）', en: 'sparse autoencoder', d: String.raw`把激活展开成大量稀疏特征 \(\mathbf f = \operatorname{ReLU}(W_e\mathbf h + \mathbf b)\) 并还原，用 L1 惩罚使特征稀疏、单义。用于拆解叠加。`, at: 'interpretability#superposition' },
   circuit: { t: '电路（可解释性）', en: 'circuit', d: '若干特征或注意力头相互作用、共同完成某个计算的子网络，如归纳头、多跳推理路径。归因图用来追踪它们。', at: 'interpretability#circuits' },
+
+  // ---- evaluation (evaluation.html)
+  contamination: { t: '数据污染', en: 'data contamination', d: '测试题（或其答案）进入了模型的训练数据，使分数反映的是“见过”而非“会做”。2026 年行业默认公开基准已被污染。', at: 'evaluation#static' },
+  'time-horizon': { t: '时间跨度（METR）', en: 'time horizon', d: '人类专家需要多长时间的任务，模型有 50%（或 80%）的把握完成。2019–2025 年约每 7 个月翻倍，2024 年后约每 4 个月。', at: 'evaluation#horizon' },
 };

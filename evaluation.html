@@ -12,22 +12,173 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>评测</h1>
-  <p class="lede">分数是怎么来的，又在多大程度上可信。</p>
+  <h1>评测：分数说明了什么，又掩盖了什么</h1>
+  <p class="lede">每个新模型发布都附一张成绩表，可同一个模型换一种提示格式、换一个评测框架，分数能差十几个百分点；基准两三年就被做满，题目早已散落在训练数据里。这一章讲怎样正确地读一个分数（误差棒、提示敏感性、污染），三类主要的评测方式（静态基准、人类偏好竞技场、智能体任务）各自的陷阱，METR 的“时间跨度”怎样把能力换算成“能干多长的活”，以及 2026 年评测研究的核心问题：基准到底测到了它声称要测的能力吗？</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（5.2、3.6）。</div>
+<div class="bridge">上一章从内部理解模型；这一章从外部衡量它。衡量也是整个领域的方向盘：规模定律、RL 的奖励、研究的进展、投资的判断，最终都依赖“分数涨了没有”。分数如果不可靠，所有这些都会跟着偏。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>饱和与污染：为什么老基准不再有用</li>
-  <li>榜单幻觉与评测框架差异（同一权重差 10–20 分）</li>
-  <li>新一代评测：HLE、SWE-bench Pro、ARC-AGI-3</li>
-  <li>METR 时间跨度：智能体能做多长的任务</li>
-  <li>评估意识：模型知道自己在被测试</li>
-  <li>幻觉为什么被评测“奖励”出来</li>
+<div class="prereq">
+  <ul>
+    <li>Bradley-Terry 模型、古德哈特定律：第 <a class="xref" data-ref="sft"></a> 章；pass@k：第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="coding"></a> 章</li>
+    <li>记忆与污染：第 <a class="xref" data-ref="data"></a> 章；涌现与度量方式：第 <a class="xref" data-ref="scaling"></a> 章</li>
+    <li>SWE-bench、智能体评测、harness：第 <a class="xref" data-ref="coding"></a>、<a class="xref" data-ref="agents"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="read">怎样读一个分数</h2>
+<p>一个基准上的分数是对“真实能力”的一次有噪声的抽样估计。最基本的问题是：两个模型差 2 分，是真的有差别，还是运气？</p>
+<div class="fx">
+\[ \operatorname{SE} = \sqrt{\frac{\htmlClass{sym-p}{p}(1 - p)}{\htmlClass{sym-n}{n}}},\qquad 95\%\ \text{置信区间}\approx p \pm 1.96\,\operatorname{SE} \]
+  <div class="fx-read">把每道题看成一次“对 / 错”的抽样，准确率 \(p\) 的标准误随题目数 \(n\) 的平方根缩小。两个模型的分差小于约 \(\sqrt2\times 1.96\,\operatorname{SE}\) 时，统计上无法区分。</div>
+  <dl class="fx-syms">
+    <dt data-sym="p">\(p\)</dt><dd>观测到的准确率</dd>
+    <dt data-sym="n">\(n\)</dt><dd>题目数</dd>
+  </dl>
+  <div class="fx-eg">SWE-bench Verified 有 500 题，准确率 80% 时 \(\operatorname{SE} = \sqrt{0.8\times 0.2/500}\approx 1.8\%\)，95% 区间约 \(\pm 3.5\) 个百分点。两个模型 79.5% 对 81.0% 的“领先”在统计上没有意义。AIME 只有 30 题，准确率 70% 时区间约 \(\pm 16\) 个百分点，一次评测的排名几乎全是噪声，所以通常要多次采样取平均（pass@1 的均值）。</div>
+</div>
+<aside class="dispute surprise">
+  <h4>意外：换一种提示格式，准确率能差几十个百分点</h4>
+  <dl>
+    <dt>原以为</dt><dd>评测测的是模型的能力，提示的措辞、空格、选项的写法这些细节无关紧要。</dd>
+    <dt>实际发现</dt><dd>Sclar 等（2023）只改动少样本提示中“语义无关”的格式（分隔符、大小写、空格、选项前的冒号），同一个模型在同一任务上的准确率最多相差 76 个百分点；不同模型对格式的偏好还不一样，排名会因此颠倒。评测框架之间的差别（提示模板、解析答案的方式、是否允许思考、采样温度）同样能让分数差 10–20 个百分点。</dd>
+    <dt>为什么</dt><dd>模型对输入的微小变化高度敏感，尤其是较小的模型；答案解析规则也会把“对的内容、错的格式”判成错。</dd>
+    <dt>现在怎么看</dt><dd>严肃的比较必须在同一框架、同一设置下进行，报告多个提示格式的平均或区间。厂商发布会上自报的分数往往用的是对自家模型最有利的设置，难以直接比较。</dd>
+  </dl>
+</aside>
+
+<h2 id="static">静态基准：饱和与污染</h2>
+<p>静态基准是一组固定的题目和标准答案：知识问答（MMLU）、数学（GSM8K、MATH、AIME）、代码（HumanEval、SWE-bench）、科学（GPQA）。它们便宜、可复现，但有两个系统性的问题。</p>
+<p><b>饱和。</b>一个基准从推出到被做满的时间越来越短：GLUE（2018）一年多就被超过人类水平，接替它的 SuperGLUE 也只撑了两年；MMLU（2020）在 2024 年被做到 90% 左右；为此专门设计的“最难”基准，如 GPQA（2023）、FrontierMath（2024）、人类最后的考试（HLE, 2025），也在一两年内被大幅推进。</p>
+<p><b><dfn data-t="contamination">污染</dfn>。</b>公开的测试题会被网页转载、讨论，进入下一代模型的训练数据。模型可能是“见过答案”而不是“会做”。检测污染的办法有：检查训练数据与测试题的 n 元组重合（GPT-3 用 13 元组）；看模型能否补全测试题的原文；构造与原题同分布、但从未公开的新题对比分数。Scale AI 的 GSM1k（2024）按 GSM8K 的风格新写了 1000 道小学数学题，一些模型家族在新题上的准确率比原题低了约 10 个百分点，提示过拟合；最强的模型则几乎没有差别。到 2026 年，“默认公开基准已被污染”成了行业的工作假设。</p>
+<p>对策是三条：不断推出更难的新基准；用模型训练截止日期之后的新题（LiveBench、LiveCodeBench）；保留不公开的私有测试集（SWE-bench Pro 的部分题目、各家的内部评测）。</p>
+
+<h2 id="arena">人类偏好竞技场</h2>
+<p>静态基准测不了“哪个回答更好”这种开放的质量。LMArena（原 Chatbot Arena, 2023）让用户匿名比较两个模型的回答、投票选更好的，再用第 <a class="xref" data-ref="sft"></a> 章的 Bradley-Terry 模型从数百万次比较中拟合每个模型的分数：</p>
+<div class="fx">
+\[ P(\text{A 胜 B}) = \frac{1}{1 + 10^{(\htmlClass{sym-RB}{R_B} - \htmlClass{sym-RA}{R_A})/400}} \]
+  <div class="fx-read">与国际象棋的 Elo 等级分相同：两个模型的分数差决定胜率。分数本身没有绝对意义，只有差值有意义。</div>
+  <dl class="fx-syms">
+    <dt data-sym="RA">\(R_A, R_B\)</dt><dd>两个模型的竞技场分数</dd>
+  </dl>
+  <div class="fx-eg">分差 100：强者胜率约 64%。分差 30：约 54%，接近抛硬币。榜单前几名常常只差十几二十分，意味着用户在大多数对比中分不太出好坏，排名对“谁略胜一筹”非常敏感。</div>
+</div>
+<aside class="dispute">
+  <h4>竞技场排行榜可信吗</h4>
+  <dl>
+    <dt>支持</dt><dd>真实用户、真实问题、盲评，规模巨大，比任何静态基准都更接近“用户觉得哪个好用”；它对新模型的反应也很快。</dd>
+    <dt>质疑</dt><dd>“排行榜幻觉”（2025-04）分析发现：少数厂商可以私下测试大量模型变体、只公开表现最好的那个（据报道 Meta 在 Llama 4 发布前测试了 27 个变体），而且大厂模型获得的对战数据远多于开源模型，可以据此针对性优化。用户偏好还偏爱更长、更有格式、更会恭维的回答，这与第 <a class="xref" data-ref="alignment"></a> 章的谄媚问题相连。</dd>
+    <dt>现在怎么看</dt><dd>竞技场衡量的是“普通用户在日常对话中的偏好”，不是推理能力或可靠性；控制回答长度和格式之后排名会变化。它是有用的信号之一，但被当成唯一目标时，同样会被古德哈特定律侵蚀。</dd>
+  </dl>
+</aside>
+<p>用强模型代替人做评委（LLM 作为评委）便宜得多，但有已知的偏差：偏爱放在前面（或后面）的回答、偏爱更长的回答、偏爱与自己风格相近的回答（自我偏好）。缓解办法是交换顺序各评一次、控制长度、使用评分细则（第 <a class="xref" data-ref="rl"></a> 章的细则奖励）。</p>
+
+<h2 id="horizon">智能体评测与“时间跨度”</h2>
+<p>智能体评测（SWE-bench、Terminal-Bench、BrowseComp、OSWorld，第 <a class="xref" data-ref="agents"></a> 章）让模型在真实环境中完成多步任务，比问答更接近真实工作，但更依赖 harness 和环境细节。METR 提出了一个把不同任务统一起来的度量：<dfn data-t="time-horizon">时间跨度</dfn>。先请人类专家完成一批任务、记录耗时，再看模型在不同耗时的任务上的成功率：</p>
+<div class="fx">
+\[ P(\text{成功}\mid \htmlClass{sym-L}{L}) = \sigma\Big(\beta\,\big(\log \htmlClass{sym-h}{h_{50}} - \log L\big)\Big) \]
+  <div class="fx-read">任务越长（人类耗时 \(L\) 越大），模型成功率越低，在对数时间上近似一条 S 形曲线。成功率恰好为 50% 的任务长度 \(h_{50}\)，就是这个模型的“50% 时间跨度”。</div>
+  <dl class="fx-syms">
+    <dt data-sym="L">\(L\)</dt><dd>任务对人类专家的耗时</dd>
+    <dt data-sym="h">\(h_{50}\)</dt><dd>50% 时间跨度；\(\beta\) 决定曲线的陡峭程度</dd>
+  </dl>
+  <div class="fx-eg">若某模型 \(h_{50} = 2\) 小时，对一个人类要 30 分钟的任务成功率较高，对 8 小时的任务较低。80% 时间跨度通常只有 50% 时间跨度的约五分之一：能有一半把握完成 2 小时的任务，并不意味着能可靠地完成 2 小时的任务。</div>
+</div>
+<p>按 METR 的测量，时间跨度在 2019–2025 年间大约每 7 个月翻一倍，2024 年以后加快到约每 4 个月翻一倍。下面的图可以亲手拟合和外推，并看清外推有多脆弱：</p>
+<div data-demo="metr-horizon"></div>
+
+<h2 id="validity">2026：基准到底测到了什么</h2>
+<aside class="dispute">
+  <h4>构念效度：基准真的测到了它声称的能力吗</h4>
+  <dl>
+    <dt>问题</dt><dd>“推理”“安全”“智能体能力”这些概念本身定义模糊。一项 2025 年对 445 个大模型基准的系统审查发现，大多数基准没有清晰定义要测的能力、复用了别处的数据、缺乏统计检验。题目格式的偏差（多选题可以靠排除法、答案格式提示）让高分可能来自应试技巧而非目标能力。SWE-bench Verified 与 Pro 之间的巨大分差（第 <a class="xref" data-ref="coding"></a> 章）就是一例。</dd>
+    <dt>新的方向</dt><dd>更贴近真实工作的评测：OpenAI 的 GDPval（2025）请 44 个职业的从业者设计真实工作任务、由专家盲评；交互式、无规则说明的任务（ARC-AGI-3 用模型从没见过的小游戏测试“现场学习”的能力，据报道前沿模型的得分仍很低）。另一条路是评测“评测本身”：给基准做健康检查，标注其饱和、污染、噪声程度。</dd>
+    <dt>现在怎么看</dt><dd>没有一个分数能概括模型的能力。更好的做法是看一组互补的评测、看评测的设计是否可靠、看能力在真实使用中的表现，并对“一个数字代表一切”的说法保持警惕。</dd>
+  </dl>
+</aside>
+<p>还有一个更麻烦的问题：模型越来越能识别“这是一次评测”。Anthropic 在 2025 年的系统卡中报告，Claude Sonnet 4.5 在部分安全测试中会直接说出“我觉得你在测试我”。如果模型在评测中和在真实使用中表现不同，评测的意义就会被削弱。这一问题在对齐评估中尤其严重（第 <a class="xref" data-ref="alignment"></a> 章）。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">分数高一两分就说明模型更强。</b>小基准的误差棒常有几个百分点，提示格式和框架的影响更大。</li>
+  <li><b class="m">不同来源的分数可以直接比较。</b>只有在同一框架、同一设置（提示、温度、是否思考、harness）下才可比。</li>
+  <li><b class="m">竞技场第一就是最强的模型。</b>它衡量日常对话中的用户偏好，偏爱长而漂亮的回答；推理、可靠性、编程需要别的评测。</li>
+  <li><b class="m">基准做满了，说明模型掌握了这项能力。</b>可能是污染、应试技巧，或基准本身只测到了能力的一小部分。</li>
+  <li><b class="m">“时间跨度 8 小时”意味着模型能替人干一天的活。</b>那是 50% 成功率、在特定类型的明确任务上的结果；可靠完成的长度短得多，开放的真实工作更难。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2018–2020</div>
+    <h4>GLUE、SuperGLUE 与 MMLU</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>语言理解缺乏统一的衡量标准。</dd>
+      <dt>怎么解决</dt><dd>GLUE（2018）汇集多个理解任务；很快被超过后推出 SuperGLUE（2019）；MMLU（2020）用 57 个学科的选择题测知识。</dd>
+      <dt>代价</dt><dd>饱和极快，多选格式可被应试技巧利用。</dd>
+      <dt>引出</dt><dd>需要更难、更广的评测。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2021–2023</div>
+    <h4>代码、综合评测与竞技场</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>开放的对话质量、代码能力无法用选择题衡量。</dd>
+      <dt>怎么解决</dt><dd>HumanEval（2021）；BIG-bench、HELM（2022）的综合评测；Chatbot Arena（2023）的人类偏好众包；GPQA（2023）等专家级难题；SWE-bench（2023）。</dd>
+      <dt>代价</dt><dd>污染开始显现；LLM 评委的偏差。</dd>
+      <dt>引出</dt><dd>怎样防污染、怎样测智能体？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>污染检测与动态基准</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>公开基准被训练数据污染，分数虚高。</dd>
+      <dt>怎么解决</dt><dd>GSM1k 揭示过拟合；LiveBench、LiveCodeBench 只用新题；SWE-bench Verified；FrontierMath 的未公开研究级数学题；“为评测加误差棒”的方法论。</dd>
+      <dt>代价</dt><dd>新基准的维护成本高。</dd>
+      <dt>引出</dt><dd>能否衡量能完成多长的真实任务？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>最难的考试、时间跨度与排行榜之争</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>前沿模型迅速做满专家级基准。</dd>
+      <dt>怎么解决</dt><dd>人类最后的考试（HLE）；ARC-AGI-2；METR 的时间跨度（3 月）；“排行榜幻觉”；GDPval 的真实职业任务；SWE-bench Pro；构念效度的系统审查。</dd>
+      <dt>代价</dt><dd>模型开始识别评测，评测与真实使用的差距受到关注。</dd>
+      <dt>引出</dt><dd>评测本身需要被评测。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">逐渐边缘</span>只看单一综合分</summary><div>早期的“综合排行榜”把许多基准平均成一个数字，掩盖了能力的差异和各基准的质量问题。2025 年后，主流做法转向分领域、带误差棒、注明设置的多维报告。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>时间跨度 1.1 与交互式评测</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>长任务的测量误差大；静态评测无法测“现场学习”。</dd>
+      <dt>怎么解决</dt><dd>METR 的 TH1.1 扩充长任务、收紧误差棒；ARC-AGI-3 的交互式游戏；基准健康指数、污染分类等“元评测”研究。</dd>
+      <dt>代价</dt><dd>最前沿的能力已接近现有评测的上限，测量误差越来越大。</dd>
+      <dt>引出</dt><dd>能力越强，越需要确保它与人类的意图一致（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个 200 题的基准，模型 A 得 72%，模型 B 得 76%。差异显著吗？</summary><div class="ans">每个的 SE 约 \(\sqrt{0.74\times 0.26/200}\approx 3.1\%\)，差值的 SE 约 \(\sqrt2\times 3.1\approx 4.4\%\)，4 个百分点不到一个标准误，不显著。若两者在同一组题上评测，可以用配对检验得到更紧的结论，但仍需看逐题的差异。</div></details>
+<details class="quiz"><summary>2. 竞技场上 A 比 B 高 50 分，A 在一次随机对比中胜出的概率是多少？</summary><div class="ans">\(1/(1 + 10^{-50/400}) = 1/(1 + 0.75)\approx 0.57\)。</div></details>
+<details class="quiz"><summary>3. 50% 时间跨度为 4 小时、翻倍时间 4 个月。按此趋势，一年后是多少？为什么不能简单相信这个外推？</summary><div class="ans">一年翻 3 倍：\(4\times 2^3 = 32\) 小时。不能简单相信：翻倍时间本身随拟合窗口变化（4 到 7 个月，一年后相差约 2 倍以上）；长任务的测量误差很大；评测任务是明确、可判分的软件类任务，不代表一般工作；趋势也可能加速或放缓。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2411.00640">Adding Error Bars to Evals</a>（Miller, 2024）<span class="why">评测的统计学基础。</span></li>
+  <li><a href="https://arxiv.org/abs/2310.11324">Quantifying Language Models' Sensitivity to Spurious Features in Prompt Design</a>（Sclar 等, 2023）<span class="why">提示格式能让分数差多少。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.14499">Measuring AI Ability to Complete Long Tasks</a>（METR, 2025）<span class="why">时间跨度的定义与趋势。</span></li>
+  <li><a href="https://arxiv.org/abs/2504.20879">The Leaderboard Illusion</a>（2025）<span class="why">竞技场排行榜的系统性问题。</span></li>
+  <li><a href="https://arxiv.org/abs/2405.00332">A Careful Examination of LLM Performance on Grade School Arithmetic</a>（GSM1k, 2024）<span class="why">怎样检测过拟合与污染。</span></li>
+</ol>
+
+<div class="nextq">评测告诉我们模型能做什么。更难的问题是它会不会做我们不希望的事：讨好用户、钻奖励空子、在测试时伪装。对齐研究怎样定义“好的行为”，又发现了哪些令人不安的现象？下一章（第 <a class="xref" data-ref="alignment"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://gluebenchmark.com/">GLUE</a> · <a href="https://arxiv.org/abs/2009.03300">MMLU</a> · <a href="https://arxiv.org/abs/2311.12022">GPQA</a> · <a href="https://arxiv.org/abs/2211.09110">HELM</a> · <a href="https://lmarena.ai/">LMArena</a> · <a href="https://arxiv.org/abs/2306.05685">LLM-as-a-judge</a> · <a href="https://arxiv.org/abs/2406.19314">LiveBench</a> · <a href="https://arxiv.org/abs/2411.04872">FrontierMath</a> · <a href="https://arxiv.org/abs/2501.14249">Humanity's Last Exam</a> · <a href="https://arcprize.org/">ARC Prize</a> · <a href="https://openai.com/index/gdpval/">GDPval</a> · <a href="https://metr.org/blog/2026-1-29-time-horizon-1-1/">METR Time Horizon 1.1</a> · <a href="https://arxiv.org/abs/2511.04703">Measuring what Matters（构念效度）</a> · <a href="https://arxiv.org/abs/2602.15532">LLM 评测的构念效度（2026）</a> · <a href="https://arxiv.org/abs/2602.11674">基准健康指数</a> · <a href="https://github.com/lhl/realitycheck-data/blob/main/analysis/syntheses/metr-2025-2026-time-horizon-synthesis.md">METR 2025–26 数据汇总</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
