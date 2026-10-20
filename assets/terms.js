@@ -314,4 +314,10 @@ window.ATLAS_TERMS = {
   msa: { t: '多序列比对', en: 'multiple sequence alignment (MSA)', d: '把同一个蛋白在许多物种中的序列逐位置对齐：每行一个物种，每列一个位置。AlphaFold 从中读取共进化信号。', at: 'science#protein' },
   coevolution: { t: '共进化', en: 'coevolution', d: '结构上相互接触的两个位置，一个突变后常需另一个补偿突变，于是在比对中“一起变”。由此可推断哪些位置相邻。', at: 'science#protein' },
   'formal-proof': { t: '形式化证明', en: 'formal proof (Lean)', d: '用 Lean 等证明助手把推理写成程序，由一个小内核机械检查；通过即不可能出错（除非命题本身写错）。为数学 RL 提供零噪声奖励。', at: 'science#math' },
+
+  // ---- industry (industry.html)
+  capex: { t: '资本开支', en: 'capital expenditure (capex)', d: '购买芯片、建设机房等长期资产的支出。四大云厂商 2026 年的指引合计超过 7000 亿美元。', at: 'industry#money' },
+  depreciation: { t: '折旧', en: 'depreciation', d: '把一次性的设备投入按使用年限平摊为每年的成本。年限越长，当期利润越好看，现金流不变。', at: 'industry#bubble' },
+  'fair-use': { t: '合理使用', en: 'fair use', d: '美国版权法的抗辩：综合考虑使用目的（是否转化性）、作品性质、使用量和对原作市场的影响，判断未经许可的使用是否合法。', at: 'industry#copyright' },
+  'ai-act': { t: 'AI 法案（欧盟）', en: 'EU AI Act', d: '按风险分级的统一立法。2024 年生效，通用模型义务 2025-08 开始，高风险条款经 2026 年修订推迟到 2027–2028 年。', at: 'industry#regulation' },
 };

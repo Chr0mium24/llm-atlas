@@ -12,22 +12,188 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>产业、算力经济与治理</h1>
-  <p class="lede">技术之外：算力、钱、版权和监管怎么塑造这个领域。</p>
+  <h1>产业、算力经济与治理：谁在付钱，谁定规则</h1>
+  <p class="lede">2026 年，美国四家云巨头一年的资本开支预计超过 7000 亿美元，相当于一个中等国家的 GDP。这一章用几张“算账”的公式把产业讲清楚：训练一次要花多少、推理一次要耗多少电、一张 GPU 能不能回本；然后是三条规则线：芯片出口管制、版权诉讼、各国监管。最后看两个争论：这是不是泡沫，AI 正在怎样改变就业。<b>本章的数字变化很快，大多来自公司披露与媒体报道，注明了时间；读的时候看量级和趋势，不必记具体数字。</b></p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（7.8）。</div>
+<div class="bridge">前面各章讲模型怎样变强。变强需要算力（第 <a class="xref" data-ref="hardware"></a> 章），算力需要钱和电；训练需要数据，数据涉及版权；模型能力越强，各国越想管。这一章是技术之外、却决定技术走向的那一层。</div>
 
-<h2 id="plan">计划内容</h2>
+<div class="prereq">
+  <ul>
+    <li>训练算力 \(6ND\)、MFU：第 <a class="xref" data-ref="scaling"></a>、<a class="xref" data-ref="training-systems"></a> 章</li>
+    <li>每百万 token 的成本、批处理、杰文斯悖论：第 <a class="xref" data-ref="serving"></a> 章</li>
+    <li>芯片代际、HBM、国产芯片：第 <a class="xref" data-ref="hardware"></a> 章；开源与闭源的差距：第 <a class="xref" data-ref="on-device"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="money">钱从哪来，花到哪去</h2>
+<p>先看投入。Microsoft、Alphabet、Amazon、Meta 四家的<dfn data-t="capex">资本开支</dfn>（买芯片、建机房这类长期资产的支出）2025 年合计约 4100 亿美元，2026 年的指引在 7200–7450 亿美元之间，分析师预计 2027 年超过一万亿（据 2026 年 7 月财报季的报道）。其中大部分花在 AI 数据中心上。</p>
+<p>单次训练的成本也在快速上涨。Epoch AI 2024 年的研究估计，前沿模型最后一次训练的硬件与能源摊销成本，从 2016 年起每年增长约 2.4 倍：GPT-4（2023）约 4000 万美元；2025 年它估计 Grok 4 用了约 2.5 亿 H100 小时、约 4.9 亿美元。成本构成中，硬件占约一半到三分之二，研究人员的薪酬约三到五成，<b>电费只占 2%–6%</b>。</p>
+<div class="fx">
+\[ \text{训练成本} \approx \frac{\htmlClass{sym-C}{C}}{\htmlClass{sym-F}{F_{\text{峰值}}}\times\htmlClass{sym-mfu}{\text{MFU}}}\times\htmlClass{sym-pr}{\text{每卡时价格}},\qquad C\approx 6ND \]
+  <div class="fx-read">总计算量除以每张卡实际每秒能做的计算（峰值乘利用率），得到需要多少“卡·秒”，换成卡时再乘以单价。</div>
+  <dl class="fx-syms">
+    <dt data-sym="C">\(C\)</dt><dd>训练总计算量（FLOP），约为 6 × 参数量 × token 数（第 <a class="xref" data-ref="scaling"></a> 章）</dd>
+    <dt data-sym="F">\(F_{\text{峰值}}\)</dt><dd>单卡峰值算力，H100 的 BF16 约 \(10^{15}\) FLOP/s</dd>
+    <dt data-sym="mfu">MFU</dt><dd>实际利用率，大规模训练通常 30%–50%（第 <a class="xref" data-ref="training-systems"></a> 章）</dd>
+    <dt data-sym="pr">每卡时价格</dt><dd>2025–26 年 H100 级别约 2 美元</dd>
+  </dl>
+  <div class="fx-eg">\(C = 5\times10^{26}\)，MFU 40%：需要 \(5\times10^{26}/(4\times10^{14}) \approx 1.25\times10^{12}\) 卡·秒，约 3.5 亿卡时，乘以 2 美元约 7 亿美元。这只是最后一次训练；前期的小规模实验、失败的尝试、数据和人工通常还要再乘几倍。</div>
+</div>
+<p>再看收入。单位能力的价格跌得极快：Epoch 2026 年 9 月的分析发现，达到某一固定能力水平的推理成本自 2023 年起每年下降约 13 倍。但总支出没有下降：推理模型每题要想成千上万个 token，智能体一个任务跑上百轮，用户总在追最新最贵的模型（第 <a class="xref" data-ref="serving"></a> 章的杰文斯悖论）。2026 年，两家头部实验室的年化收入都达到数百亿美元量级：据报道，Anthropic 7 月底超过 650 亿美元，OpenAI 9 月底接近 500 亿美元（两家统计口径不同，不宜直接比较）。前者约 85% 来自企业与开发者，后者的大头是 ChatGPT 订阅。</p>
+
+<h2 id="bubble">一张 GPU 能不能回本</h2>
+<p>投入这么大，回报跟得上吗？最基本的单位是一张卡。数据中心买卡的钱，会计上按“使用年限”平摊为每年的<dfn data-t="depreciation">折旧</dfn>。过去几年，几家云巨头先后把服务器的折旧年限延长到 5.5–6 年，账面利润因此变好看；批评者（如 2025 年 11 月的“大空头”Michael Burry）认为，GPU 每一两年就出一代，真实的经济寿命可能只有三年左右。</p>
+<div data-demo="gpu-payback"></div>
+<aside class="dispute">
+  <h4>这是泡沫吗</h4>
+  <dl>
+    <dt>看空</dt><dd>投入与收入差了一个数量级：一年 7000 多亿的资本开支，对应的 AI 收入只有其零头。资金在少数几家公司之间循环：Nvidia 宣布向 OpenAI 投资最多 1000 亿美元，OpenAI 再用这些钱买 Nvidia 的芯片；OpenAI 与 AMD、Oracle 的巨额算力合同也有类似结构。OpenAI 一度承诺的算力支出高达 1.4 万亿美元，后据报道下调到 2030 年前约 6000 亿美元；它 2026 年第二季度仍亏损 120 多亿美元（据报道）。折旧年限的选择让利润看起来比实际好。</dd>
+    <dt>看多</dt><dd>收入增长同样前所未有：Anthropic 的年化收入从 2025 年底的约 90 亿美元涨到 2026 年年中的 650 亿美元以上，并据报道首次实现季度经营盈利。算力需求持续超过供给，GPU 的租用率很高；单位能力的价格每年下降一个数量级，打开了大量原本不划算的用途。与互联网泡沫不同，主要投资者是现金流充沛的巨头，而不是靠借债。</dd>
+    <dt>现在怎么看</dt><dd>“技术是真的”和“估值是对的”是两个问题。互联网在 2000 年泡沫破裂后依然改变了世界，铺下的光纤后来都用上了。关键变量是收入能否在硬件过时之前追上投入；循环融资和激进的会计假设，会放大一旦增长放缓时的回调幅度。</dd>
+  </dl>
+</aside>
+
+<h2 id="chips">芯片：出口管制与供应链</h2>
+<p>训练和推理几乎都依赖 Nvidia 的 GPU（第 <a class="xref" data-ref="hardware"></a> 章），而它们由台积电代工，依赖少数厂商供应的 HBM 显存和先进封装产能。这条极度集中的供应链，成了地缘竞争的焦点。</p>
 <ul>
-  <li>训练与推理的成本曲线</li>
-  <li>芯片与供应链</li>
-  <li>开源与闭源</li>
-  <li>版权：Anthropic 和解、GEMA 诉 OpenAI、合理使用之争</li>
-  <li>监管：欧盟 AI 法案的时间线</li>
-  <li>能耗与数据中心</li>
+  <li><b>2022–2023</b>：美国限制向中国出口高端 AI 芯片和制造设备，Nvidia 先推出降规格的 A800、H800，又在 2023 年的加严规则下改推 H20。</li>
+  <li><b>2025</b>：4 月 H20 也被要求许可证；8 月放行，条件是 15% 的销售收入上缴美国政府；12 月宣布允许出售更强的 H200，抽成 25%。</li>
+  <li><b>2026</b>：1 月，美国商务部改为逐案审批 H200 出口，每家中国客户上限 7.5 万张；但中国海关一度拦截入境，并要求 H200 只用于训练、推理改用国产芯片。到 7 月，美国官员在国会作证称实际出货“微不足道”。华为昇腾 950PR 于 3 月量产，DeepSeek V4（4 月）首发即支持昇腾；9 月华为称其在中国的 AI 芯片销量已超过 Nvidia（华为自述，难以核实）。美国外交关系委员会的分析则估计，即使按激进假设，华为 2026 年交付的总算力也只有 Nvidia 的约 5%。</li>
+</ul>
+<aside class="dispute">
+  <h4>出口管制有用吗</h4>
+  <dl>
+    <dt>有用</dt><dd>前沿训练需要几万到几十万张最先进的芯片，管制显著提高了中国获得大规模算力的成本，在总算力上拉开了差距；限制制造设备则延缓了国产替代的速度。</dd>
+    <dt>适得其反</dt><dd>DeepSeek、Qwen、Kimi 等中国模型在受限的算力下逼近前沿，管制反而刺激了效率创新和国产芯片生态；放行与收紧反复摇摆，让管制更像谈判筹码；走私和海外子公司的漏洞难以堵住。</dd>
+    <dt>现在怎么看</dt><dd>管制在“算力总量”上有效，在“模型能力”上效果有限，因为算法效率的进步部分抵消了算力差距（第 <a class="xref" data-ref="on-device"></a> 章：开源与闭源前沿的差距约几个月）。中国正在以单卡性能较弱、规模更大的国产集群换取自主。</dd>
+  </dl>
+</aside>
+
+<h2 id="open">开源与闭源</h2>
+<p>2026 年的格局大致是：美国头部实验室的前沿模型以闭源 API 为主（OpenAI 2025 年 8 月发布过开放权重的 gpt-oss），中国实验室的旗舰大多开放权重（DeepSeek、Qwen、Kimi、GLM、MiniMax 等）。最强开源模型与闭源前沿的差距约几个月（第 <a class="xref" data-ref="on-device"></a> 章），但在最难的任务上差距更大：2026 年 10 月的 First Proof 数学挑战中，基于最强开源模型的系统一道题都没有解出（第 <a class="xref" data-ref="science"></a> 章）。开源的商业逻辑是“模型免费、服务和生态收费”，以及国家层面的技术自主；安全上的争论见第 <a class="xref" data-ref="jailbreak"></a> 章：拿到权重的人可以轻易去掉安全训练。</p>
+
+<h2 id="copyright">版权：训练算不算合理使用</h2>
+<p>大模型的训练数据包括大量受版权保护的作品。法律争议有两个层面：<b>训练</b>本身（复制作品来训练模型）是否侵权；<b>输出</b>（模型背出或模仿原作）是否侵权。美国的关键概念是<dfn data-t="fair-use">合理使用</dfn>：法院综合考虑使用的目的（是否“转化性”）、作品性质、使用的量、对原作市场的影响。</p>
+<div class="tablewrap"><table>
+<thead><tr><th>案件</th><th>时间</th><th>结果</th></tr></thead>
+<tbody>
+<tr><td>Bartz 诉 Anthropic（美国）</td><td>2025-06 裁决，2025-09 和解</td><td>法官认为用合法购买的书训练是“高度转化性”的合理使用，但下载盗版书库不是；以约 15 亿美元和解（约 50 万部作品，每部约 3000 美元）</td></tr>
+<tr><td>Kadrey 诉 Meta（美国）</td><td>2025-06</td><td>在原告提交的证据下判 Meta 胜诉，但法官提示，如果能证明 AI 输出“稀释”了原作市场，结论可能不同</td></tr>
+<tr><td>汤森路透诉 Ross（美国）</td><td>2025-02 一审，2026-09 上诉</td><td>第三巡回法院维持“不构成合理使用”，是第一个关于 AI 训练的联邦上诉判决；但 Ross 是检索工具而非生成模型，法院明确不回答生成式 AI 的问题</td></tr>
+<tr><td>纽约时报诉 OpenAI（美国）</td><td>2023-12 起诉</td><td>2026 年 9 月双方提交合理使用的简易判决动议，美国司法部表态支持 OpenAI 的立场；尚未判决</td></tr>
+<tr><td>Getty 诉 Stability AI（英国）</td><td>2025-11</td><td>法院认为模型不储存训练图像，本身不是“侵权复制品”；仅在输出带 Getty 水印的情形认定商标侵权。上诉定于 2026 年 11 月审理</td></tr>
+<tr><td>GEMA 诉 OpenAI（德国）</td><td>2025-11</td><td>慕尼黑法院认定模型“记住”了歌词并能输出，记忆本身就构成复制，欧盟的文本与数据挖掘例外不覆盖这种情形</td></tr>
+<tr><td>北京互联网法院（中国）</td><td>2023-11</td><td>用户对 AI 生成的图片有足够的智力投入时，作品受著作权保护，作者是人而非 AI</td></tr>
+</tbody>
+</table></div>
+<aside class="dispute">
+  <h4>训练是合理使用吗</h4>
+  <dl>
+    <dt>是</dt><dd>模型学到的是统计规律，不是作品本身，就像人读书后学会写作；训练的目的和原作完全不同，属于转化性使用。美国两起一审判决都倾向这一立场。</dd>
+    <dt>不是</dt><dd>模型能逐字背出部分训练数据（第 <a class="xref" data-ref="data"></a> 章的记忆问题），说明作品确实被“存”进了权重；AI 生成的内容直接与原作竞争、挤压创作者的收入；训练数据的授权市场已经出现，不付费就是侵占这个市场（Ross 案上诉判决的理由之一）。</dd>
+    <dt>现在怎么看</dt><dd>美国倾向于“合法获取的数据用于训练可以是合理使用，盗版获取要承担责任”，生成式 AI 的上诉判决还没有出现；欧洲更看重“记忆即复制”。实际上，大公司正在与出版社、新闻机构、唱片公司签署授权协议，以和解与授权代替判决，诉讼更多决定的是价格。</dd>
+  </dl>
+</aside>
+
+<h2 id="regulation">监管：三种思路</h2>
+<div class="tablewrap"><table>
+<thead><tr><th>地区</th><th>思路</th><th>关键节点</th></tr></thead>
+<tbody>
+<tr><td>欧盟</td><td>按风险分级的统一立法：禁止少数用途，高风险系统严格合规，通用模型要披露训练数据摘要与版权政策</td><td><dfn data-t="ai-act">AI 法案</dfn> 2024-08 生效；2025-02 禁止性条款适用；2025-08 通用模型义务开始；2026 年 7 月生效的“数字综合法案”把高风险系统的期限推迟到 2027-12（嵌入产品的推迟到 2028-08），透明度义务照常从 2026-08 起适用，已上市系统的水印要求宽限到 2026-12</td></tr>
+<tr><td>美国</td><td>联邦层面放松、以产业竞争为先；州层面各自立法</td><td>2025-01 撤销拜登政府的 AI 行政令；2025-07 发布《AI 行动计划》；2025-09 加州 SB 53 要求前沿开发者公开安全框架、报告重大事故；2025-12 总统行政令要求挑战各州的 AI 法律</td></tr>
+<tr><td>中国</td><td>按服务类型的专门规定，强调内容安全与备案</td><td>2023-08《生成式人工智能服务管理暂行办法》；大模型上线前备案；2025-09《人工智能生成合成内容标识办法》要求显式与隐式标识</td></tr>
+</tbody>
+</table></div>
+<p>欧盟推迟高风险条款的理由是配套的技术标准和各国监管机构尚未就绪，而不是放弃这些要求。国际层面，各国相继成立 AI 安全研究所，由 Bengio 牵头、30 多国参与的《国际 AI 安全报告》每年更新，但具有约束力的国际协议尚未出现。</p>
+
+<h2 id="energy">能耗：每次请求耗多少电</h2>
+<p>国际能源署（IEA）2026 年 4 月的更新估计：全球数据中心用电 2025 年约 485 太瓦时，到 2030 年约翻倍到 950 太瓦时，约占全球用电的 3%；其中 AI 专用数据中心增长最快，从约 155 太瓦时增至约三倍。总量不算惊人，但高度集中在少数地区，电网接入排队、燃气轮机缺货、与核电站签长期合同，已成为建数据中心的主要瓶颈之一。</p>
+<div class="fx">
+\[ E_{\text{每次请求}} \approx \frac{\htmlClass{sym-P}{P_{\text{服务器}}}\times\htmlClass{sym-t}{t_{\text{生成}}}}{\htmlClass{c-new}{B}}\times\htmlClass{sym-pue}{\text{PUE}} \]
+  <div class="fx-read">一台服务器在生成这段回答的时间里耗的电，由同时在服务的 \(B\) 个请求分摊，再乘以机房的额外开销（制冷、配电）。批处理越大，每个请求分到的电越少（第 <a class="xref" data-ref="serving"></a> 章）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="P">\(P_{\text{服务器}}\)</dt><dd>一台 8 卡服务器的功率，H100 级约 10 千瓦</dd>
+    <dt data-sym="t">\(t_{\text{生成}}\)</dt><dd>生成这段回答用的时间</dd>
+    <dt data-sym="pue">PUE</dt><dd>机房总耗电与 IT 设备耗电之比，先进数据中心约 1.1–1.2</dd>
+  </dl>
+  <div class="fx-eg">10 千瓦的服务器，每个请求以每秒 50 个 token 生成 500 个 token（10 秒），同时服务 64 个请求，PUE 1.2：\(10\,000\times10/64\times1.2\approx1900\) 焦耳，约 0.5 瓦时，与烧水壶烧两秒差不多。Google 2025 年实测其 Gemini 应用文本请求的中位数约 0.24 瓦时。但一个要想几万 token、跑上百轮的智能体任务，可能是这个数的几十到上百倍。</div>
+</div>
+
+<h2 id="jobs">就业：早期证据</h2>
+<p>AI 对就业的影响仍在早期，证据有限且有争议。斯坦福的 Brynjolfsson 等（2025-08）用美国最大薪资服务商的数据发现：在受 AI 影响最大的职业中（如软件开发、客服），22–25 岁年轻员工的就业相对下降了约 13%，而同一职业中资深员工的就业没有下降；影响集中在 AI“替代”而非“辅助”任务的岗位。另一方面，宏观层面的就业与生产率数据还看不出明显变化，许多企业的 AI 试点没有转化为可衡量的收益。第 <a class="xref" data-ref="coding"></a> 章的开发者实验也说明：个人感觉的提效，与实际测得的效率并不总是一致。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">训练成本主要是电费。</b>电费只占最后一次训练成本的几个百分点，大头是硬件折旧和人员。</li>
+  <li><b class="m">问一次 ChatGPT 的耗电是搜索的十倍。</b>这个说法来自早期的粗略估计（约 3 瓦时）；2025 年公开的实测中位数是零点几瓦时。但长推理和智能体任务的耗电要高得多。</li>
+  <li><b class="m">推理越来越便宜，AI 的总花费就会下降。</b>单位能力的价格每年下降约一个数量级，但用量和对更强模型的需求增长更快。</li>
+  <li><b class="m">法院已经判定 AI 训练是合理使用。</b>只有两起美国一审判决倾向如此，且附带条件；第一个上诉判决（Ross 案）判的是不构成合理使用，生成式 AI 的问题仍悬而未决。</li>
+  <li><b class="m">欧盟 AI 法案的高风险条款已经全面生效。</b>2026 年的修订把它推迟到了 2027–2028 年。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2012–2022</div>
+    <h4>GPU 成为 AI 的燃料</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>深度学习需要海量并行计算。</dd>
+      <dt>怎么解决</dt><dd>AlexNet（2012）用 GPU 训练；规模定律（2020）让“更多算力 = 更强模型”成为投资逻辑；美国首次大范围限制对华 AI 芯片出口（2022-10）。</dd>
+      <dt>代价</dt><dd>算力向少数公司集中。</dd>
+      <dt>引出</dt><dd>ChatGPT 证明了商业需求。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>需求爆发与第一批诉讼</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>GPU 严重短缺；版权与安全问题浮出水面。</dd>
+      <dt>怎么解决</dt><dd>微软向 OpenAI 追加投资（2023-01）；纽约时报起诉 OpenAI（2023-12）；中国生成式 AI 管理办法（2023-08）；欧盟 AI 法案生效（2024-08）；Nvidia 一度成为全球市值最高的公司。</dd>
+      <dt>代价</dt><dd>训练成本每年翻倍以上。</dd>
+      <dt>引出</dt><dd>资本开支进入“数千亿”时代。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>星际之门、DeepSeek 冲击与第一批判决</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>投入能否持续？效率提升会不会让算力过剩？</dd>
+      <dt>怎么解决</dt><dd>“星际之门”宣布 5000 亿美元投资（1 月）；DeepSeek R1 发布后 Nvidia 单日市值蒸发约 5900 亿美元，随后需求反而继续上升（1 月）；Anthropic 和 Meta 的版权一审（6 月）与 15 亿美元和解（9 月）；欧盟通用模型义务开始（8 月）；Nvidia–OpenAI 等循环交易（9–10 月）。</dd>
+      <dt>代价</dt><dd>泡沫担忧加剧；电力成为瓶颈。</dd>
+      <dt>引出</dt><dd>收入能否追上投入？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>七千亿开支与规则的重写</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>投入、监管与地缘同时进入新阶段。</dd>
+      <dt>怎么解决</dt><dd>四大云厂商资本开支指引超过 7000 亿美元；H200 对华逐案审批但出货有限（1–7 月）；欧盟推迟高风险条款（7 月）；头部实验室收入数倍增长、筹备上市；第一个 AI 训练合理使用的上诉判决（9 月）。</dd>
+      <dt>代价</dt><dd>规则在各法域之间分化；少数公司掌握绝大部分算力。</dd>
+      <dt>引出</dt><dd>接下来会发生什么？最后一章看前沿与开放问题。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一次训练用 \(2\times10^{26}\) FLOP，单卡峰值 \(2\times10^{15}\) FLOP/s，MFU 40%，每卡时 3 美元。最后一次训练大约花多少？</summary><div class="ans">卡·秒 \(= 2\times10^{26}/(0.8\times10^{15}) = 2.5\times10^{11}\)，约 6900 万卡时，乘以 3 美元约 2.1 亿美元。</div></details>
+<details class="quiz"><summary>2. 某能力水平的价格一年降到 1/10，同期用量涨了 30 倍。总支出怎样变化？对应的需求价格弹性大于还是小于 1？</summary><div class="ans">支出 = 价格 × 用量，变为 \(0.1\times30 = 3\) 倍。价格下降、支出反而上升，说明弹性大于 1（这里约为 \(\log30/\log10\approx1.5\)），这就是杰文斯悖论成立的条件。</div></details>
+<details class="quiz"><summary>3. 同一台服务器，批大小从 16 提高到 64，每个请求的生成时间从 8 秒变成 10 秒。每个请求的耗电怎样变化？</summary><div class="ans">\(E\propto t/B\)：从 \(8/16 = 0.5\) 变为 \(10/64\approx0.16\)，约降到原来的三分之一。批处理提高了吞吐，也降低了每个请求的能耗，代价是单个请求稍慢。</div></details>
+<details class="quiz"><summary>4. 为什么延长折旧年限会让 AI 公司的利润看起来更好？现金流会变吗？</summary><div class="ans">折旧是把买卡的支出平摊到各年的成本；年限越长，每年摊到的越少，当期利润越高。现金流不变：钱在买卡时就已经付出去了。如果真实的经济寿命短于会计年限，后几年会出现集中的减值或亏损。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://epoch.ai/publications/how-much-does-it-cost-to-train-frontier-ai-models">How much does it cost to train frontier AI models?</a>（Epoch AI）<span class="why">训练成本的拆解与趋势。</span></li>
+  <li><a href="https://epoch.ai/publications/the-plunging-price-of-thought">The plunging price of thought</a>（Epoch AI, 2026）<span class="why">固定能力的价格每年降多少。</span></li>
+  <li><a href="https://www.iea.org/reports/key-questions-on-energy-and-ai/executive-summary">Key Questions on Energy and AI</a>（IEA, 2026）<span class="why">能耗的权威估算。</span></li>
+  <li><a href="https://siepr.stanford.edu/publications/working-paper/canaries-coal-mine-six-facts-about-recent-employment-effects-artificial">Canaries in the Coal Mine?</a>（Brynjolfsson 等, 2025）<span class="why">AI 对年轻员工就业的早期证据。</span></li>
+  <li><a href="https://artificialintelligenceact.eu/ai-act-explorer/digital-omnibus/">EU AI Act：Digital Omnibus</a><span class="why">欧盟法案的最新时间线。</span></li>
+</ol>
+
+<div class="nextq">讲完了技术、风险和产业，最后一章回到技术前沿：2026 年的研究者们在做什么？哪些问题被认为最重要、还没有答案？下一章（第 <a class="xref" data-ref="frontier"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://www.cnbc.com/2026/07/28/hyperscalers-face-higher-capex-scrutiny-after-alphabet-report-panned.html">云厂商资本开支（CNBC, 2026-07）</a> · <a href="https://arxiv.org/abs/2405.21015">The rising costs of training frontier AI models</a> · <a href="https://www.axios.com/2026/08/17/anthropic-revenue-run-rate-ipo-openai">Anthropic 收入（Axios）</a> · <a href="https://www.tomshardware.com/tech-industry/semiconductors/us-eases-nvidia-export-restrictions-h200-cleared-for-china-under-tight-controls">H200 出口始末（Tom's Hardware）</a> · <a href="https://www.theregister.com/systems/2026/09/30/huawei-boss-claims-homegrown-ai-chip-sales-top-nvidia-in-china/5300266">华为称销量超过 Nvidia（The Register）</a> · <a href="https://www.ballardspahr.com/insights/alerts-and-articles/2026/10/third-circuit-addresses-fair-use-in-ai-training-but-leaves-generative-ai-questions-unresolved">Ross 案上诉判决</a> · <a href="https://ailawsuittracker.com/cases/new-york-times-v-openai/">纽约时报诉 OpenAI 进展</a> · <a href="https://www.worldtrademarkreview.com/review/the-trademark-litigation-review/2027/article/getty-images-v-stability-ai-in-the-uk-contrasting-gema-v-openai-and-gema-v-suno-ai-in-the-eu">Getty 与 GEMA 案比较</a> · <a href="https://www.orrick.com/en/Insights/2026/07/EU-AI-Act-Update-Digital-Omnibus-Finalizes-8-Compliance-Changes">数字综合法案（Orrick）</a> · <a href="https://www.iea.org/reports/energy-and-ai/energy-demand-from-ai">IEA Energy and AI</a> · <a href="https://cloud.google.com/blog/products/infrastructure/measuring-the-environmental-impact-of-ai-inference">Google 推理能耗实测</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
