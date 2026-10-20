@@ -51,7 +51,7 @@ document.addEventListener('DOMContentLoaded', () => {
     tokens: 'BPE 怎么把文字切成 token；嵌入向量与“向量算术”',
     attention: '从 RNN 的瓶颈到 Q/K/V 软查询，代入数字算一遍；多头、因果掩码、归纳头、注意力汇与平方代价',
     transformer: '残差连接与残差流、MLP 键值记忆、Pre-Norm 之争、RoPE 推导与上下文扩展、6N 估算；2026 年连残差都在改',
-    generation: '交叉熵与困惑度、预测即压缩、n-gram 的天花板；逐步看采样循环，温度 / top-p / 约束解码，以及扩散语言模型',
+    generation: '从零开始：5 个词的词表手算 softmax、交叉熵、困惑度与温度采样；预测即压缩（比特数）、截断采样各砍掉什么、贪心与束搜索为什么陷入循环、约束解码、扩散语言模型的并行生成、每一代解码方法在修什么',
     data: '流水线、MinHash 去重与“去重太狠反而变差”、质量分类器、重复数据值多少、中期训练、改写为什么有效、模型崩溃、数据墙与版权',
     scaling: '幂律与外推、Chinchilla 推导与 2024 复现、过度训练、涌现之争、预训练撞墙之争；Adam/AdamW、WSD、μP，Muon 的正交化与谱范数推导',
     sft: 'SFT 与浅层对齐假说、Bradley-Terry 奖励模型与古德哈特、DPO 推导与家族、LoRA（RL 秩 1 就够）、模型合并',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 116], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 119], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }
