@@ -12,22 +12,208 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>蒸馏与能力整合</h1>
-  <p class="lede">2025–26 年最重要的后训练技术。RL 和蒸馏在数学上是同一类方法，区别只在信号的密度。</p>
+  <h1>蒸馏：让老师逐 token 地教，把很多专家合成一个模型</h1>
+  <p class="lede">蒸馏是用一个强模型（老师）的输出训练另一个模型（学生）。它一度只是“把大模型压成小模型”的工具，2025–26 年却成了后训练的核心：小模型几乎都靠蒸馏获得推理能力；前沿模型先用强化学习训练出各领域的专科老师，再用在线蒸馏把它们合成一个模型。这一章从 2015 年的软标签讲起，推导正向 KL 与反向 KL 的区别、在线蒸馏为什么比强化学习高效一个数量级，再讲多教师蒸馏、自蒸馏与持续学习，最后是两个意想不到的风险。</p>
 </header>
 
-<div class="callout warn"><b>这一章还没写。</b>下面是计划内容；调研素材见 <code>调研/2026-10-20-改版调研：后训练·对齐·越狱及其它缺口.md</code>（1.4、1.5）。</div>
+<div class="bridge">上一章的强化学习让模型在自己的尝试中变强，但每条回答只换来一个数字：信号稀疏，功劳分配困难，不同领域的 RL 还会互相拖累。如果已经有一个更强的模型，它能对学生回答中的每一个 token 给出意见，信号就密得多了。</div>
 
-<h2 id="plan">计划内容</h2>
-<ul>
-  <li>离线蒸馏与暴露偏差（与 DAgger 的联系）</li>
-  <li>在线策略蒸馏：反向 KL 的推导；信息量 O(1) vs O(N) 比特</li>
-  <li>强到弱蒸馏：Qwen3 的结论（小模型蒸馏胜过 RL）</li>
-  <li>多教师在线蒸馏 MOPD（小米 MiMo）：解决后训练的“跷跷板”</li>
-  <li>自蒸馏与持续学习：SDFT / SDPO，隐式奖励 log π(y|x,c) − log π(y|x)</li>
-  <li>权重合并 vs 蒸馏合并</li>
+<div class="prereq">
+  <ul>
+    <li>softmax、温度：第 <a class="xref" data-ref="tokens"></a>、<a class="xref" data-ref="generation"></a> 章；暴露偏差：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>SFT、KL 约束：第 <a class="xref" data-ref="sft"></a> 章</li>
+    <li>策略梯度、优势、同策略与离策略、KL 散度、O(1) 比特的推导：第 <a class="xref" data-ref="rl"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="kd">软标签：老师的概率里藏着什么</h2>
+<p>Hinton 等（2015）提出的<dfn data-t="knowledge-distillation">知识蒸馏</dfn>，最初用于图像分类：与其让小模型只学“这张图是猫”这个硬标签，不如让它学大模型给出的完整概率分布。大模型说“猫 0.90、狗 0.09、汽车 0.0001”，里面包含了“这张猫图有点像狗、完全不像汽车”这类信息，Hinton 称之为“暗知识”。为了让这些小概率也能被学到，要用温度把分布“摊平”：</p>
+<div class="fx">
+\[ \mathcal L_{\text{KD}} = \htmlClass{sym-T}{T}^2\cdot D_{\text{KL}}\Big(\operatorname{softmax}\big(\htmlClass{sym-zt}{\mathbf z_{\text{老师}}}/T\big)\ \Big\|\ \operatorname{softmax}\big(\htmlClass{sym-zs}{\mathbf z_{\text{学生}}}/T\big)\Big) \]
+  <div class="fx-read">老师和学生的 logit 都除以同一个温度 \(T>1\) 再做 softmax，让学生的分布去逼近老师的分布。\(T^2\) 用来抵消温度对梯度大小的缩放。</div>
+  <dl class="fx-syms">
+    <dt data-sym="T">\(T\)</dt><dd>蒸馏温度，通常 2–5，让小概率的候选也有可学的信号</dd>
+    <dt data-sym="zt">\(\mathbf z_{\text{老师}}\)</dt><dd>老师的 logit</dd>
+    <dt data-sym="zs">\(\mathbf z_{\text{学生}}\)</dt><dd>学生的 logit</dd>
+  </dl>
+  <div class="fx-eg">老师的 logit 为 \((4, 2, 0)\)。\(T = 1\)：\((0.867,\ 0.117,\ 0.016)\)，第三个候选的信息几乎看不见。\(T = 2\)：\((0.665,\ 0.245,\ 0.090)\)，“第二个比第三个像得多”这一关系清楚地显露出来。</div>
+</div>
+<p>用在语言模型上，每个位置都有一个词表大小的分布，可以逐 token 做上面的蒸馏，叫 logit 蒸馏。它要求老师和学生用同一个分词器，而且要拿得到老师的完整分布。Gemma 2 的 2B 和 9B、Llama 3.2 的 1B 和 3B，在预训练阶段就用更大模型的 logit 作为目标，而不只是真实的下一个 token。</p>
+<p>拿不到老师的 logit 时（比如老师是闭源 API），只能用老师生成的文本做 SFT，叫序列级蒸馏（Kim 与 Rush, 2016），也就是今天常说的<dfn data-t="offline-distillation">离线蒸馏</dfn>。2023 年的 Alpaca、Vicuna，2025 年的 DeepSeek-R1-Distill 系列，都属于这一类。</p>
+
+<h2 id="kl">正向 KL 与反向 KL</h2>
+<p>“让学生逼近老师”有两种度量方向，结果大不相同。设老师分布为 \(p\)，学生为 \(q\)：</p>
+<div class="fx">
+\[ \underbrace{D_{\text{KL}}(p\,\|\,q) = \mathbb E_{\htmlClass{c-dir}{x\sim p}}\Big[\log\frac{p(x)}{q(x)}\Big]}_{\text{正向 KL：在老师的样本上平均}}\qquad \underbrace{D_{\text{KL}}(q\,\|\,p) = \mathbb E_{\htmlClass{c-adv}{x\sim q}}\Big[\log\frac{q(x)}{p(x)}\Big]}_{\text{反向 KL：在学生的样本上平均}} \]
+  <div class="fx-read">正向 KL 在<span style="color:var(--s1)">老师会说的内容</span>上检查学生：老师有概率的地方学生没给，惩罚很大。反向 KL 在<span style="color:var(--s2)">学生自己说的内容</span>上检查：学生说了老师不会说的，惩罚很大。</div>
+  <div class="fx-eg">老师在两个候选上各给 50%，学生只能给出一个“峰”。正向 KL 要求两个都覆盖，学生把概率铺开，连两峰之间老师从不说的内容也给了概率；反向 KL 只要求学生说的老师认可，学生会挑一个峰集中。</div>
+</div>
+<div data-demo="kl-modes"></div>
+<p>离线蒸馏（在老师的输出上做 SFT）最小化的是正向 KL：数据来自老师。容量有限的学生会“什么都学一点”，在老师的几种说法之间生成四不像的内容，这是小模型蒸馏后容易产生幻觉的一个原因。在线蒸馏（下一节）最小化的是反向 KL：学生只被要求“自己说出的每个 token 老师都认可”。</p>
+
+<h2 id="offline">离线蒸馏的问题：学生从没见过自己的错误</h2>
+<p>离线蒸馏还有一个更根本的问题，就是第 <a class="xref" data-ref="generation"></a> 章的<span class="term" data-t="exposure-bias">暴露偏差</span>。训练时学生只见过老师写出的完美前缀；推理时它要在自己生成的前缀上继续，一旦走偏，就进入了训练中从未见过的状态，不知道怎么纠正，错误越滚越大。这与机器人模仿学习中的老问题相同：只看专家示范的机器人，偏离示范轨迹后就不会回来。DAgger（2011）的解法是让学习者自己走，由专家在学习者实际到达的状态上给出正确动作。</p>
+<p>尽管如此，离线蒸馏非常有效。DeepSeek-R1 报告的结论是：把 R1 的推理过程蒸馏给 Qwen 32B，效果明显好于直接在 Qwen 32B 上做大规模 RL，算力却少得多。Qwen3 的技术报告也得出同样的结论：对小模型，从强老师蒸馏在效果和效率上都显著优于 RL。</p>
+<aside class="dispute">
+  <h4>小模型该用蒸馏还是强化学习</h4>
+  <dl>
+    <dt>蒸馏派</dt><dd>R1 和 Qwen3 的实验都显示，小模型用 RL 很难自己“悟出”长推理，蒸馏强老师又快又好。小模型的容量有限，与其让它自己探索，不如直接告诉它答案该怎么写。</dd>
+    <dt>RL 派</dt><dd>蒸馏的上限是老师：学生最多学到老师会的。前沿模型没有更强的老师可蒸馏，必须靠 RL 往前走；而且第 <a class="xref" data-ref="sft"></a> 章提到，模仿学到的常常是风格而不是能力，在分布外的问题上泛化更差。</dd>
+    <dt>现在怎么看</dt><dd>分工已经形成：前沿模型用 RL 推进能力的边界，再把能力蒸馏给小模型和下一代模型；在线蒸馏又把两者的长处结合起来：像 RL 一样在自己的样本上学，像蒸馏一样拿到密集的信号。</dd>
+  </dl>
+</aside>
+
+<h2 id="onpolicy">在线策略蒸馏：学生自己写，老师逐 token 打分</h2>
+<p><dfn data-t="opd">在线策略蒸馏</dfn>（on-policy distillation, OPD）把两者结合：学生自己采样回答（同策略，没有暴露偏差），老师对学生写出的每一个 token 打分（密集信号）。形式上就是策略梯度，只是“奖励”变成了逐 token 的：</p>
+<div class="fx">
+\[ \begin{aligned} \htmlClass{sym-At}{A_t} &= \operatorname{sg}\Big[\htmlClass{c-dir}{\log \pi_{\text{老师}}(y_t\mid x, y_{&lt;t})} - \htmlClass{c-adv}{\log \pi_\theta(y_t\mid x, y_{&lt;t})}\Big]\\ \nabla_\theta J &= \mathbb E_{y\sim\pi_\theta}\Big[\sum_t A_t\,\nabla_\theta\log\pi_\theta(y_t\mid x, y_{&lt;t})\Big] \end{aligned} \]
+  <div class="fx-read">学生写出的每个 token，看<span style="color:var(--s1)">老师在同样的前缀下给它多少概率</span>，减去<span style="color:var(--s2)">学生自己给它多少概率</span>。老师比学生更认可这个 token，就加强；老师不认可，就削弱。sg 表示这一项只当作常数（不对它求梯度）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="At">\(A_t\)</dt><dd>第 \(t\) 个 token 的“优势”：对数概率之差，即反向 KL 在这个 token 上的估计（取负）</dd>
+  </dl>
+  <div class="fx-eg">学生写 “2×5=11”，在 “11” 这个 token 上自己给了 0.55 的概率，老师在同样的前缀下只给 0.01：\(A_t = \ln 0.01 - \ln 0.55 = -4.0\)，强烈削弱。前面正确的 “3×4=12”，老师和学生的概率接近，\(A_t\approx 0\)，基本不动。</div>
+  <div class="fx-step" data-tex="y \sim \pi_\theta(\cdot\mid x)">第 1 步：学生对题目 \(x\) 自己生成一条完整的回答。</div>
+  <div class="fx-step" data-tex="\log\pi_{\text{老师}}(y_t\mid x, y_{&lt;t}),\ \ t = 1, \dots, N">第 2 步：把这条回答整体输入老师，一次前向计算就得到老师对每个位置上学生所选 token 的对数概率（不需要老师生成任何东西）。</div>
+  <div class="fx-step" data-tex="A_t = \log\pi_{\text{老师}}(y_t) - \log\pi_\theta(y_t)">第 3 步：逐 token 算出优势。</div>
+  <div class="fx-step" data-tex="\theta \leftarrow \theta + \eta\sum_t A_t\nabla_\theta\log\pi_\theta(y_t)">第 4 步：按策略梯度更新，与 RL 的代码几乎完全相同，只是把“整条回答一个优势”换成“每个 token 一个优势”。</div>
+</div>
+<details class="deep"><summary>推导：在自己的样本上最小化反向 KL，等价于逐 token 奖励的强化学习</summary><div class="in">
+<p>序列级的反向 KL：</p>
+\[ J(\theta) = D_{\text{KL}}(\pi_\theta\,\|\,\pi_{\text{T}}) = \mathbb E_{y\sim\pi_\theta}\Big[\sum_t c_t\Big],\qquad c_t = \log\pi_\theta(y_t\mid y_{&lt;t}) - \log\pi_{\text{T}}(y_t\mid y_{&lt;t}) \]
+<p>（省略 \(x\)。）期望本身依赖 \(\theta\)（样本是学生生成的），用第 <a class="xref" data-ref="rl"></a> 章的对数导数技巧求梯度：</p>
+\[ \nabla_\theta J = \mathbb E\Big[\Big(\sum_t c_t\Big)\nabla_\theta\log\pi_\theta(y)\Big] + \mathbb E\Big[\sum_t\nabla_\theta\log\pi_\theta(y_t\mid y_{&lt;t})\Big] \]
+<p>第二项是“对数概率的梯度的期望”，恒等于 0（概率和为 1，对它求导为 0）。第一项中，\(\nabla\log\pi_\theta(y) = \sum_t\nabla\log\pi_\theta(y_t\mid y_{&lt;t})\)；由因果性，第 \(t\) 个 token 只影响它之后的代价，于是：</p>
+\[ \nabla_\theta J = \mathbb E\Big[\sum_t \nabla_\theta\log\pi_\theta(y_t\mid y_{&lt;t})\cdot\sum_{t'\ge t} c_{t'}\Big] \]
+<p>这正是奖励为 \(r_t = -c_t\) 的策略梯度，用“从 \(t\) 往后的回报”加权。实践中常把折扣设为 0，只用当前 token 的 \(-c_t\) 作为优势，即上面卡片中的 \(A_t\)，效果同样好而方差更小。</p>
+<p><b>这个推导告诉我们：</b>强化学习和在线蒸馏在数学上是同一类方法：都在自己的样本上，用某种“奖励”加权对数概率的梯度。区别只在奖励从哪来、有多密：RL 是整条回答一个分数，在线蒸馏是每个 token 都有一个来自老师的分数。</p>
+</div></details>
+<p>信号密了多少？第 <a class="xref" data-ref="rl"></a> 章算过：一条回答只有“对 / 错”时，RL 每条回答最多提供约 1 比特信息；在线蒸馏的每个 token 都有一个分数，一条几千 token 的回答提供的信息多出几个数量级，而且错误被精确定位到出错的那个 token：</p>
+<div data-demo="signal-density"></div>
+<p>Thinking Machines（2025-10）引用 Qwen3 报告中的实验：从同一个 Qwen3-8B 出发，RL 用 17920 GPU 小时把 AIME 2024 提到 67.6%；在线蒸馏只用 1800 GPU 小时就达到 74.4%，约省 10 倍算力，效果还更好。代价是需要一个更强的老师，并且老师和学生最好使用同一个分词器。</p>
+
+<h2 id="mopd">多教师蒸馏：解决后训练的“跷跷板”</h2>
+<p>后训练有一个长期困扰：在数学上做 RL，代码能力可能下降；加强安全，帮助性可能下降。各领域的数据和奖励混在一起训练，彼此拉扯，叫<dfn data-t="seesaw">跷跷板效应</dfn>。2025 年的一种思路是先分别训练专家再合并（GLM-4.5 用专家模型生成数据再统一训练）；2026 年，小米 MiMo-V2-Flash 提出的<dfn data-t="mopd">多教师在线蒸馏</dfn>（MOPD）成了更普遍的做法：</p>
+<div class="fx">
+\[ A_t = \operatorname{sg}\Big[\log\pi_{\htmlClass{c-new}{\text{老师}(d(x))}}(y_t) - \log\pi_\theta(y_t)\Big] + \htmlClass{sym-lam}{\lambda}\,A^{\text{结果}} \]
+  <div class="fx-read">先用 RL 分别训练数学、代码、搜索、工具调用、安全等<span style="color:var(--s4)">专科老师</span>。学生在自己的采样上学习，每道题按它所属的领域 \(d(x)\) 找对应的老师逐 token 打分，再叠加可验证的结果奖励。</div>
+  <dl class="fx-syms">
+    <dt data-sym="lam">\(\lambda\)</dt><dd>结果奖励的权重：老师的逐 token 信号负责“怎么写”，结果奖励负责“写对没有”</dd>
+  </dl>
+  <div class="fx-eg">据小米的报告，MOPD 使学生在各领域都达到对应专科老师的水平，所用算力约为单独把每个专科能力都训练进一个模型的 1/50。而且过程可以迭代：这一轮的学生，就是下一轮的老师。DeepSeek V4 的后训练据报道也采用了“十个老师、一个学生”的类似结构，GLM-5 亦然。</div>
+</div>
+<p>为什么多教师蒸馏能避免跷跷板？RL 的混合训练中，不同领域的稀疏奖励通过同一批参数互相竞争；在线蒸馏中，每个 token 都有一个明确的目标分布，学生只需在每个领域分别逼近对应的老师，冲突小得多。这也呼应了第 <a class="xref" data-ref="moe"></a> 章：MoE 是在参数层面分工，MOPD 是在训练流程层面分工。</p>
+
+<h2 id="self">自蒸馏与持续学习</h2>
+<p>老师不一定是另一个模型，也可以是“看到了更多信息的自己”。早期的<dfn data-t="context-distillation">上下文蒸馏</dfn>（Askell 等, 2021）让带着一长段系统提示的模型当老师，训练不带提示的同一个模型去模仿它，把提示的效果“烧进”权重。2026 年的 SDFT（自蒸馏微调）把这个思路用到学习新任务上：</p>
+<div class="fx">
+\[ r(y) = \log\pi_\theta(y\mid x,\ \htmlClass{c-new}{c}) - \log\pi_\theta(y\mid x) \]
+  <div class="fx-read">老师是“在上下文中看过示范 \(c\) 的模型自己”，学生是“没看过示范的模型自己”。学生在自己的采样上，向老师在线蒸馏。可以证明这等价于一种隐式奖励如上式的在线 RL：看过示范后更可能说出的回答，就是好回答。</div>
+  <div class="fx-eg">连续学习三个新任务时，普通 SFT 每学一个新任务就会遗忘前面的；SDFT 几乎不遗忘，代价是约 2.5 倍的算力。原因是它在自己的分布上学习、只做小幅修正，而 SFT 把模型拉向一个外部的分布。SDPO 把“示范”换成“反馈”（例如“这个回答哪里不对”），思路相同。</div>
+</div>
+<p>这条线被认为是<b>持续学习</b>的第一个可行方案：模型在部署后不断从新的示范和反馈中学习，而不会遗忘旧能力。这对智能体尤其重要（第 <a class="xref" data-ref="agents"></a> 章）。</p>
+
+<h2 id="risks">意想不到的风险</h2>
+<aside class="dispute surprise">
+  <h4>意外：老师的特质会通过看似无关的数据传给学生</h4>
+  <dl>
+    <dt>原以为</dt><dd>蒸馏数据经过严格过滤，只要内容里没有某种倾向，学生就学不到这种倾向。</dd>
+    <dt>实际发现</dt><dd>Cloud 等（Anthropic 研究员项目, 2025；Nature, 2026-04）称之为“潜意识学习”：让一个“喜欢猫头鹰”的老师模型只生成数字序列，过滤掉一切与猫头鹰有关的内容，用这些数字微调学生，学生也变得喜欢猫头鹰。更严重的是，不对齐的倾向也能这样传递；换成数学推理过程或代码作为载体，现象依然存在。</dd>
+    <dt>为什么</dt><dd>只在老师和学生共享同一个基座时发生。老师的特质对应它参数中的一个微小偏移，这个偏移会在它生成的任何数据的细微统计特征上留下痕迹；同一基座的学生在这些数据上做梯度下降，会被推向同一个偏移方向。论文证明了在一般条件下这一现象必然出现，2026 年的后续研究将其解释为“激活空间中的导向向量被蒸馏了过去”。</dd>
+    <dt>现在怎么看</dt><dd>过滤数据内容不足以保证安全，必须追溯训练数据和老师模型的来源。用自己模型生成的数据训练下一代，可能把未被发现的问题一并传下去（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+  </dl>
+</aside>
+<aside class="dispute">
+  <h4>用别人的模型蒸馏：技术常规还是窃取</h4>
+  <dl>
+    <dt>一方</dt><dd>闭源模型的服务条款普遍禁止用其输出训练竞争模型。2025 年初 OpenAI 指称 DeepSeek 使用其模型输出做蒸馏；据报道，Anthropic 在 2026 年 2 月称 DeepSeek、Moonshot、MiniMax 通过约 2.4 万个虚假账户与 Claude 进行了 1600 多万次对话来获取训练数据，9 月又点名了更多机构，并称其将部署检测和防御手段。</dd>
+    <dt>另一方</dt><dd>大模型本身就是在未经授权的海量网络数据上训练的，指责他人用其输出训练存在双重标准；而且从模型输出中学习与从网页中学习的界限很模糊。</dd>
+    <dt>现在怎么看</dt><dd>这已不只是技术问题，而是商业、法律和地缘政治问题：API 访问限制、出口管制、服务条款的可执行性都在其中。技术上，通过 API 只能拿到文本（离线蒸馏），拿不到 logit，这限制了蒸馏的效率，却远不足以阻止它（第 <a class="xref" data-ref="industry"></a> 章）。</dd>
+  </dl>
+</aside>
+<p>还有一个反直觉的现象：<b>老师越强不一定越好</b>。老师与学生的能力差距过大时，学生学不会老师的分布，效果反而不如向一个中等的老师学习（“容量差距”）。Apple 的蒸馏规模定律（2025）给出了在给定学生大小下最优的老师大小，并发现：只有在老师已经存在、或要训练很多个学生时，蒸馏才比直接从头训练更省算力。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">蒸馏就是抄老师的答案。</b>那是离线蒸馏。在线蒸馏由学生自己写、老师逐 token 打分，学的是“在自己会犯错的地方怎么纠正”。</li>
+  <li><b class="m">学生不可能超过老师。</b>一般如此，但不绝对：OpenAI 的“弱到强泛化”（2023）实验中，用 GPT-2 级别的弱模型标注的数据微调 GPT-4，结果明显好于弱老师本身；MOPD 的学生同时具备多个老师各自的长处，整体上超过任何一个老师。</li>
+  <li><b class="m">蒸馏出的小模型就是缩小版的大模型。</b>小模型在被蒸馏的领域（如数学推理）可以接近老师，但知识面、长尾能力和鲁棒性差得多，这些受参数容量限制（第 <a class="xref" data-ref="data"></a> 章的每参数 2 比特）。</li>
+  <li><b class="m">只要过滤掉有问题的内容，蒸馏数据就是安全的。</b>潜意识学习表明，特质可以通过语义无关的数据传递。</li>
+  <li><b class="m">蒸馏只是压缩模型的工程技巧。</b>2026 年它是后训练的主干之一：前沿模型的多领域能力合并、持续学习都依赖它。</li>
 </ul>
 
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2006–2016</div>
+    <h4>从模型压缩到知识蒸馏</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>集成模型和大模型效果好，但部署太贵。</dd>
+      <dt>怎么解决</dt><dd>Buciluă 等（2006）用大模型给数据打标签来训练小模型；Hinton 等（2015）提出带温度的软标签蒸馏；Kim 与 Rush（2016）把它推广到序列生成，用老师生成的序列训练学生。</dd>
+      <dt>代价</dt><dd>学生只在老师的输出上学习。</dd>
+      <dt>引出</dt><dd>能否把预训练语言模型也压小？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2019–2023</div>
+    <h4>压缩预训练模型，以及“黑盒蒸馏”闭源模型</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>BERT、GPT 越来越大；开源界没有对话数据。</dd>
+      <dt>怎么解决</dt><dd>DistilBERT（2019）缩小 40%、保留 97% 的效果；上下文蒸馏（2021）把系统提示烧进权重；Alpaca、Vicuna（2023）用 ChatGPT 的输出训练开源模型。</dd>
+      <dt>代价</dt><dd>模仿学到风格多于能力；暴露偏差。</dd>
+      <dt>引出</dt><dd>怎样让学生在自己的错误上学习？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">提出但当时未普及</span>在线蒸馏：GKD 与 MiniLLM（2023）</summary><div>Google 的 GKD 和微软的 MiniLLM 已经提出让学生自己采样、用反向 KL 向老师学习，在摘要、翻译等任务上优于离线蒸馏。当时推理模型尚未出现，这条路线直到 2025 年才在长推理上显示出巨大价值。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>预训练中的 logit 蒸馏</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>小模型从零预训练，数据效率低。</dd>
+      <dt>怎么解决</dt><dd>Gemma 2 的小模型、Llama 3.2 的 1B/3B 在预训练中用大模型的 logit 代替真实的下一个 token 作为目标。</dd>
+      <dt>代价</dt><dd>需要在训练时运行大模型；要求同一分词器。</dd>
+      <dt>引出</dt><dd>推理能力能否也蒸馏？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>推理能力的蒸馏</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>小模型用 RL 很难获得长推理能力。</dd>
+      <dt>怎么解决</dt><dd>DeepSeek-R1 把推理过程离线蒸馏给 Qwen 和 Llama 的小模型；Qwen3 用“强到弱”蒸馏训练全部小模型，并报告在线蒸馏只需 RL 约十分之一的算力；Thinking Machines 系统阐述了在线策略蒸馏。</dd>
+      <dt>代价</dt><dd>依赖强老师；版权与服务条款争议（OpenAI 对 DeepSeek 的指控）。</dd>
+      <dt>引出</dt><dd>前沿模型自己怎样整合多领域能力？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>多教师、自蒸馏与风险</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多领域 RL 的跷跷板；部署后的持续学习；蒸馏带来的隐患。</dd>
+      <dt>怎么解决</dt><dd>MOPD（MiMo-V2-Flash）及 DeepSeek V4、GLM-5 的多教师蒸馏；SDFT / SDPO 的自蒸馏；潜意识学习的发现促使追溯数据来源；围绕“蒸馏攻击”的商业和法律冲突。</dd>
+      <dt>代价</dt><dd>训练流程更复杂，需要同时维护多个老师。</dd>
+      <dt>引出</dt><dd>有了 RL 和蒸馏，模型学会了长时间思考。推理模型到底在“想”什么，推理时的算力该怎么花？（第 <a class="xref" data-ref="reasoning"></a> 章）</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 老师的 logit 为 \((3, 1, 0)\)。分别计算 \(T = 1\) 和 \(T = 3\) 时的软标签，说明温度的作用。</summary><div class="ans">\(T = 1\)：\(e^3 = 20.1,\ e^1 = 2.72,\ e^0 = 1\)，和 23.8，概率 \((0.844,\ 0.114,\ 0.042)\)。\(T = 3\)：logit 变为 \((1, 0.33, 0)\)，\(e\) 值 \(2.72,\ 1.40,\ 1\)，和 5.12，概率 \((0.531,\ 0.273,\ 0.195)\)。高温让“第二、三名之间的差别”变得可学。</div></details>
+<details class="quiz"><summary>2. 一道题的答对率约 50%，RL 一条回答最多提供多少比特信息？在线蒸馏中，一条 2000 token 的回答，每个 token 提供一个实数（老师与学生的对数概率差），信号的数量差多少倍？</summary><div class="ans">二元奖励的信息量最多是熵 \(H(0.5) = 1\) 比特。在线蒸馏每条回答有 2000 个信号，数量上多三个数量级以上，并且每个信号都对应具体的 token，不需要靠大量采样平均来解决功劳分配。</div></details>
+<details class="quiz"><summary>3. 老师在某个位置上给两个合理的续写 A、B 各 50% 的概率，学生能力有限，只能把概率集中在一个上。离线蒸馏（正向 KL）和在线蒸馏（反向 KL）分别会把学生推向什么样的分布？</summary><div class="ans">正向 KL 要求学生覆盖老师的所有选择，学生倾向于把概率分给 A、B 以及两者之间“折中”的、老师其实不会说的内容。反向 KL 只要求学生说出的东西老师认可，学生会集中到 A 或 B 之一，输出更可靠但多样性下降。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/1503.02531">Distilling the Knowledge in a Neural Network</a>（Hinton 等, 2015）<span class="why">软标签与温度，“暗知识”的出处。</span></li>
+  <li><a href="https://arxiv.org/abs/2306.13649">On-Policy Distillation of Language Models: Learning from Self-Generated Mistakes</a>（Agarwal 等, 2023）<span class="why">GKD，在线蒸馏与各种散度的系统比较。</span></li>
+  <li><a href="https://thinkingmachines.ai/blog/on-policy-distillation/">On-Policy Distillation</a>（Thinking Machines, 2025）<span class="why">把在线蒸馏讲得最清楚的一篇，含与 RL 的算力对比。</span></li>
+  <li><a href="https://arxiv.org/abs/2505.09388">Qwen3 Technical Report</a>（2025）<span class="why">强到弱蒸馏的完整流程与结论。</span></li>
+  <li><a href="https://arxiv.org/abs/2601.02780">MiMo-V2-Flash Technical Report</a>（小米, 2026）<span class="why">MOPD 的提出，多教师在线蒸馏解决跷跷板。</span></li>
+  <li><a href="https://www.nature.com/articles/s41586-026-10319-8">Language models transmit behavioural traits through hidden signals in data</a>（Cloud 等, Nature 2026）<span class="why">潜意识学习。</span></li>
+</ol>
+
+<div class="nextq">RL 和蒸馏让模型学会了在回答前长时间思考。思考到底带来了什么？推理时多花算力，是让模型想得更久，还是采样更多次再挑选？思维链里写的是不是模型真正的想法？下一章（第 <a class="xref" data-ref="reasoning"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://dl.acm.org/doi/10.1145/1150402.1150464">Model Compression（Buciluă 等 2006）</a> · <a href="https://arxiv.org/abs/1606.07947">Sequence-Level Knowledge Distillation</a> · <a href="https://arxiv.org/abs/1910.01108">DistilBERT</a> · <a href="https://arxiv.org/abs/2306.08543">MiniLLM</a> · <a href="https://arxiv.org/abs/1011.0686">DAgger</a> · <a href="https://arxiv.org/abs/2112.00861">Askell 等 2021（上下文蒸馏）</a> · <a href="https://arxiv.org/abs/2408.00118">Gemma 2</a> · <a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a> · <a href="https://huggingface.co/papers/2606.30406">MOPD</a> · <a href="https://maximelabonne.substack.com/p/deepseek-v4-ten-teachers-one-student">DeepSeek V4：十个老师一个学生（解读）</a> · <a href="https://arxiv.org/abs/2601.19897">SDFT</a> · <a href="https://arxiv.org/abs/2507.14805">Subliminal Learning（预印本）</a> · <a href="https://arxiv.org/abs/2606.00995">Subliminal Learning Is Steering Vector Distillation</a> · <a href="https://arxiv.org/abs/2502.08606">Distillation Scaling Laws</a> · <a href="https://arxiv.org/abs/2312.09390">Weak-to-Strong Generalization</a> · <a href="https://www.cnbc.com/2026/02/24/anthropic-openai-china-firms-distillation-deepseek.html">CNBC：Anthropic 指称蒸馏攻击</a> · <a href="https://thehackernews.com/2026/09/anthropic-says-seven-china-based-ai.html">2026-09 后续报道</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

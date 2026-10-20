@@ -149,4 +149,12 @@ window.ATLAS_TERMS = {
   dpo: { t: 'DPO', en: 'direct preference optimization', d: String.raw`利用 KL 约束下 RLHF 最优解的闭式形式，直接在偏好对上训练：\(-\log\sigma\big(\beta\log\frac{\pi_\theta(y_w)}{\pi_{\text{ref}}(y_w)} - \beta\log\frac{\pi_\theta(y_l)}{\pi_{\text{ref}}(y_l)}\big)\)。不需要奖励模型和 RL。`, at: 'sft#dpo' },
   lora: { t: 'LoRA', en: 'low-rank adaptation', d: String.raw`冻结原权重，只训练低秩增量 \(\Delta W = BA\)（秩 \(r\) 通常 8–64）。可训练参数降到 1% 以下；QLoRA 再把原权重量化到 4 比特。`, at: 'sft#lora' },
   'task-vector': { t: '任务向量', en: 'task vector', d: String.raw`微调后权重减去微调前权重 \(\tau = \theta_{\text{ft}} - \theta_{\text{base}}\)。多个任务向量相加可合并能力，取负可去除行为。`, at: 'sft#merge' },
+
+  // ---- distillation (distillation.html)
+  'knowledge-distillation': { t: '知识蒸馏', en: 'knowledge distillation', d: String.raw`用老师模型的输出训练学生模型。经典形式是让学生在温度 \(T\) 下逼近老师的软标签分布（Hinton 等, 2015）。`, at: 'distillation#kd' },
+  'offline-distillation': { t: '离线蒸馏', en: 'offline / sequence-level distillation', d: '用老师生成的文本对学生做 SFT。最小化正向 KL；学生只见过老师的前缀，有暴露偏差。', at: 'distillation#kd' },
+  opd: { t: '在线策略蒸馏', en: 'on-policy distillation', d: String.raw`学生自己采样回答，老师对每个 token 打分，按 \(A_t = \log\pi_{\text{老师}}(y_t) - \log\pi_\theta(y_t)\) 做策略梯度。最小化反向 KL，信号比 RL 密得多。`, at: 'distillation#onpolicy' },
+  seesaw: { t: '跷跷板效应', en: 'seesaw effect', d: '多领域混合后训练时，一个领域变好、另一个变差的相互拉扯（如数学提升而代码下降）。', at: 'distillation#mopd' },
+  mopd: { t: '多教师在线蒸馏（MOPD）', en: 'multi-teacher on-policy distillation', d: '先用 RL 训练各领域的专科老师，学生在自己的采样上按题目领域接受对应老师的逐 token 打分，再叠加结果奖励。小米 MiMo-V2-Flash 提出（2026）。', at: 'distillation#mopd' },
+  'context-distillation': { t: '上下文蒸馏', en: 'context distillation', d: '以“带着提示或示范的自己”为老师，训练“不带提示的自己”去模仿，把上下文的效果写进权重。SDFT 是它在持续学习上的推广。', at: 'distillation#self' },
 };
