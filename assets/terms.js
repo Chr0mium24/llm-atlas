@@ -204,4 +204,13 @@ window.ATLAS_TERMS = {
   'arithmetic-intensity': { t: '算术强度', en: 'arithmetic intensity', d: '每从显存读写一个字节所做的运算次数（FLOPs/字节）。低于芯片的“峰值算力 ÷ 带宽”时访存受限，高于时计算受限。', at: 'hardware#roofline' },
   roofline: { t: 'Roofline 模型', en: 'roofline model', d: String.raw`可达性能 \(=\min(P_{\text{峰值}},\ I\times\text{BW})\)：判断一段计算受限于算力还是带宽。单用户解码的强度约为 1，远低于拐点。`, at: 'hardware#roofline' },
   'systolic-array': { t: '脉动阵列', en: 'systolic array', d: '乘加单元组成的网格，权重驻留在单元中，输入数据逐拍流过、部分和沿另一方向累加。TPU 的矩阵单元采用这种结构，能效高但不够灵活。', at: 'hardware#arch' },
+
+  // ---- quantization (quantization.html)
+  quantization: { t: '量化', en: 'quantization', d: String.raw`用更少的位数表示权重、激活或 KV 缓存：\(\hat w = s\cdot\operatorname{round}(w/s)\)。省显存、省带宽、能用低精度算力，代价是误差。`, at: 'quantization#why' },
+  bpw: { t: '每权重位数（bpw）', en: 'bits per weight', d: '包括缩放因子等开销在内的平均位数：位宽 + 缩放位数 ÷ 组大小。例如 Q4_0 为 4.5、MXFP4 为 4.25。', at: 'quantization#basics' },
+  microscaling: { t: '微缩放格式', en: 'microscaling (MX / NVFP4)', d: '每 16 或 32 个低位数共享一个缩放因子的硬件格式：MXFP4 用 E8M0 缩放、组大小 32；NVFP4 用 FP8 缩放、组大小 16，外加张量级缩放。', at: 'quantization#basics' },
+  'outlier-features': { t: '离群特征', en: 'outlier features', d: '激活中少数幅度大几十倍的固定通道（约 6.7B 参数以上出现），会撑大缩放因子、毁掉其余数值的精度。', at: 'quantization#outliers' },
+  ptq: { t: '训练后量化（PTQ）', en: 'post-training quantization', d: '模型训练完后直接量化，最多用少量校准数据（GPTQ、AWQ、imatrix）。4 位以上通常够用。', at: 'quantization#qat' },
+  qat: { t: '量化感知训练（QAT）', en: 'quantization-aware training', d: '训练时前向使用量化后的权重、反向用直通估计器更新高精度潜权重，让模型适应量化网格。低于 4 位基本必需。', at: 'quantization#qat' },
+  ste: { t: '直通估计器（STE）', en: 'straight-through estimator', d: '反向传播时把取整当作恒等函数，梯度原样传给潜权重（超出可表示范围时置零），使不可导的量化可以被训练。', at: 'quantization#qat' },
 };

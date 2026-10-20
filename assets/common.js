@@ -26,7 +26,7 @@
     { s: 'long-context', t: '长上下文与注意力变体', st: 'new' },
     { part: '五 · 硬件与部署' },
     { s: 'hardware', t: '芯片、内核与编译器', st: 'new' },
-    { s: 'quantization', t: '量化', st: 'old' },
+    { s: 'quantization', t: '量化', st: 'new' },
     { s: 'serving', t: '推理系统', st: 'old' },
     { s: 'training-systems', t: '训练系统', st: 'todo' },
     { s: 'on-device', t: '本地与端侧部署', st: 'todo' },
