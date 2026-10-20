@@ -4,8 +4,8 @@ A.defineDemo('model-scale', function (mount) {
   const M = [
     ['LLaMA 65B', 2023.12, 65, 65], ['Llama 2 70B', 2023.55, 70, 70], ['Mixtral 8×7B', 2023.95, 46.7, 12.9], ['Llama 3 70B', 2024.3, 70.6, 70.6],
     ['Llama 3.1 405B', 2024.55, 405, 405], ['DeepSeek-V3', 2024.98, 671, 37], ['Qwen3-235B-A22B', 2025.3, 235, 22], ['Kimi K2', 2025.53, 1000, 32],
-    ['gpt-oss-120b', 2025.6, 117, 5.1], ['Qwen3-Next-80B-A3B', 2025.7, 80, 3], ['DeepSeek V4-Pro', 2026.35, 1600, 49, '2026 上半年'], ['DeepSeek V4-Flash', 2026.38, 284, 13, '2026 上半年'],
-    ['Kimi K3', 2026.55, 2800, 104], ['Reflection Beam 1.0', 2026.79, 501, 23], ['Muse Spark Open', 2026.8, 816, null],
+    ['gpt-oss-120b', 2025.6, 117, 5.1], ['Qwen3-Next-80B-A3B', 2025.7, 80, 3], ['DeepSeek V4-Pro', 2026.31, 1600, 49], ['DeepSeek V4-Flash', 2026.33, 284, 13],
+    ['Kimi K3', 2026.55, 2800, 104], ['MiMo-V2.6-Pro', 2026.72, 1020, 42], ['Reflection Beam 1.0', 2026.79, 501, 23], ['Muse Spark Open', 2026.8, 816, null],
   ];
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   bd.append(A.el('div', { class: 'legend', html: '<span><i style="background:var(--s1);border-radius:50%"></i>总参数（决定要多大显存）</span><span><i style="background:var(--s2);border-radius:50%"></i>激活参数（决定每 token 计算量）</span><span>竖线连接同一个模型；Muse Spark Open 未公布激活参数</span>' }));

@@ -48,7 +48,7 @@
     { s: 'science', t: 'AI for Science 与数学', st: 'new' },
     { s: 'industry', t: '产业、算力经济与治理', st: 'new' },
     { part: '收尾' },
-    { s: 'frontier', t: '前沿地图与开放问题', st: 'old' },
+    { s: 'frontier', t: '前沿地图与开放问题', st: 'new' },
     { part: '附录' },
     { s: 'nn-basics', t: '神经网络速成', n: '附', st: 'todo' },
   ];

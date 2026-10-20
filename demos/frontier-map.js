@@ -1,7 +1,7 @@
 /* frontier-map — interactive demo (moved from ch14-frontier.html) */
 A.defineDemo('frontier-map', function (mount) {
   const { bd } = A.demo(mount, '前沿方向（按领域筛选）', '');
-  const T = { arch: ['架构', 1], train: ['训练', 2], post: ['后训练与推理', 3], eff: ['效率与系统', 4], gen: ['多模态生成', 5], world: ['世界模型与新范式', 7] };
+  const T = { arch: ['架构', 1], train: ['训练', 2], post: ['后训练与推理', 3], eff: ['效率与系统', 4], gen: ['多模态生成', 5], world: ['世界模型与新范式', 7], safe: ['安全与对齐', 8], sci: ['科学与数学', 6] };
   const C = [
     { t: 'arch', h: '混合线性注意力', q: '1M 上下文下，KV cache 和 O(n²) 计算太贵。', a: '大部分层换成固定状态的线性注意力（Delta rule + 门控），每隔几层保留一层全注意力。', w: 'Kimi Linear / KDA（2025-10）；Qwen3-Next、Qwen3.5（Gated DeltaNet）；Nemotron 3（Mamba-2 混合）；Kimi K3：69 层 KDA + 24 层 Gated MLA，百万上下文时解码吞吐最高约 6×。', ch: 'long-context' },
     { t: 'arch', h: '稀疏与压缩注意力', q: '保留 softmax 的精确检索能力，同时降低长上下文成本。', a: '先压缩 KV（多 token 合一），再让每个 query 只看 top-k。', w: 'DeepSeek V3.2 DSA（2025-09）；DeepSeek V4 CSA + HCA：1M 时单 token FLOPs 为 V3.2 的 27%、KV 为 10%。', ch: 'long-context' },
@@ -22,7 +22,12 @@ A.defineDemo('frontier-map', function (mount) {
     { t: 'gen', h: '视频：音视频联合与多镜头', q: '生成能直接用的成片：对白、音效、口型、镜头切换。', a: '统一的音视频联合 DiT；大量参考输入；更长时长与更高分辨率。', w: 'Seedance 2.0 / 2.5、Kling 3.0（原生 4K）、Veo 3.1 / Gemini Omni Flash、Wan 3.0；Sora 于 2026-09 关停。', ch: 'video' },
     { t: 'world', h: '交互式世界模型', q: '实时、可控、长时间保持一致的生成世界。', a: '动作条件的自回归视频扩散 + 少步蒸馏 + 长时记忆机制。', w: 'Genie 3 / Project Genie；Matrix-Game 3.5（Patch Memory）；Waymo World Model；NVIDIA Cosmos 3；World Labs Marble。', ch: 'world-models' },
     { t: 'world', h: '扩散语言模型', q: '自回归一次一个 token，太慢且无法回头修改。', a: '把文本生成也做成并行去噪；与线性注意力结合以支持长上下文。', w: 'LLaDA 2.x（最大 100B）、Gemini Diffusion、Mercury；block-hybrid 线性注意力 dLLM 解码吞吐 1.7×（2026）。', ch: 'generation' },
-    { t: 'world', h: '持续学习与记忆', q: '模型部署后无法学习新知识。', a: '外部记忆、记忆层、测试时训练、上下文工程与智能体记忆系统。', w: '被普遍预测为 2027 年前后的重点；DeepSeek 的 Engram 条件记忆曾被传闻用于 V4，但最终未出现在 V4 中。', ch: 'distillation' },
+    { t: 'world', h: '持续学习与记忆', q: '模型部署后无法学习新知识。', a: '外部记忆、记忆层、测试时训练、上下文工程与智能体记忆系统。', w: '自蒸馏微调 SDFT / SDPO（2026-01）让单个模型依次学多个技能而不明显遗忘；被普遍预测为 2027 年前后的重点；DeepSeek 的 Engram 条件记忆曾被传闻用于 V4，但最终未出现在 V4 中。', ch: 'distillation' },
+    { t: 'safe', h: '规范与性格训练', q: '规则无法穷尽情形，模型在规则没写到的地方怎样行事。', a: '写出公开的长篇规范并讲清原则背后的理由，用性格训练融入模型；逐条测量遵守率。', w: 'Claude 新宪法（2026-01，四级优先级）；OpenAI Model Spec 与审慎对齐；按规范逐条测量的违反率两年内从约 15% 降到约 2%。', ch: 'alignment' },
+    { t: 'safe', h: '只监测、不训练', q: '训练时惩罚“坏想法”，模型会学会把它藏起来。', a: '思维链监控与可解释性探针只用于观察，不进入优化目标；AI 控制：假设模型可能不对齐，用权限、监控与审计兜底。', w: '思维链可监控性联合呼吁（2025-07）；混淆地图（2026）；助手轴与人设稳定（2026）。', ch: 'alignment' },
+    { t: 'safe', h: '生产级越狱防御', q: '分类器有效，但贵而且会误拒正常请求。', a: '交换分类器 + 激活探针级联：廉价探针筛全部流量，可疑的才送去昂贵分类器。', w: 'Constitutional Classifiers++（2026-01）：额外开销约 1%，线上误拒约 0.05%，1700 多小时红队未发现通用越狱。', ch: 'jailbreak' },
+    { t: 'sci', h: 'AI 数学家', q: '从奥赛题走向研究级开放问题，并让结果可信。', a: '自然语言推理写证明，再自动形式化到 Lean 检查；多个智能体互相审查。', w: '埃尔德什问题（2026-01）；First Proof 三轮从 2/10 到 9/10；OpenAI 一次公开 722 份手稿（2026-10，多数未经审查）。', ch: 'science' },
+    { t: 'sci', h: 'AI 科学家', q: '假设生成已经很便宜，验证又慢又贵。', a: '多智能体生成、批评、锦标赛排序假设，设计并分析实验；实验由人或机器人执行。', w: 'Co-Scientist 与 Robin（《自然》2026-05）：老药新用的候选在细胞和类器官中得到验证。', ch: 'science' },
   ];
   let filt = 'all';
   const chips = A.el('div', { class: 'chips' }); bd.append(chips);

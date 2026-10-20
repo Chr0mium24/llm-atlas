@@ -12,58 +12,192 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>2026 前沿地图：大家现在在做什么</h1>
-  <p class="lede">截至 2026 年 10 月。前 13 章讲的每一条线，现在都还在往前推。这一章把它们放在一张图上：每个方向要解决什么问题、主流做法是什么、代表工作有哪些、对应前面哪一章。最后是开源模型的格局，以及几个还没有答案的问题。</p>
+  <h1>前沿地图与开放问题：2026 年 10 月，大家在做什么</h1>
+  <p class="lede">前面三十多章，每一条线现在都还在往前推。这一章把它们放到一张地图上：模型规模走向哪里，每个方向要解决什么瓶颈、主流做法是什么、代表工作有哪些；然后是 2026 年值得读、但前面还没讲到的几篇方法与理论论文，这一年的几条主线，以及几个还没有答案的大问题。</p>
 </header>
 
-<div class="callout warn"><b>时效与可靠性。</b>本章信息来自模型卡、技术报告、官方博客和新闻报道（文末列出）。2026 年下半年的部分数字来自排行榜或媒体，尚未逐一核实，标注了“据报道”的请以官方发布为准。</div>
+<div class="callout warn"><b>时效与可靠性。</b>本章信息截至 2026 年 10 月，来自模型卡、技术报告、官方博客、排行榜与新闻报道（文末列出）。下半年的部分数字尚未逐一核实，标注了“据报道”的请以官方发布为准。</div>
 
-<h2 id="scale">一张图看规模：开源模型越来越大，激活参数却没怎么涨</h2>
+<div class="bridge">全书的主线可以压成一句话：<b>找到瓶颈，换一种方式绕过去</b>。注意力绕过了 RNN 的顺序瓶颈，MoE 绕过了“参数越多计算越多”，量化绕过了显存，可验证奖励绕过了人工标注，推理时算力绕过了“训练完就定型”。读前沿也用同一个方法：每看到一个新名词，先问它在绕过哪个瓶颈。</div>
+
+<div class="prereq">
+  <ul>
+    <li>这一章是索引：每张卡片、每篇论文都标明了对应的章节，遇到不熟的概念请回到那一章</li>
+    <li>最常用到的：MoE（第 <a class="xref" data-ref="moe"></a> 章）、量化（第 <a class="xref" data-ref="quantization"></a> 章）、强化学习（第 <a class="xref" data-ref="rl"></a> 章）、长上下文（第 <a class="xref" data-ref="long-context"></a> 章）</li>
+  </ul>
+</div>
+
+<h2 id="scale">规模：总参数越来越大，激活参数没怎么涨</h2>
 <div data-demo="model-scale"></div>
+<p>2023 年最强的开源模型是 70B 级的稠密模型；2026 年，开源旗舰的总参数涨到 1–3 万亿，每个 token 实际参与计算的参数却一直维持在几十到一百亿左右。两个数字分别管两件事：</p>
+<div class="fx">
+\[ \text{显存} \approx \htmlClass{sym-Nt}{N_{\text{总}}}\times\frac{\htmlClass{sym-b}{b}}{8}\ \text{字节},\qquad \text{每 token 计算} \approx 2\,\htmlClass{sym-Na}{N_{\text{激活}}}\ \text{FLOP} \]
+  <div class="fx-read">放下整个模型需要多少显存，由<b>总参数</b>和每个参数用几位存决定；生成一个 token 要算多少，只由<b>激活参数</b>决定（第 <a class="xref" data-ref="moe"></a> 章）。MoE 让前者涨、后者不涨；低比特训练与量化再把前者压下来（第 <a class="xref" data-ref="quantization"></a> 章）。</div>
+  <dl class="fx-syms">
+    <dt data-sym="Nt">\(N_{\text{总}}\)</dt><dd>总参数量，决定知识容量与显存</dd>
+    <dt data-sym="b">\(b\)</dt><dd>每个参数的位数：BF16 是 16，MXFP4 约 4.25（含缩放因子）</dd>
+    <dt data-sym="Na">\(N_{\text{激活}}\)</dt><dd>每个 token 实际参与计算的参数量</dd>
+  </dl>
+  <div class="fx-eg">Kimi K3（2.8T 总参数、104B 激活，权重 MXFP4）：显存约 \(2.8\times10^{12}\times4.25/8\approx1.5\) TB，每 token 约 \(2.1\times10^{11}\) FLOP。对比 2024 年的稠密 Llama 3.1 405B（BF16）：显存约 0.8 TB，每 token 约 \(8.1\times10^{11}\) FLOP。参数多了约 7 倍，显存只多一倍，每 token 的计算反而只有四分之一。代价是部署门槛：要几十张卡组成的超节点才放得下（第 <a class="xref" data-ref="serving"></a> 章）。</div>
+</div>
 
 <h2 id="map">前沿方向地图</h2>
+<p>按领域筛选。每张卡片回答三个问题：要解决什么瓶颈，主流做法，代表工作；底部链接到讲原理的那一章。</p>
 <div data-demo="frontier-map"></div>
 
 <h2 id="open">开源格局（2026 年 10 月）</h2>
 <div class="tablewrap"><table>
-  <tr><th>模型</th><th>机构</th><th>时间</th><th>规模</th><th>看点</th></tr>
-  <tr><td>Kimi K3</td><td>月之暗面</td><td>2026-07</td><td>2.8T / 104B 激活</td><td>迄今最大的开源权重；KDA 混合注意力、Attention Residuals、896 专家、MXFP4 QAT、1M 上下文</td></tr>
-  <tr><td>DeepSeek V4 / V4.1-Flash-1017</td><td>DeepSeek</td><td>2026 上半年 / 09 / 10-17</td><td>Pro 1.6T / 49B；Flash 284B / 13B</td><td>CSA/HCA 稀疏压缩注意力、mHC、Muon、FP4 QAT；1017 版据报道进入开源第一梯队</td></tr>
-  <tr><td>MiMo-V2.6 Pro</td><td>小米</td><td>2026</td><td>—</td><td>据 BenchLM 10 月榜单开源第一</td></tr>
-  <tr><td>GLM-5.3</td><td>智谱</td><td>2026</td><td>—</td><td>智能体与代码能力突出</td></tr>
-  <tr><td>Qwen3.8</td><td>阿里</td><td>2026</td><td>27B 稠密等多尺寸</td><td>混合注意力；Bonsai 2 27B 即由其压缩而来</td></tr>
-  <tr><td>Muse Spark Open</td><td>Meta</td><td>2026-10-15</td><td>816B</td><td>Meta 称其为最强的美国开源权重模型；原生文本 / 图像 / 视频 / 音频输入；可在两台 Mac Studio 上运行</td></tr>
-  <tr><td>Beam 1.0</td><td>Reflection AI</td><td>2026-10</td><td>501B / 23B 激活</td><td>首个公开模型，Apache 2.0（据排行榜）</td></tr>
-  <tr><td>Mistral Large 4</td><td>Mistral</td><td>2026-10-06 预览</td><td>—</td><td>承诺 10 月底前开放权重</td></tr>
-  <tr><td>Wan 2.2 / HunyuanVideo / LTX</td><td>阿里 / 腾讯 / Lightricks</td><td>2025–26</td><td>Wan 2.2 27B / 14B 激活</td><td>开源视频生成；Wan 3.0 目前只提供 API</td></tr>
-  <tr><td>FLUX.2 / Qwen-Image-2.0</td><td>BFL / 阿里</td><td>2025-11 / 2026</td><td>—</td><td>开源图像生成与编辑的第一梯队</td></tr>
-  <tr><td>Bonsai 2 系列</td><td>PrismML</td><td>2026</td><td>4B / 9B / 27B 三值</td><td>1.76 bpw，端侧和消费级显卡</td></tr>
+  <tr><th>模型</th><th>机构</th><th>时间</th><th>规模（总 / 激活）</th><th>看点</th></tr>
+  <tr><td>Kimi K3</td><td>月之暗面</td><td>2026-07</td><td>2.8T / 104B</td><td>迄今最大的开源权重；KDA 混合注意力、注意力残差、896 个专家、MXFP4 量化感知训练、百万上下文</td></tr>
+  <tr><td>MiMo-V2.6-Pro</td><td>小米</td><td>2026-09</td><td>1.02T / 42B</td><td>MIT 协议，同时公开 RL 环境与训练代码；滑动窗口与全局注意力 6:1 混合；原生文本、图像、视频、音频输入；发布时位列 Artificial Analysis 开源榜第一（据报道）</td></tr>
+  <tr><td>DeepSeek V4 / V4.1-Flash-1017</td><td>DeepSeek</td><td>2026-04 / 10</td><td>Pro 1.6T / 49B；Flash 284B / 13B</td><td>CSA/HCA 稀疏压缩注意力、mHC、Muon、FP4 量化感知训练、约 33T token 预训练；首发即支持华为昇腾</td></tr>
+  <tr><td>GLM-5.3</td><td>智谱</td><td>2026</td><td>—</td><td>智能体与代码能力突出，开源榜前列</td></tr>
+  <tr><td>Qwen3.8</td><td>阿里</td><td>2026</td><td>含 27B 稠密等多种尺寸</td><td>混合注意力；Bonsai 2 27B 即由其压缩而来</td></tr>
+  <tr><td>Muse Spark Open</td><td>Meta</td><td>2026-10</td><td>816B / 未公布</td><td>Meta 称其为最强的美国开源权重模型；原生多模态输入</td></tr>
+  <tr><td>Beam 1.0</td><td>Reflection AI</td><td>2026-10</td><td>501B / 23B</td><td>首个公开模型，Apache 2.0（据排行榜）</td></tr>
+  <tr><td>Wan 2.2 / HunyuanVideo / LTX</td><td>阿里 / 腾讯 / Lightricks</td><td>2025–26</td><td>Wan 2.2 27B / 14B</td><td>开源视频生成；Wan 3.0 目前只提供 API（第 <a class="xref" data-ref="video"></a> 章）</td></tr>
+  <tr><td>FLUX.2 / Qwen-Image-2.0</td><td>BFL / 阿里</td><td>2025-11 / 2026</td><td>—</td><td>开源图像生成与编辑的第一梯队（第 <a class="xref" data-ref="image"></a> 章）</td></tr>
+  <tr><td>Bonsai 2 系列</td><td>PrismML</td><td>2026</td><td>4B / 9B / 27B 三值</td><td>约 1.76 比特每参数，可在消费级显卡与端侧运行（第 <a class="xref" data-ref="on-device"></a> 章）</td></tr>
 </table></div>
+<p>格局的变化：开源旗舰几乎全部来自中国实验室，美国方面 Meta 与 Reflection 在 10 月重新入场；开源与闭源前沿在常规基准上的差距约几个月，但在最难的任务上更大（第 <a class="xref" data-ref="on-device"></a>、<a class="xref" data-ref="science"></a> 章）。</p>
+
+<h2 id="papers">2026 年值得读的方法与理论</h2>
+<p>下面六篇是前面各章还没讲到、但会改变直觉的工作。2026 年的其他重要论文已经放进了对应章节：残差流的改造 mHC 与注意力残差（第 <a class="xref" data-ref="transformer"></a> 章）、条件记忆 Engram 与扩大嵌入（第 <a class="xref" data-ref="moe"></a> 章）、自蒸馏持续学习 SDFT（第 <a class="xref" data-ref="distillation"></a> 章）、助手轴、情绪向量、内省、全局工作空间、自然语言自编码器（第 <a class="xref" data-ref="interpretability"></a> 章）、混淆地图（第 <a class="xref" data-ref="alignment"></a> 章）。</p>
+
+<h3>语言模型到底能记住多少</h3>
+<p>Morris 等（2025，ICML 2026）在随机比特串上训练模型（没有规律可学，只能死记），测出 GPT 类模型的纯记忆容量约为<b>每个参数 3.6 比特</b>。训练数据一旦超过这个容量，模型就从“背”转向“归纳”，这也正是“双下降”出现的位置。</p>
+<div class="fx">
+\[ \text{可记忆的信息量} \approx \htmlClass{c-new}{3.6}\ \text{比特}\times N \]
+  <div class="fx-read">参数量为 \(N\) 的模型，最多能逐字存下约 \(3.6N\) 比特的“无规律”信息；数据中有规律的部分可以被压缩成规则，不占这个预算。</div>
+  <div class="fx-eg">一个 8B 模型：\(3.6\times8\times10^9\approx2.9\times10^{10}\) 比特，约 3.6 GB。它的训练数据约 15T token，即使用很好的压缩，也有数 TB。也就是说，模型最多能逐字存下训练数据的万分之几：绝大部分只能以规律的形式学到。被背下的，集中在重复多次的文本和“出乎意料”的样本上（第 <a class="xref" data-ref="data"></a> 章的去重为什么有效）；对海量数据训练的大模型，想判断某一条普通样本是否在训练集中（成员推断）几乎不可能。这对版权争论里“模型是否储存了作品”的问题（第 <a class="xref" data-ref="industry"></a> 章）也是一个量化的参考。注意：3.6 是在特定设置（序列长度、词表）下测得的。</div>
+</div>
+
+<h3>灵活性陷阱：扩散语言模型的“任意顺序”反而有害</h3>
+<p>扩散语言模型（第 <a class="xref" data-ref="generation"></a> 章）先铺满掩码，再挑有把握的位置先填，号称可以“按任意顺序写字”。清华与阿里的研究（ICML 2026 杰出论文）发现，推理中最关键的“岔路口词”（因此、但是）不确定性最高，模型总把它们拖到最后才填；等其他位置都填好了，岔路已被锁死，相当于先写结论再补理由。用 pass@k 衡量，按置信度决定顺序能解的题，基本是从左到右能解的题的子集。他们的 JustGRPO 训练时把扩散模型当成从左到右的策略，直接套标准 GRPO（第 <a class="xref" data-ref="rl"></a> 章），推理时照样并行，效果最好。</p>
+
+<h3>递归语言模型：把上下文变成可以操作的变量</h3>
+<p>MIT 的 RLM（2025-12）不把超长输入整个塞给模型，而是存成一个编程环境里的变量，让模型写代码去查看、搜索、切分，再递归调用自己处理小片段，最后汇总。不用训练、不改模型，就能处理比上下文窗口大两个数量级的输入，并缓解“上下文越长越糊涂”的问题（第 <a class="xref" data-ref="long-context"></a> 章）。它和智能体的思路一致（第 <a class="xref" data-ref="agents"></a> 章）：与其让模型“看完”，不如让它“去翻”。</p>
+
+<h3>多轮对话会让模型迷路</h3>
+<p>微软与 Salesforce 的研究（ICLR 2026 杰出论文）把完整的需求拆成碎片，由模拟用户每轮透露一块，测了 15 个模型、20 多万段对话：同样的任务，分几轮说比一次说清，表现平均下降 39%。分解开看，能力本身只降约 16%，不稳定性（同一任务最好与最差表现的差距）却增加了 112%：模型会过早下结论，然后死守早期的错误假设。把所有碎片拼成一条消息重新发送，能恢复约 95% 的表现。几乎所有基准都是“一次说清”，真实使用却是边聊边补（第 <a class="xref" data-ref="evaluation"></a> 章）。</p>
+
+<h3>Transformer 天生简洁</h3>
+<p>以往的理论比较的是“能不能表示”，这篇（ICLR 2026 杰出论文）比较“要多长的描述才能表示”：存在一族概念，多项式大小的 Transformer 就能描述，等价的 RNN 或时序逻辑公式却要指数大，有限自动机要双指数大。这从理论上解释了为什么 Transformer 用不多的参数就能装下复杂的规则；代价是，连“它会不会接受某个输入”这样最基本的性质，验证起来都极其困难，这与可解释性和形式化验证的难度相呼应（第 <a class="xref" data-ref="interpretability"></a> 章）。</p>
+
+<h3>Polar Express：为 Muon 设计的最优迭代</h3>
+<p>Muon 优化器每一步都要把动量矩阵“正交化”，用的是 Newton–Schulz 式的多项式迭代（第 <a class="xref" data-ref="scaling"></a> 章的演示），以前的系数靠经验手调。Polar Express（ICLR 2026 荣誉提名）把每一步该用什么多项式写成极小极大优化问题，逐步求出最优解，并照顾到 GPU 低精度运算的误差，几步就能又快又准地收敛。大模型训练里最频繁的循环之一，被一个经典的数值分析问题优雅地解决了。</p>
+
+<h2 id="threads">2026 年的几条主线</h2>
+<ol>
+  <li><b>残差流重新成为架构创新的主战场。</b>十年没人动的“直接相加”被加约束（mHC）、换成注意力（注意力残差），巨量激活与注意力汇也有了解释（第 <a class="xref" data-ref="transformer"></a>、<a class="xref" data-ref="attention"></a> 章）。</li>
+  <li><b>记忆与计算分家。</b>MoE 解决了“参数多、计算少”；Engram 与扩大嵌入把死记硬背交给查表，让网络专心推理（第 <a class="xref" data-ref="moe"></a> 章）。</li>
+  <li><b>训练信号自产自销。</b>可验证奖励、在线策略蒸馏、自蒸馏，让模型越来越少依赖人工标注（第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="distillation"></a> 章）。</li>
+  <li><b>从回答问题到完成任务。</b>智能体能完成的任务长度约每几个月翻一倍，终端、浏览器、代码库成为主战场（第 <a class="xref" data-ref="agents"></a>、<a class="xref" data-ref="coding"></a>、<a class="xref" data-ref="evaluation"></a> 章）。</li>
+  <li><b>验证成为瓶颈。</b>生成答案、证明、假设都变便宜了，确认它们是对的却没有（第 <a class="xref" data-ref="science"></a>、<a class="xref" data-ref="evaluation"></a> 章）。</li>
+  <li><b>模型是演员，人设是方向。</b>助手轴、情绪向量、涌现不对齐都指向同一个图景：许多行为倾向是模型“在扮演谁”，可以被测量和扶正（第 <a class="xref" data-ref="interpretability"></a>、<a class="xref" data-ref="alignment"></a> 章）。</li>
+</ol>
 
 <h2 id="open-q">还没有答案的问题</h2>
+<aside class="dispute">
+  <h4>下一个数量级的进步从哪来</h4>
+  <dl>
+    <dt>继续做大预训练</dt><dd>规模定律没有失效：2026 年的开源旗舰用到 30T 以上的 token、数万亿参数，前沿实验室的训练投入每年增长数倍（第 <a class="xref" data-ref="scaling"></a>、<a class="xref" data-ref="industry"></a> 章）。更强的基座是一切后训练的上限。</dd>
+    <dt>强化学习与推理时算力</dt><dd>2024 年以来最大的进步来自 RL 与“多想一会儿”：数学、代码、智能体任务突飞猛进，且每单位算力的回报高于继续做大预训练（第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="reasoning"></a> 章）。难点是把它扩展到难以自动判对错的任务。</dd>
+    <dt>新范式</dt><dd>现在的模型训练完就“冻结”，不会在使用中学习；它们从文本学世界，缺少对物理世界的直接经验。持续学习、世界模型（第 <a class="xref" data-ref="world-models"></a> 章）、具身数据（第 <a class="xref" data-ref="embodied"></a> 章）可能才是下一步的关键；LeCun 等人认为自回归语言模型本身就是死胡同。</dd>
+    <dt>现在怎么看</dt><dd>三者并不互斥，各家同时在做。可以观察的信号是：RL 能否在写作、科研判断这类难验证的任务上复制在数学上的成功；持续学习能否在不遗忘、不被“教坏”的前提下落地。</dd>
+  </dl>
+</aside>
 <ol>
-  <li><b>线性注意力能不能完全替代 softmax？</b>混合架构效果很好，但精确检索仍然依赖少数全注意力层。3:1 是不是最优比例，没有定论。</li>
-  <li><b>RL 的规模定律能走多远？</b>可验证的任务（数学、代码、终端）进步飞快，写作、科研判断这类难验证的任务如何给奖励，还在摸索。</li>
-  <li><b>持续学习</b>：现在的模型训练完就“冻结”，新知识只能靠上下文或检索补充。让模型在部署后安全地持续学习，被普遍认为是 2027 年前后的重点方向。</li>
-  <li><b>数据墙</b>：高质量人类文本快用完了；合成数据、视频数据、智能体交互数据能否接替，各家做法差异很大。</li>
-  <li><b>世界模型的路线之争</b>：像素级生成（Genie、Cosmos），还是在抽象表示空间里预测（LeCun 的 JEPA 路线，2026 年创立 AMI Labs），或是 3D 显式表示（World Labs 的 Marble）。</li>
-  <li><b>评测</b>：静态基准很快饱和或被污染，评测正转向真实任务（终端、浏览器、软件工程）和人类偏好竞技场，但这些评测成本高、方差大。</li>
-  <li><b>可解释性与可靠性</b>：稀疏自编码器、电路追踪（attribution graphs）能解释的部分在增加，但离“读懂一个前沿模型”还很远。</li>
+  <li><b>线性注意力能否完全替代 softmax？</b>混合架构效果很好，但精确检索仍依赖少数全注意力层；最优比例没有定论（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
+  <li><b>难以验证的任务怎样给奖励？</b>写作、规划、科研判断没有标准答案，奖励模型会被钻空子（第 <a class="xref" data-ref="sft"></a>、<a class="xref" data-ref="alignment"></a> 章）。</li>
+  <li><b>持续学习。</b>让模型部署后安全地学习新知识，而不遗忘旧能力、不被恶意数据“教坏”，被普遍认为是 2027 年前后的重点（第 <a class="xref" data-ref="distillation"></a> 章）。</li>
+  <li><b>数据墙。</b>高质量人类文本接近用尽；合成数据、视频、智能体交互数据能否接替，以及模型崩溃的风险（第 <a class="xref" data-ref="data"></a> 章）。</li>
+  <li><b>世界模型的路线之争。</b>像素级生成、抽象表示空间预测、还是显式 3D（第 <a class="xref" data-ref="world-models"></a>、<a class="xref" data-ref="spatial"></a> 章）。</li>
+  <li><b>怎样评测一个会识别测试的模型？</b>基准饱和、数据污染、评估意识，让“分数”越来越难解读（第 <a class="xref" data-ref="evaluation"></a> 章）。</li>
+  <li><b>能否验证一个模型是对齐的？</b>可解释性能解释的部分在增加，离“读懂一个前沿模型”仍很远；监测工具一旦进入训练就会失效（第 <a class="xref" data-ref="interpretability"></a>、<a class="xref" data-ref="alignment"></a> 章）。</li>
+  <li><b>收入能否追上投入？</b>七千多亿美元的年度资本开支，取决于 AI 在硬件过时前创造足够的价值（第 <a class="xref" data-ref="industry"></a> 章）。</li>
 </ol>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">前沿就是参数最多的模型。</b>2026 年的前沿更多体现在训练方法（RL、蒸馏）、推理时算力和智能体能力上；激活参数几年来几乎没涨。</li>
+  <li><b class="m">新架构很快会取代 Transformer。</b>线性注意力、扩散语言模型都在进步，但主流仍是“Transformer + 局部替换”的混合，而不是推倒重来。</li>
+  <li><b class="m">开源模型永远落后一两年。</b>常规基准上只差几个月；但在最难的任务和最新的能力上，差距可能更大。</li>
+  <li><b class="m">读几个排行榜就能跟上前沿。</b>排行榜反映的是可测量的那一部分；方法上的进步要看技术报告与论文，可靠性要看独立复现。</li>
+</ul>
+
+<h2 id="history">2026 年大事记</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2026 年 1–3 月</div>
+    <h4>新年第一批论文与规范</h4>
+    <dl class="hist-why">
+      <dt>架构与训练</dt><dd>mHC（2025 年最后一天挂出）、Engram、扩大嵌入、SDFT 自蒸馏、灵活性陷阱与 JustGRPO、注意力残差。</dd>
+      <dt>安全与对齐</dt><dd>Claude 新宪法；第二代宪法分类器；助手轴。</dd>
+      <dt>科学</dt><dd>机器检查过的埃尔德什问题解答；First Proof 第一轮（2/10）。</dd>
+      <dt>产业</dt><dd>H200 对华改为逐案审批；昇腾 950PR 量产。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026 年 4–6 月</div>
+    <h4>DeepSeek V4 与 AI 科学家进《自然》</h4>
+    <dl class="hist-why">
+      <dt>模型</dt><dd>DeepSeek V4（4 月，首发支持昇腾）；Claude Mythos Preview 的时间跨度测量（第 <a class="xref" data-ref="evaluation"></a> 章）。</dd>
+      <dt>可解释性</dt><dd>情绪向量、自然语言自编码器。</dd>
+      <dt>科学</dt><dd>Co-Scientist 与 Robin 发表于《自然》；单位距离猜想被否定（据 OpenAI）；First Proof 第二轮（6–7/10）。</dd>
+      <dt>产业</dt><dd>开源防篡改防御被简单方法击破（第 <a class="xref" data-ref="jailbreak"></a> 章）。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026 年 7–9 月</div>
+    <h4>最大的开源模型与规则的改写</h4>
+    <dl class="hist-why">
+      <dt>模型</dt><dd>Kimi K3（7 月，2.8T）；MiMo-V2.6-Pro（9 月，MIT 协议）。</dd>
+      <dt>可解释性</dt><dd>全局工作空间。</dd>
+      <dt>产业与治理</dt><dd>欧盟推迟高风险条款；云巨头资本开支指引超过 7000 亿美元；头部实验室收入数倍增长；Ross 案上诉判决。</dd>
+      <dt>科学</dt><dd>OpenAI 公布内部模型解决的十个开放问题（8 月）。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026 年 10 月</div>
+    <h4>截至本章写作时</h4>
+    <dl class="hist-why">
+      <dt>模型</dt><dd>Meta Muse Spark Open、Reflection Beam 1.0、DeepSeek V4.1-Flash-1017 相继发布开源权重。</dd>
+      <dt>科学</dt><dd>OpenAI 一次公开 722 份数学手稿，数学界反应两极；First Proof 第三轮（9/10）。</dd>
+      <dt>接下来</dt><dd>持续学习、难验证任务的 RL、世界模型与具身，是被讨论最多的下一步。</dd>
+    </dl>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 一个 1T 总参数、32B 激活的 MoE，权重用 FP8 存。放下权重要多少显存？每 token 计算量约多少？与一个 70B 稠密模型（BF16）相比呢？</summary><div class="ans">显存约 \(10^{12}\times1 = 1\) TB，每 token 约 \(6.4\times10^{10}\) FLOP。70B 稠密 BF16：显存 140 GB，每 token \(1.4\times10^{11}\) FLOP。MoE 的显存是 7 倍，计算却只有一半左右。</div></details>
+<details class="quiz"><summary>2. 按每参数 3.6 比特，一个 70B 模型最多能逐字记住多少信息？为什么去重能减少模型背诵训练数据？</summary><div class="ans">\(3.6\times7\times10^{10}\approx2.5\times10^{11}\) 比特，约 32 GB。记忆容量有限，模型优先“花”在出现多次、难以从规律推出的文本上；去重让每段文本只出现一次，被逐字背下的动力大大降低。</div></details>
+<details class="quiz"><summary>3. 用户分几轮补充需求时模型表现变差。根据“多轮迷路”的发现，产品上可以怎样缓解？</summary><div class="ans">问题主要来自不稳定性：模型过早下结论并死守。可以让模型在信息不全时先提问而不是先作答；或在需求补充完整后，把所有信息汇总成一条完整的指令重新开始（能恢复约 95% 的表现）。</div></details>
 
 <h2 id="follow">怎么持续跟进</h2>
 <ul>
-  <li><b>一手资料</b>：模型卡与技术报告（Hugging Face、GitHub、arXiv）。DeepSeek、Kimi、Qwen 的技术报告写得很详细，值得精读。</li>
-  <li><b>推理框架博客</b>：vLLM、SGLang、llama.cpp 的发布说明，新架构一出来，这里最先告诉你“它到底快不快、怎么部署”。</li>
-  <li><b>排行榜</b>：LMArena（人类偏好）、Artificial Analysis（速度、价格、多模态）、各类智能体基准，看趋势，不迷信单个分数。</li>
-  <li><b>本站的方法</b>：每遇到一个新名词，问它属于哪条线（架构 / 训练 / 效率 / 生成），它在解决哪个瓶颈（算力、显存、带宽、数据、奖励），再回到对应章节看原理。</li>
+  <li><b>一手资料</b>：模型卡与技术报告（Hugging Face、GitHub、arXiv）。DeepSeek、Kimi、Qwen、MiMo 的技术报告写得很详细，值得精读。</li>
+  <li><b>趋势数据</b>：Epoch AI（算力、成本、价格趋势）、METR（智能体时间跨度）、Artificial Analysis（速度、价格、开源榜）、LMArena（人类偏好）。看趋势，不迷信单个分数。</li>
+  <li><b>推理框架博客</b>：vLLM、SGLang、llama.cpp 的发布说明。新架构一出来，这里最先告诉你“它到底快不快、怎么部署”。</li>
+  <li><b>本站的方法</b>：遇到一个新名词，问三件事：它属于哪条线（架构 / 训练 / 效率 / 生成 / 安全 / 应用）？它在绕过哪个瓶颈（算力、显存、带宽、数据、奖励、验证）？代价是什么？然后回到对应的章节看原理。</li>
 </ul>
 
-<p class="src">主要资料：<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a> · <a href="https://www.thesoftwarefrontier.com/p/kimi-k3-28-trillion-parameters-four">Kimi K3 架构分析</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://fundaai.substack.com/p/deepllm-deepseek-v41-flash-1017-reaches">DeepSeek V4.1-Flash-1017 评测</a> · <a href="https://aifront-page.com/open-weights-october-2026-ai-model-launches/">2026 年 10 月开源模型发布</a> · <a href="https://benchlm.ai/best/open-source">BenchLM 开源榜</a> · <a href="https://docs.prismml.com/download/formats">PrismML Bonsai 文档</a> · <a href="https://research.nvidia.com/labs/eai/blogs/pushing-intelligence-to-4-bit/">NVIDIA 4-bit</a> · <a href="https://vllm.ai/blog/2026-04-07-moriio-kv-connector">vLLM P/D 分离</a> · <a href="https://hugobowne.substack.com/p/llm-architecture-in-2026-agent-harnesses">LLM Architecture in 2026</a> · <a href="https://magazine.sebastianraschka.com/p/state-of-llms-2025">State of LLMs 2025</a> · <a href="https://arxiv.org/abs/2608.06628">扩散语言模型 + 线性注意力</a> · <a href="https://ocdevel.com/mlg/mla-26">AI Video 2026</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://introl.com/blog/world-models-race-agi-2026">World Models Race 2026</a> · <a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench</a></p>
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2505.24832">How much do language models memorize?</a>（Morris 等）<span class="why">记忆与泛化的比特级度量。</span></li>
+  <li><a href="https://arxiv.org/abs/2601.15165">The Flexibility Trap</a>（2026）<span class="why">扩散语言模型的顺序问题与 JustGRPO。</span></li>
+  <li><a href="https://arxiv.org/abs/2512.24601">Recursive Language Models</a>（Zhang 等）<span class="why">把上下文变成可操作的对象。</span></li>
+  <li><a href="https://arxiv.org/abs/2505.06120">LLMs Get Lost In Multi-Turn Conversation</a>（Laban 等）<span class="why">被基准忽视的真实使用场景。</span></li>
+  <li><a href="https://arxiv.org/abs/2510.19315">Transformers are Inherently Succinct</a>（Bergsträßer 等）<span class="why">表达力的新视角。</span></li>
+  <li><a href="https://arxiv.org/abs/2505.16932">The Polar Express</a>（Amsel 等）<span class="why">Muon 背后的数值分析。</span></li>
+</ol>
+
+<div class="nextq">全书到这里结束。如果前面某些推导读起来吃力，<a class="xref" data-ref="nn-basics" data-full="1"></a>从梯度、链式法则、矩阵与概率讲起，补齐读懂本站需要的数学；<a class="xref" data-ref="prologue" data-full="1"></a>用九年的时间线把全书串成一个故事。</div>
+
+<p class="src">主要资料：<a href="https://huggingface.co/moonshotai/Kimi-K3">Kimi K3 模型卡</a> · <a href="https://www.latent.space/p/ainews-xiaomi-mimo-v26-pro-1t-a42b">MiMo-V2.6-Pro（Latent Space）</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://fundaai.substack.com/p/deepllm-deepseek-v41-flash-1017-reaches">DeepSeek V4.1-Flash-1017 评测</a> · <a href="https://benchlm.ai/best/open-source">BenchLM 开源榜</a> · <a href="https://docs.prismml.com/download/formats">PrismML Bonsai 文档</a> · <a href="https://research.nvidia.com/labs/eai/blogs/pushing-intelligence-to-4-bit/">NVIDIA 4-bit</a> · <a href="https://vllm.ai/blog/2026-04-07-moriio-kv-connector">vLLM P/D 分离</a> · <a href="https://magazine.sebastianraschka.com/p/state-of-llms-2025">State of LLMs 2025</a> · <a href="https://arxiv.org/abs/2608.06628">扩散语言模型 + 线性注意力</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://arxiv.org/abs/2605.28091">Qwen-Image-Bench</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>
