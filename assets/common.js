@@ -28,7 +28,7 @@
     { s: 'hardware', t: '芯片、内核与编译器', st: 'new' },
     { s: 'quantization', t: '量化', st: 'new' },
     { s: 'serving', t: '推理系统', st: 'new' },
-    { s: 'training-systems', t: '训练系统', st: 'todo' },
+    { s: 'training-systems', t: '训练系统', st: 'new' },
     { s: 'on-device', t: '本地与端侧部署', st: 'todo' },
     { part: '六 · 多模态' },
     { s: 'vlm', t: '多模态理解', st: 'old' },

@@ -65,7 +65,7 @@ document.addEventListener('DOMContentLoaded', () => {
     hardware: 'GPU 的计算与存储层次、Roofline 与内存墙、分块矩阵乘法的复用推导、低精度为什么翻倍算力、脉动阵列与全 SRAM 芯片、CUDA 护城河之争、2026 芯片格局',
     quantization: '带宽上限、Δ²/12 误差推导与离群值、分组与微缩放（bpw）、Hadamard 旋转与 GPTQ 推导、量化实验室、STE 与 QAT、过度训练更难量化、三值模型之争',
     serving: '预填充与解码、批多大才用满算力、连续批处理与 PagedAttention、前缀缓存、投机解码（精确性证明）、P/D 分离之争、每百万 token 的成本与杰文斯悖论',
-    'training-systems': 'ZeRO / FSDP、张量 / 流水线 / 专家 / 上下文并行、低精度训练',
+    'training-systems': '每参数 16 字节与激活重算、五种并行、流水线气泡与环形全规约推导、MFU、FP8/FP4 训练、万卡故障统计、集中 vs 分布式训练、RL 系统',
     'on-device': 'Mac、显卡、手机 NPU 与嵌入式芯片上能跑什么、跑多快',
     vlm: 'ViT、CLIP、编码器 + 投影 + LLM、动态分辨率、视频理解、全模态',
     diffusion: '前向加噪、最优去噪器、DDPM / DDIM / 流匹配、CFG、少步蒸馏',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 68]].forEach(([k, v]) =>
+  [['新版', cnt.new], ['旧版（待重写）', cnt.old], ['待写', cnt.todo], ['已有交互演示', 69]].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
 });
 </script>

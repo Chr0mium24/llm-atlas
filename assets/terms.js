@@ -223,4 +223,12 @@ window.ATLAS_TERMS = {
   'prefix-cache': { t: '前缀缓存', en: 'prefix caching', d: '多个请求共享的前缀（系统提示、对话历史、工具说明）只计算一次 KV，之后直接复用。API 对缓存命中的输入大幅降价。', at: 'serving#batching' },
   'spec-decoding': { t: '投机解码', en: 'speculative decoding', d: String.raw`草稿先猜 \(\gamma\) 个 token，大模型一次前向并行验证，按 \(\min(1, p/q)\) 接受、拒绝时从残差分布重抽；输出分布与大模型完全相同，速度提升 2–3 倍。`, at: 'serving#spec' },
   'pd-disagg': { t: '预填充与解码分离', en: 'prefill/decode disaggregation', d: '把预填充和解码放在不同的 GPU 池，KV 缓存经高速网络传输，两类负载互不干扰、分别扩容。', at: 'serving#disagg' },
+
+  // ---- training-systems (training-systems.html)
+  recompute: { t: '激活重算', en: 'activation recomputation', d: '前向时只保存少数层的输入，反向时重新计算中间激活，用约 30% 的额外计算换数倍的显存；选择性重算只重算便宜而占显存的部分。', at: 'training-systems#memory' },
+  'data-parallel': { t: '数据并行', en: 'data parallelism', d: '每张卡一份完整模型、处理不同数据，每步对梯度做全规约求平均。最简单，但每卡要装下整个模型与优化器状态。', at: 'training-systems#parallel' },
+  'zero-fsdp': { t: 'ZeRO / FSDP', en: 'ZeRO / fully sharded data parallel', d: '在数据并行的卡之间依次切分优化器状态、梯度、参数（ZeRO-1/2/3），用到时再收集。状态显存约降为 1/n，通信增加。', at: 'training-systems#parallel' },
+  'tensor-parallel': { t: '张量并行', en: 'tensor parallelism', d: '把每个矩阵乘法按行或列切到多张卡上，每层两次全规约；通信频繁，通常限于一个 NVLink 域内。', at: 'training-systems#parallel' },
+  'pipeline-parallel': { t: '流水线并行', en: 'pipeline parallelism', d: String.raw`按层切成 \(p\) 段放在不同机器上，数据切成 \(m\) 个微批次流过；空闲“气泡”比例约 \((p-1)/(m+p-1)\)。`, at: 'training-systems#parallel' },
+  mfu: { t: 'MFU', en: 'model FLOPs utilization', d: String.raw`模型理论计算量（每 token \(6N\)）占硬件峰值算力的比例。大规模训练做到 40–50% 就算很好。`, at: 'training-systems#comm' },
 };
