@@ -540,3 +540,6 @@ dl.fx-syms dd { margin: 0; color: var(--ink-2); }
 @keyframes gsIn { to { opacity: 1; } }
 .gs-prob { margin-top: 4px; font-size: 13px; }
 @media (prefers-reduced-motion: reduce) { .gs-tok.gs-in { animation: none; opacity: 1; } .gs-tok { transition: none; } }
+
+/* narrow screens: slightly smaller display math so fewer formulas need horizontal scrolling */
+@media (max-width: 560px) { .katex-display > .katex { font-size: 1.05em; } }

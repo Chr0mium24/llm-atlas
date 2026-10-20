@@ -229,7 +229,7 @@
   </dl>
   <div class="fx-eg">采样时旧模型写出“等等”的概率是 0.02，更新两步后新模型给 0.03：\(r_t = 1.5\)。</div>
 </div>
-<p>比率偏离 1 越远，估计就越不可靠（重要性采样演示里 ESS 的骤降），一次大更新还可能把模型改坏。<dfn data-t="ppo">PPO</dfn>（2017）用一个简单的办法实现<span class="term" data-t="trust-region">信任域</span>：把比率<dfn data-t="clip">裁剪</dfn>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
+<p>比率偏离 1 越远，估计就越不可靠（重要性采样演示里 ESS 的骤降），一次大更新还可能把模型改坏。<dfn data-t="ppo">PPO</dfn>（2017）用一个简单的办法实现<span class="term" data-t="trust-region">信任域</span>：把比率<dfn data-t="ppo-clip">裁剪</dfn>在 \([1-\epsilon,\, 1+\epsilon]\) 内（通常 \(\epsilon = 0.2\)），再取裁剪前后的较小值：</p>
 <div class="fx">
 \[ L^{\text{CLIP}}(\theta) = \htmlClass{sym-E}{\mathbb{E}_t}\Big[\htmlClass{sym-min}{\min}\big(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}},\; \htmlClass{sym-clip}{\operatorname{clip}}(\htmlClass{c-ratio}{\htmlClass{sym-r}{r_t}}, 1-\htmlClass{sym-eps}{\epsilon}, 1+\htmlClass{sym-eps}{\epsilon})\,\htmlClass{c-adv}{\htmlClass{sym-A}{A_t}}\big)\Big] \]
   <div class="fx-read">对每个 token：用<span style="color:var(--s7)">新旧概率之比</span>修正<span style="color:var(--s2)">优势</span>，但比值一旦超出 \(1\pm\epsilon\) 就不再给它更多梯度；最后对所有 token 取平均。</div>
@@ -318,10 +318,10 @@
 
 <details class="deep"><summary>CISPO 与 GSPO 的目标函数</summary><div class="in">
 <p><b>CISPO</b>（\(\operatorname{sg}\) 表示停止梯度）：</p>
-\[ J_{\text{CISPO}} = \mathbb{E}\Bigg[\frac{1}{\sum_i |o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\operatorname{sg}\big(\hat r_{i,t}\big)\,\hat A_i\,\log\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\Bigg],\qquad \hat r_{i,t} = \operatorname{clip}\big(r_{i,t},\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\big) \]
+\[ \begin{aligned} J_{\text{CISPO}} &= \mathbb{E}\Bigg[\frac{1}{\sum_i |o_i|}\sum_{i=1}^{G}\sum_{t=1}^{|o_i|}\operatorname{sg}\big(\hat r_{i,t}\big)\,\hat A_i\,\log\pi_\theta(o_{i,t}\mid q, o_{i,&lt;t})\Bigg],\\ \hat r_{i,t} &= \operatorname{clip}\big(r_{i,t},\, 1-\epsilon_{\text{low}},\, 1+\epsilon_{\text{high}}\big) \end{aligned} \]
 <p>它回到了最原始的策略梯度形式 \(w\cdot A\cdot\nabla\log\pi\)，只是权重 \(w\) 被截断、不参与求导。所以每个 token 都有梯度，只是大比率的 token 权重有上限。</p>
 <p><b>GSPO</b>：</p>
-\[ J_{\text{GSPO}} = \mathbb{E}\Bigg[\frac1G\sum_{i=1}^{G}\min\big(s_i\hat A_i,\ \operatorname{clip}(s_i,1-\epsilon,1+\epsilon)\hat A_i\big)\Bigg],\qquad s_i = \exp\Big(\frac{1}{|o_i|}\sum_t \log r_{i,t}\Big) \]
+\[ \begin{aligned} J_{\text{GSPO}} &= \mathbb{E}\Bigg[\frac1G\sum_{i=1}^{G}\min\big(s_i\hat A_i,\ \operatorname{clip}(s_i,1-\epsilon,1+\epsilon)\hat A_i\big)\Bigg],\\ s_i &= \exp\Big(\frac{1}{|o_i|}\sum_t \log r_{i,t}\Big) \end{aligned} \]
 <p>求导得 \(\nabla s_i = s_i\cdot\frac{1}{|o_i|}\sum_t\nabla\log\pi_\theta(o_{i,t})\)：一条回答里所有 token 的权重相同。</p>
 <p><b>为什么取几何平均。</b>设每个 token 的对数比率独立、方差为 \(\sigma^2\)。整条回答的对数比率 \(\sum_t\log r_t\) 方差是 \(|o|\sigma^2\)，随长度线性增长；几何平均的对数是 \(\frac{1}{|o|}\sum_t \log r_t\)，方差是 \(\sigma^2/|o|\)，反而随长度缩小。所以序列级比率只有在按长度归一化之后才可用。下面“训练与推理不一致”的演示会直接看到这两条曲线。</p>
 </div></details>

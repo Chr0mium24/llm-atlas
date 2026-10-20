@@ -58,7 +58,7 @@ window.ATLAS_TERMS = {
   'trust-region': { t: '信任域', en: 'trust region', d: '只在离当前策略不远（KL 小）的范围内更新，因为离得越远，用旧样本估计的梯度越不可信。TRPO、PPO 的核心思想。', at: 'rl#rl0-offpolicy' },
   ess: { t: '有效样本量', en: 'effective sample size (ESS)', d: String.raw`\(\text{ESS} = (\sum_i w_i)^2 / \sum_i w_i^2\)：一批带权重的样本相当于多少个等权样本。权重越不均匀，ESS 越小。`, at: 'rl#rl0-offpolicy' },
   ratio: { t: '重要性比率', en: 'importance ratio', d: String.raw`\(r_t = \pi_\theta(y_t) / \pi_{\text{old}}(y_t)\)：当前策略和采样时的策略给同一个 token 的概率之比。`, at: 'rl#ppo' },
-  clip: { t: '裁剪（PPO）', en: 'clipping', d: String.raw`把重要性比率限制在 \([1-\epsilon,\, 1+\epsilon]\) 内：一个 token 已经被往对的方向推够了，就不再给它梯度。`, at: 'rl#ppo' },
+  'ppo-clip': { t: '裁剪（PPO）', en: 'clipping', d: String.raw`把重要性比率限制在 \([1-\epsilon,\, 1+\epsilon]\) 内：一个 token 已经被往对的方向推够了，就不再给它梯度。`, at: 'rl#ppo' },
   ppo: { t: 'PPO', en: 'proximal policy optimization', d: '2017 年的策略梯度算法：重要性采样 + 裁剪 + 价值网络。此后七年 RL 微调的默认算法。', at: 'rl#ppo' },
   rlhf: { t: 'RLHF', en: 'reinforcement learning from human feedback', d: '用人类偏好训练奖励模型，再用 RL 优化语言模型。InstructGPT 和 ChatGPT 的做法。', at: 'sft#rm' },
   grpo: { t: 'GRPO', en: 'group relative policy optimization', d: String.raw`每道题采样一组 \(G\) 个回答，用组内平均奖励当基线，去掉价值网络。DeepSeekMath（2024）提出，R1 用它训练。`, at: 'rl#grpo' },
@@ -305,7 +305,7 @@ window.ATLAS_TERMS = {
 
   // ---- jailbreak (jailbreak.html)
   jailbreak: { t: '越狱', en: 'jailbreak', d: '用户有意绕过模型的安全限制，让它输出本应拒绝的内容。攻击者是用户自己，区别于第三方发起的提示注入。', at: 'jailbreak#what' },
-  asr: { t: '攻击成功率', en: 'attack success rate (ASR)', d: '一组有害请求中被成功突破的比例。依赖评审模型判断“是否真的有害”，不同论文的数字常不可直接比较。', at: 'jailbreak#what' },
+  'attack-success-rate': { t: '攻击成功率', en: 'attack success rate (ASR)', d: '一组有害请求中被成功突破的比例。依赖评审模型判断“是否真的有害”，不同论文的数字常不可直接比较。', at: 'jailbreak#what' },
   'universal-jailbreak': { t: '通用越狱', en: 'universal jailbreak', d: '同一个方法能突破几乎所有请求的越狱。一旦公开任何人都能复制，是防御方最关注的目标。', at: 'jailbreak#what' },
   'shallow-alignment': { t: '浅层对齐', en: 'shallow safety alignment', d: '对齐模型与基座模型的差异集中在回答的前几个 token（“抱歉，我不能……”）；开头一旦被换掉，后续生成接近基座模型（Qi 等, ICLR 2025）。', at: 'jailbreak#why' },
   abliteration: { t: '消融去拒绝', en: 'abliteration', d: '把拒绝方向从模型权重中投影掉，使模型几乎不再拒绝。无需训练，有权重就能做。', at: 'jailbreak#why' },
