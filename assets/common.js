@@ -18,7 +18,7 @@
     { s: 'sft', t: 'SFT 与偏好优化', st: 'new' },
     { s: 'rl', t: '强化学习', st: 'new' },
     { s: 'distillation', t: '蒸馏与能力整合', st: 'new' },
-    { s: 'reasoning', t: '推理模型与推理时算力', st: 'old' },
+    { s: 'reasoning', t: '推理模型与推理时算力', st: 'new' },
     { s: 'agents', t: '智能体', st: 'old' },
     { s: 'coding', t: 'AI 编程', st: 'todo' },
     { part: '四 · 架构演进' },

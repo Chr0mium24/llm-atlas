@@ -157,4 +157,10 @@ window.ATLAS_TERMS = {
   seesaw: { t: '跷跷板效应', en: 'seesaw effect', d: '多领域混合后训练时，一个领域变好、另一个变差的相互拉扯（如数学提升而代码下降）。', at: 'distillation#mopd' },
   mopd: { t: '多教师在线蒸馏（MOPD）', en: 'multi-teacher on-policy distillation', d: '先用 RL 训练各领域的专科老师，学生在自己的采样上按题目领域接受对应老师的逐 token 打分，再叠加结果奖励。小米 MiMo-V2-Flash 提出（2026）。', at: 'distillation#mopd' },
   'context-distillation': { t: '上下文蒸馏', en: 'context distillation', d: '以“带着提示或示范的自己”为老师，训练“不带提示的自己”去模仿，把上下文的效果写进权重。SDFT 是它在持续学习上的推广。', at: 'distillation#self' },
+
+  // ---- reasoning (reasoning.html)
+  cot: { t: '思维链', en: 'chain of thought (CoT)', d: String.raw`回答前先写出中间推理步骤。写下 \(T\) 个 token，可用的串行计算从 \(L\) 层扩展到约 \(L\times T\) 步，理论上扩展了 Transformer 能计算的函数类。`, at: 'reasoning#why' },
+  'self-consistency': { t: '多数投票（自洽性）', en: 'self-consistency', d: '同一问题采样多条推理，取出现最多的答案。正确答案是最常见答案时有效；存在常见的陷阱答案时会稳定地选错。', at: 'reasoning#ttc' },
+  overthinking: { t: '过度思考', en: 'overthinking', d: '推理模型在简单问题上写出过长的思考、得到答案后反复验证，浪费算力；有时想得越久越差。', at: 'reasoning#budget' },
+  'cot-faithfulness': { t: '思维链忠实性', en: 'CoT faithfulness', d: '思维链是否如实反映了决定答案的因素。实验显示模型受暗示影响时常常不在思维链里承认（约 25–39%）。', at: 'reasoning#faithful' },
 };

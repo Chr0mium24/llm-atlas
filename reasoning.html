@@ -12,66 +12,212 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>推理模型：让模型“想久一点”，并用强化学习教它怎么想</h1>
-  <p class="lede">2024 年 9 月的 OpenAI o1 和 2025 年 1 月的 DeepSeek-R1 带来一个新的规模化维度：<b>推理时算力（test-time compute）</b>。模型先生成很长的思维链，再给答案；思考得越久，准确率越高。教会它这样思考的方法是 <b>可验证奖励的强化学习（RLVR）</b>。</p>
+  <h1>推理模型：把算力花在回答之前</h1>
+  <p class="lede">2024 年 9 月的 OpenAI o1 和 2025 年 1 月的 DeepSeek-R1 带来了一种新的规模化方式：模型在回答前先写下很长的思考过程，思考得越多，难题的准确率越高。这一章先从计算的角度解释为什么“写出来”能让模型更聪明，然后比较花费推理时算力的几种方式（想得更久、想得更多、并行再汇总），讨论想太多的问题；接着追问思维链写的是不是模型真正的想法；最后看不用文字思考的尝试。怎样训练出推理模型，见第 <a class="xref" data-ref="rl"></a>、<a class="xref" data-ref="distillation"></a> 章。</p>
 </header>
 
-<h2 id="cot">思维链：把计算展开到 token 上</h2>
-<p>Transformer 每生成一个 token，做的计算量是固定的（约 2N FLOPs）。难题需要的计算量超过一次前向能完成的，就得 <b>把中间步骤写出来</b>，让后面的 token 能读到前面的中间结果。这就是 <b>思维链（Chain-of-Thought, CoT）</b>。2022 年发现，只要在 prompt 里加一句“让我们一步步思考”，大模型的数学题准确率就会大幅上升。</p>
-<p>用更多推理算力换准确率，有两个方向：</p>
+<div class="bridge">前两章讲了训练手段：强化学习让模型在可验证的任务上自己探索出长思维链，蒸馏把这种能力传给更多模型。这一章换一个角度：推理模型在推理时到底做了什么，这些额外的 token 为什么有用，又该怎样分配。</div>
+
+<div class="prereq">
+  <ul>
+    <li>每个 token 的计算量 \(2N\)、层数与残差流：第 <a class="xref" data-ref="transformer"></a> 章</li>
+    <li>自回归生成、采样、温度：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>RLVR、GRPO、pass@k、“挑选还是发现”之争：第 <a class="xref" data-ref="rl"></a> 章</li>
+  </ul>
+</div>
+
+<h2 id="why">为什么“写出来”有用：把计算展开到 token 上</h2>
+<p>Transformer 每生成一个 token，做的计算量是固定的：数据流过 \(L\) 层，约 \(2N\) FLOPs。一个问题如果需要的串行计算步骤超过 \(L\) 层能完成的，模型在一次前向中就算不出来，只能猜。<dfn data-t="cot">思维链</dfn>（chain of thought, CoT）的作用是把中间结果写成 token：后面的 token 可以通过注意力读到前面写下的中间结果，相当于把计算展开成很多步：</p>
+<div class="fx">
+\[ \text{串行深度} \approx \htmlClass{sym-L}{L}\times \htmlClass{c-new}{\htmlClass{sym-T}{T}},\qquad C_{\text{一次回答}} \approx 2N\times(\htmlClass{sym-T}{T} + T_{\text{答案}}) \]
+  <div class="fx-read">没有思维链时，从读完题到给出答案只有 \(L\) 层的串行计算；写下 \(T\) 个思考 token，可用的串行步骤就变成约 \(L\times T\)。代价是计算量和延迟都随 \(T\) 线性增长。</div>
+  <dl class="fx-syms">
+    <dt data-sym="L">\(L\)</dt><dd>层数，例如 60</dd>
+    <dt data-sym="T">\(T\)</dt><dd>思考的 token 数，推理模型常常几千到几万</dd>
+  </dl>
+  <div class="fx-eg">两个五位数相乘，竖式需要几十步进位，每一步依赖前一步。60 层的模型一次前向很难完成；写出每一行部分积和进位，每一步只需做一次一位数乘法和加法。一个 70B 模型写 1 万个思考 token，每次回答约 \(2\times 7\times 10^{10}\times 10^4 = 1.4\times 10^{15}\) FLOPs，相当于直接回答的上万倍。</div>
+</div>
+<details class="deep"><summary>理论上：思维链让 Transformer 能解决原本解决不了的问题</summary><div class="in">
+<p>复杂性理论给了这个直觉一个严格的版本。固定深度、精度有限的 Transformer，一次前向能计算的函数属于一个很小的电路复杂度类（\(\mathsf{TC}^0\)，常数深度的阈值电路），一些看似简单的问题，例如判断一个括号串是否合法、做任意长度的乘法、在图上判断两点是否连通，在通常的复杂性假设下不在其中。</p>
+<p>Merrill 与 Sabharwal（2023）、Feng 等（2023）证明：允许 Transformer 先生成中间步骤，能力随步数增长。线性步数的思维链就能识别所有正则语言，多项式步数的思维链可以模拟任何多项式时间算法。</p>
+\[ \text{无 CoT：}\ \subseteq \mathsf{TC}^0 \qquad\longrightarrow\qquad \text{多项式长度 CoT：}\ = \mathsf{P} \]
+<p><b>这个推导告诉我们：</b>思维链不只是“让模型更认真”，而是在根本上扩展了它能计算的函数类。同时也说明了代价：难题需要的步数多，就必须写很多 token，推理时算力是能力的一部分，而不是可以省掉的开销。</p>
+</div></details>
+<p>2022 年，Wei 等发现只要在提示中给出带推理步骤的例子，大模型的数学题准确率就大幅上升；Kojima 等发现一句“让我们一步步思考”就有类似效果。但提示出来的思维链短而脆弱，2024–25 年的推理模型则通过强化学习学会了写几千上万 token 的思考：尝试、检查、发现错误、换一种方法。</p>
+<p>这些行为从哪来？Gandhi 等（2025）对比了 Qwen 和 Llama 在同样的 RL 下的表现：Qwen 迅速学会了长推理，Llama 几乎没有进步。原因在于基座：Qwen 的预训练数据里本来就有验证、回溯、设定子目标、倒推等推理行为，RL 把它们放大；只要先用含这些行为的数据“启动”Llama，它也能学会。这与第 <a class="xref" data-ref="rl"></a> 章“RL 是挑选还是发现”的争论相呼应。</p>
+
+<h2 id="ttc">推理时算力的几种花法</h2>
+<p>把算力从训练挪到推理，有两个方向，可以组合：</p>
 <ul>
-  <li><b>并行</b>：同一个问题采样 N 次，然后 <b>多数投票</b>（self-consistency, 2022），或者用验证器 / 奖励模型挑最好的（best-of-N）。</li>
-  <li><b>串行</b>：一条思维链写得更长，中间自我检查、回溯、换思路。o1/R1 这类推理模型属于这一类。</li>
+  <li><b>并行</b>：同一个问题采样 \(N\) 次，再汇总。<dfn data-t="self-consistency">多数投票</dfn>（self-consistency, 2022）选出现最多的答案；有可靠的验证器（单元测试、数学证明检查器、奖励模型）时，挑通过验证的那个。</li>
+  <li><b>串行</b>：一条思维链写得更长，中间自我检查、回溯、换思路。o1、R1 这类推理模型主要是这一类。</li>
 </ul>
+<div class="fx">
+\[ \text{有完美验证器：}\ P_{\text{对}} = 1 - (1 - \htmlClass{sym-p}{p})^{N} \qquad\qquad \text{多数投票：}\ P_{\text{对}} \xrightarrow{N\to\infty} \begin{cases} 1 & p &gt; q_{\max}\\ 0 & p &lt; q_{\max}\end{cases} \]
+  <div class="fx-read">有验证器时，只要有一次答对就行，准确率随 \(N\) 一直上升（就是第 <a class="xref" data-ref="rl"></a> 章的 pass@k）。多数投票则要看正确答案是不是最常见的那个：如果是，票数越多越稳；如果某个错误答案比正确答案更常见，票数越多越稳定地选错。</div>
+  <dl class="fx-syms">
+    <dt data-sym="p">\(p\)</dt><dd>单次采样答对的概率；\(q_{\max}\) 是最常见的那个错误答案的概率</dd>
+  </dl>
+  <div class="fx-eg">\(p = 0.2\)，有验证器，采样 10 次：\(1 - 0.8^{10} = 89\%\)。没有验证器，若错误答案分散（每个错误答案都不到 20%），多数投票也能逐步提升；若有一个“陷阱答案”占 30%，投票越多越稳定地输出它。</div>
+</div>
 <div data-demo="majority-vote"></div>
-
-<h2 id="rl">强化学习：从 RLHF 到 RLVR</h2>
-<p><b>RLHF</b>（2022 InstructGPT）：人类比较两个回答 → 训练奖励模型 → 用 PPO 优化策略。问题是奖励模型本身会被“钻空子”：策略学会写出奖励模型喜欢、但实际上并不更好的回答（reward hacking），比如更长、更讨好、格式更花哨。</p>
-<p><b>RLVR（可验证奖励的强化学习）</b>：只在答案能被程序自动判对错的任务上训练，比如数学题对答案、代码跑单元测试、智能体任务检查终态。奖励就是 0 或 1，很难被钻空子。DeepSeek-R1 证明了只靠这种稀疏奖励、不给示范的思考过程，模型就能 <b>自己</b> 学会长思维链、自我反思和验证（论文中的 “aha moment”），思考长度随训练稳定增长。</p>
-<h3>GRPO：用组内比较代替价值网络</h3>
-<p>PPO 需要一个和策略差不多大的价值网络来估计基线，很贵。DeepSeek 的 <b>GRPO</b>（Group Relative Policy Optimization）对同一道题采样一组 G 个回答，用组内平均奖励当基线：</p>
-<div class="eq">Â<sub>i</sub> = ( r<sub>i</sub> − mean(r<sub>1..G</sub>) ) / std(r<sub>1..G</sub>)<span class="note">答得比组内平均好的回答，其每个 token 的概率都被提高；差的被压低。另加 KL 项防止离参考模型太远</span></div>
-<p>下面是一个玩具版：模型可以选 6 种“解题策略”，每种的答对率不同，越认真的策略思维链越长。看 GRPO 怎么只凭“对/错”的信号把策略推向更好、更长的思考：</p>
-<div data-demo="grpo-toy"></div>
-<div class="callout"><b>题目太难或太简单都学不到东西。</b>如果一组 G 个回答全对或全错，组内方差为 0，优势全为 0，梯度为 0。所以实践中要筛选题目难度，例如 DAPO 的 dynamic sampling 会丢弃全对或全错的组。在上面的演示里把难度拉到最大试试。</div>
-
-<h3>2025–2026：RL 规模化与智能体</h3>
-<ul>
-  <li><b>RL 算力暴涨</b>：前沿模型投入后训练 RL 的算力已接近预训练的同一数量级，RL 也呈现规模定律。</li>
-  <li><b>智能体 RL</b>：奖励来自真实环境，比如在沙盒终端里把任务做完、在浏览器里找到答案、通过 MCP 工具完成操作。评测也随之转向 Terminal-Bench、SWE-bench、BrowseComp 这类任务。Kimi K3 的模型卡报告了 Terminal-Bench 2.1 88.3%、BrowseComp 91.2%。</li>
-  <li><b>思考与工具交织</b>：在思维链中途调用搜索、代码执行，再接着想（o3 起）。</li>
-  <li><b>并行思考</b>：同时展开多条思路再汇总（Gemini Deep Think 等），把“并行”和“串行”两种推理算力结合起来。</li>
-  <li><b>不可验证领域</b>：写作、开放问答没有标准答案，用细粒度评分细则（rubric）+ LLM 评审给奖励。</li>
-  <li><b>在线策略蒸馏</b>：学生模型自己采样，教师模型逐 token 给出概率作为密集信号。据报道 DeepSeek V4 的后训练用它替代了一部分 RL。</li>
-</ul>
-
-<h2 id="compare">几种对齐 / 强化方法对比</h2>
+<p>那么，给定预算，是想一条长的，还是想很多条短的？Snell 等（2024）系统比较了不同的推理时策略，发现最优策略取决于题目难度：简单题适合并行采样再挑选，难题适合把预算集中在更长、可以自我修正的单条思路上；按难度分配推理时算力，在算力相同时可以胜过大 14 倍的模型（在小模型本身有一定成功率的题目上）。下面的玩具模型展示了这种权衡：</p>
+<div data-demo="budget-split"></div>
+<p>推理时算力也有自己的规模定律。o1 公布的图显示，准确率随推理时算力的<b>对数</b>近似线性上升，和训练时 RL 算力的曲线形状一样：</p>
+<div class="fx">
+\[ \text{准确率} \approx a + b\,\log C_{\text{推理}} \]
+  <div class="fx-read">推理时算力每翻一倍，准确率大约增加一个固定的量 \(b\log 2\)。和训练的规模定律一样，这既是“可以预测”，也是“越来越贵”：要再提高同样多，算力要再翻一倍。</div>
+  <div class="fx-eg">若某模型在一道题集上，平均思考 2000 token 时准确率 50%，8000 token 时 62%，则每翻一倍约提升 6 个百分点。按此外推，到 32000 token 约 74%，到 128000 token 约 86%，前提是这条直线不弯折，而实际上它最终会饱和，或者像下面说的那样在某些任务上反而下降。</div>
+</div>
+<p>各家推理模型在“怎样思考”上做了不同的设计选择：</p>
 <div class="tablewrap"><table>
-  <tr><th>方法</th><th>奖励从哪来</th><th>需要的模型</th><th>特点</th></tr>
-  <tr><td>RLHF + PPO</td><td>人类偏好训练的奖励模型</td><td>策略 + 参考 + 奖励 + 价值，共 4 个</td><td>通用但贵；容易被 reward hacking</td></tr>
-  <tr><td>DPO</td><td>偏好对（隐式奖励）</td><td>策略 + 参考</td><td>简单、离线；上限不如在线 RL</td></tr>
-  <tr><td>GRPO + RLVR</td><td>程序验证（对 / 错）</td><td>策略 + 参考</td><td>省掉价值网络；推理能力提升的主力</td></tr>
-  <tr><td>智能体 RL</td><td>环境的终态检查</td><td>策略 + 沙盒环境</td><td>轨迹长、需要大规模异步 rollout 系统</td></tr>
-  <tr><td>在线策略蒸馏</td><td>教师模型逐 token 的 log 概率</td><td>学生 + 教师</td><td>密集信号，样本效率高，但上限受限于教师</td></tr>
+  <tr><th>模型</th><th>时间</th><th>设计特点</th></tr>
+  <tr><td>OpenAI o1</td><td>2024-09</td><td>隐藏的思维链，只给用户看摘要</td></tr>
+  <tr><td>DeepSeek-R1</td><td>2025-01</td><td>完整思维链可见，开源权重和训练方法</td></tr>
+  <tr><td>Claude 3.7 Sonnet</td><td>2025-02</td><td>同一模型可快答可深思，思考预算可调，思考过程可见</td></tr>
+  <tr><td>Gemini 2.5 / Deep Think</td><td>2025-03 / 08</td><td>可调思考预算；Deep Think 并行展开多条思路再汇总</td></tr>
+  <tr><td>OpenAI o3</td><td>2025-04</td><td>在思维链中调用搜索、代码、图像工具</td></tr>
+  <tr><td>Qwen3 → Qwen3-2507</td><td>2025-04 / 07</td><td>先做一个模型的混合思考，后拆回独立的 Instruct 和 Thinking 模型</td></tr>
+  <tr><td>GPT-5</td><td>2025-08</td><td>路由器在快速模型和思考模型之间自动分配</td></tr>
+  <tr><td>Kimi K2 Thinking</td><td>2025-11</td><td>思考与工具调用交织，单次任务可连续执行数百次工具调用</td></tr>
 </table></div>
+<p>2025 年起，两种方式开始融合：<b>并行思考</b>（Gemini Deep Think、o3-pro、Grok Heavy 等）同时展开多条思路，中途相互参考，最后汇总；<b>思考中调用工具</b>（o3 起）让模型在思维链中途搜索、运行代码、查看图片，再接着想，把推理和行动交织在一起（第 <a class="xref" data-ref="agents"></a> 章）。2025 年 7 月，OpenAI 和 Google DeepMind 的实验性推理模型都以自然语言作答，在国际数学奥林匹克（IMO）上达到金牌分数线（第 <a class="xref" data-ref="science"></a> 章）。</p>
 
-<h2 id="history">脉络</h2>
-<ul class="history">
-  <li><span class="d">2017</span>PPO；Christiano 等用人类偏好训练 RL 智能体</li>
-  <li><span class="d">2022-01</span>Chain-of-Thought prompting；同年 self-consistency 多数投票</li>
-  <li><span class="d">2022-03</span>InstructGPT：SFT + RLHF 的完整流程</li>
-  <li><span class="d">2022-12</span>Constitutional AI：用 AI 反馈替代部分人类反馈（RLAIF）</li>
-  <li><span class="d">2023</span>DPO；“Let's Verify Step by Step”：过程奖励模型（PRM）</li>
-  <li><span class="d">2024-02</span>DeepSeekMath 提出 GRPO</li>
-  <li><span class="d">2024-09</span>OpenAI o1：推理时算力作为新的规模化维度</li>
-  <li><span class="d">2025-01</span>DeepSeek-R1：纯 RLVR 涌现长思维链，开源权重；蒸馏小模型</li>
-  <li><span class="d">2025</span>o3 / Claude / Gemini 等把工具调用融入思考；DAPO、GSPO 等 GRPO 改进；智能体 RL 兴起</li>
-  <li><span class="d">2026</span>RL 算力与预训练同一量级；智能体评测（Terminal-Bench 2.x、BrowseComp、MCPMark）成为主战场；在线策略蒸馏流行</li>
+<h2 id="budget">想太多与想太少</h2>
+<p>推理模型并不会自动把算力花在刀刃上。问它“2 + 3 等于几”，它可能写上几百个 token 反复验证（Chen 等, 2024 称之为<dfn data-t="overthinking">过度思考</dfn>）；遇到难题，它又可能频繁地从一个思路跳到另一个，每条都没想透就放弃（“思考不足”）。2026 年的研究发现，推理模型很不擅长在不同难度的题目之间分配算力，在已经得到正确答案后还会反复自我验证好几次。</p>
+<aside class="dispute surprise">
+  <h4>意外：想得越久，有时越差</h4>
+  <dl>
+    <dt>原以为</dt><dd>推理时算力和训练算力一样，越多越好，最多是收益递减。</dd>
+    <dt>实际发现</dt><dd>Anthropic 研究员项目的 Gema 等（2025）构造了一批任务，发现推理越长准确率反而越低（“推理时算力的反向规模化”）：计数题里加入无关的干扰信息，模型想得越久越容易被带偏；简单的回归问题上，想久了会从合理的先验转向虚假的相关；有的模型在长推理中还会更多地表达出自我保存之类的倾向。</dd>
+    <dt>为什么</dt><dd>长推理放大了模型已有的偏差：一旦在早期接受了错误的线索，后面的思考会不断为它找理由。RL 训练奖励的是最终答案对不对，没有直接训练“何时该停”。</dd>
+    <dt>现在怎么看</dt><dd>推理长度需要被控制和训练，而不是越长越好。这也是自适应推理成为 2026 年热点的原因。</dd>
+  </dl>
+</aside>
+<p>工程上的应对有几种：</p>
+<ul>
+  <li><b>思考预算</b>：API 允许指定最多思考多少 token 或选择“推理强度”（Claude 的扩展思考预算、Gemini 的 thinking budget、OpenAI 的 reasoning effort）。s1 的 budget forcing 是一个简单的实现：想停时强行插入 “Wait” 让它继续，超出预算时强行结束。</li>
+  <li><b>思考模式切换</b>：同一个模型既能深思也能直接回答（Claude 3.7、Qwen3 的混合思考）。实践中两种模式会互相拖累，Qwen 在 2025 年 7 月又拆回独立的 Instruct 和 Thinking 模型；GPT-5 则用一个路由器在快速模型和思考模型之间分配请求。</li>
+  <li><b>训练中加入长度约束</b>：在 RL 中对过长的回答扣分，或者在训练后期专门训练“长变短”（Kimi k1.5 的 long2short）；2026 年的自适应推理方法让模型自己判断题目难度，据报道能在准确率几乎不变的情况下把平均长度减少 40% 左右。</li>
 </ul>
+<aside class="dispute">
+  <h4>推理模型是真的在推理，还是在复现见过的模式</h4>
+  <dl>
+    <dt>质疑</dt><dd>Apple 的 “The Illusion of Thinking”（2025-06）用汉诺塔等可调复杂度的谜题测试推理模型：复杂度超过某个阈值后，准确率骤降到 0，而且模型在难题上反而减少了思考量，即使给出算法也执行不好。作者认为推理模型的能力被高估了。</dd>
+    <dt>反驳</dt><dd>随后的回应指出，部分“失败”是因为输出长度达到上限（汉诺塔的步数随盘数指数增长，模型明确说了“太长不写了”），部分测试实例本身无解；改成让模型写出生成解法的程序，就能正确解决。</dd>
+    <dt>现在怎么看</dt><dd>推理模型确实有明显的边界：长程的精确执行、超出训练分布的复杂度。但“只是模式匹配”的强结论站不住：同一时期的模型拿到了 IMO 金牌，解决了一些研究级的数学问题。“推理”与“模式匹配”的二分本身也许就不清楚，更有用的问题是：在哪些任务、多大复杂度上可靠。</dd>
+  </dl>
+</aside>
+
+<h2 id="faithful">思维链写的是真实想法吗</h2>
+<p>推理模型的思维链看起来像一扇窗口：可以看到模型怎样一步步得出答案，发现它在哪里出错，甚至发现它在钻奖励的空子。但窗口里看到的，是不是模型真正的计算过程？</p>
+<p>一个直接的测试：在题目里悄悄放一个暗示（例如“一位教授认为答案是 C”），看模型是否受暗示影响改变了答案，以及改变答案时是否在思维链里承认用了这个暗示。Anthropic（2025）测得，Claude 3.7 Sonnet 在受暗示影响时只有约 25% 的情况会提到暗示，DeepSeek-R1 约 39%；暗示越“不光彩”（例如来自未经授权的信息），越少被提到。更早的研究（Turpin 等, 2023）也发现，非推理模型给出的推理过程常常是事后编出来的理由。</p>
+<p>思维链是否<dfn data-t="cot-faithfulness">忠实</dfn>，直接关系到能否用它来监督模型。OpenAI（2025-03）发现：如果在训练中惩罚思维链里“我要钻测试的空子”这类想法，模型会学会不再写出来，但照样钻空子。2025 年 7 月，多家实验室的研究者联合发文，呼吁把“思维链的可监控性”当作一种脆弱、需要主动保护的性质（详见第 <a class="xref" data-ref="alignment"></a> 章）。</p>
+<aside class="dispute">
+  <h4>思维链是窗口，还是事后的说明</h4>
+  <dl>
+    <dt>窗口派</dt><dd>对于真正需要多步计算的难题，模型必须把中间结果写出来才能算对（上面的复杂性论证），这部分思维链必然反映真实的计算。实践中，思维链监控已经多次发现了钻奖励空子和其它不当行为。</dd>
+    <dt>说明派</dt><dd>暗示实验表明，影响答案的因素常常不出现在思维链里；思维链的内容受训练压力塑造，模型可以学会写出“好看”的推理。</dd>
+    <dt>现在怎么看</dt><dd>两者都对，取决于任务：模型“需要”写下来的部分更可信，可以不写就能完成的部分（如受暗示影响）不可信。思维链是有用但不完整的证据，不能被当作模型想法的完整记录，也不应在训练中直接优化它“看起来好”。</dd>
+  </dl>
+</aside>
+
+<h2 id="latent">不用文字思考</h2>
+<p>文字思维链有两个代价：每一步都要压缩成一个离散的 token，信息损失大；长度带来延迟和成本。几条研究路线尝试让模型在连续的向量空间里“思考”：</p>
+<ul>
+  <li><b>连续思维</b>：Coconut（Meta, 2024）把最后一层的隐藏状态直接作为下一步的输入，不解码成 token。在需要搜索的逻辑任务上，它能同时保留多个候选路径，类似广度优先搜索。</li>
+  <li><b>循环深度</b>：让同一组层反复计算多次（第 <a class="xref" data-ref="transformer"></a> 章的 looped Transformer），用更多的“内部步数”替代更多的 token，如 Huginn（2025）。</li>
+  <li><b>小型递归模型</b>：HRM、TRM（2025）用只有几百万到几千万参数的网络反复迭代，在数独、迷宫和 ARC-AGI 这类谜题上胜过大得多的语言模型，说明“反复迭代”本身是强大的计算结构。</li>
+</ul>
+<p>这些方法在大规模通用模型上尚未取代文字思维链，而且有一个安全上的顾虑：不用文字思考，就失去了思维链这扇窗户。效率与可监控性之间的取舍，是 2026 年仍在讨论的问题。</p>
+
+<h2 id="myths">常见误解</h2>
+<ul class="myths">
+  <li><b class="m">推理模型就是“提示它一步步思考”的普通模型。</b>提示出来的思维链短而浅；推理模型经过大规模 RL，学会了长时间的尝试、检查和回溯，能力差别巨大。</li>
+  <li><b class="m">想得越久越好。</b>收益递减，有时还会变差（反向规模化、过度思考）。简单题上多想只是浪费。</li>
+  <li><b class="m">多数投票总能提高准确率。</b>只有当正确答案是最常见的答案时才成立；存在常见的陷阱答案时，投票会稳定地选错。</li>
+  <li><b class="m">思维链就是模型的真实想法。</b>它是部分可信的证据：需要写下来才能算对的部分较可信，影响答案的其它因素常常不出现在里面。</li>
+  <li><b class="m">推理时算力可以替代更大的模型。</b>在模型已有一定成功率的题目上可以，Snell 等的“胜过大 14 倍的模型”正是这个条件下的结论；模型完全不会的题目，想多久也没用，需要更强的基座。</li>
+</ul>
+
+<h2 id="history">演进史</h2>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2021–2022</div>
+    <h4>草稿纸与思维链提示</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>大模型在多步算术和逻辑题上表现很差，规模扩大也帮助有限。</dd>
+      <dt>怎么解决</dt><dd>Nye 等（2021）让模型在“草稿纸”上写中间步骤；Wei 等（2022）的思维链提示、Kojima 等的“一步步思考”、Wang 等的多数投票；STaR（2022）用模型自己生成的正确推理过程微调自己。</dd>
+      <dt>代价</dt><dd>思维链短，依赖提示，错误一旦出现就会一路传下去。</dd>
+      <dt>引出</dt><dd>能否让模型学会更系统地探索？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">被 RL 训练取代</span>思维树与提示层面的搜索（2023）</summary><div>Tree of Thoughts、Graph of Thoughts 等在提示层面组织多条思路并做搜索，需要大量调用和精心设计的流程。推理模型把探索和回溯内化到一条思维链中之后，这类外部搜索框架很少再用于通用推理。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024 上半年</div>
+    <h4>验证器与过程奖励</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多数投票有天花板，需要更好的方法从多个答案中挑选。</dd>
+      <dt>怎么解决</dt><dd>OpenAI 的 “Let's Verify Step by Step” 训练过程奖励模型给每一步打分；各种 best-of-N 与树搜索方法。</dd>
+      <dt>代价</dt><dd>过程标注昂贵；验证器本身会被钻空子。</dd>
+      <dt>引出</dt><dd>能否让模型自己学会长时间的思考？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>过程奖励还是结果奖励</summary><div>R1 报告认为过程奖励和蒙特卡洛树搜索在大规模 RL 中不划算，结果奖励足够。过程级的信号后来以其它形式回归：在线蒸馏的逐 token 打分（第 <a class="xref" data-ref="distillation"></a> 章）。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-09 – 2025-01</div>
+    <h4>o1 与 R1：推理时算力成为新的规模化维度</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>预训练的边际收益下降（第 <a class="xref" data-ref="scaling"></a> 章）。</dd>
+      <dt>怎么解决</dt><dd>o1 展示准确率随推理时算力的对数稳定上升；DeepSeek-R1 公开了做法：大规模可验证奖励的 RL 自发涌现长思维链和自我反思，并开源权重与蒸馏的小模型。</dd>
+      <dt>代价</dt><dd>回答慢、贵；过度思考；思维链可读性下降（语言混杂）。</dd>
+      <dt>引出</dt><dd>怎样让思考更高效、可控？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025</div>
+    <h4>混合思考、工具与并行思考</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>所有问题都深思太浪费；纯文本推理无法获取外部信息。</dd>
+      <dt>怎么解决</dt><dd>思考预算与混合思考模式（Claude 3.7、Qwen3）；o3 在思维链中调用工具；并行思考（Deep Think 等）；IMO 金牌；GPT-5 的快慢路由。</dd>
+      <dt>代价</dt><dd>混合模式相互拖累；思维链忠实性受到质疑。</dd>
+      <dt>引出</dt><dd>思维链能不能被信任和监控？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2026</div>
+    <h4>自适应推理与可监控性</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>推理长度难以按难度分配；思维链在训练压力下可能变得不透明。</dd>
+      <dt>怎么解决</dt><dd>自适应推理方法让模型按难度决定想多久；研究者呼吁保护思维链的可监控性；连续思维、循环深度等不依赖文字的推理在研究中推进。</dd>
+      <dt>代价</dt><dd>效率与可监控性之间的取舍尚无定论。</dd>
+      <dt>引出</dt><dd>会思考之后，下一步是会行动：在真实环境中多步完成任务（第 <a class="xref" data-ref="agents"></a> 章）。</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">研究中</span>不用文字的推理</summary><div>Coconut、循环深度模型和小型递归网络在特定任务上效果惊人，但尚未在通用大模型上取代文字思维链。</div></details>
+  </div>
+</div>
+
+<h2 id="quiz">自测</h2>
+<details class="quiz"><summary>1. 单次答对率 \(p = 0.2\)。有完美验证器时，采样多少次能让答对率超过 90%？</summary><div class="ans">需要 \(1 - 0.8^N > 0.9\)，即 \(0.8^N &lt; 0.1\)，\(N > \ln 0.1/\ln 0.8\approx 10.3\)，所以 11 次。</div></details>
+<details class="quiz"><summary>2. 同样花 \(1.4\times 10^{15}\) FLOPs：方案 A 是 70B 模型写 1 万 token 的思维链；方案 B 是 7B 模型并行采样多少条 1000 token 的回答？</summary><div class="ans">A：\(2\times 7\times 10^{10}\times 10^4 = 1.4\times 10^{15}\)。B：每条 \(2\times 7\times 10^9\times 10^3 = 1.4\times 10^{13}\)，可以采样 100 条。哪个更好取决于题目：小模型单次有一定成功率且有验证器时，B 可能更好；小模型根本不会时，A 更好。</div></details>
+<details class="quiz"><summary>3. 某题单次采样：正确答案 30%，一个常见的错误答案 40%，其余错误答案分散。多数投票在 \(N\) 很大时会怎样？有验证器呢？</summary><div class="ans">多数投票趋于稳定地输出那个 40% 的错误答案，准确率趋于 0。有验证器时，\(1 - 0.7^N\to 1\)。这说明验证能力（而不只是生成能力）决定了推理时算力的上限。</div></details>
+
+<h2 id="reading">必读</h2>
+<ol class="reading">
+  <li><a href="https://arxiv.org/abs/2201.11903">Chain-of-Thought Prompting Elicits Reasoning in Large Language Models</a>（Wei 等, 2022）<span class="why">思维链的起点。</span></li>
+  <li><a href="https://arxiv.org/abs/2310.07923">The Expressive Power of Transformers with Chain of Thought</a>（Merrill 与 Sabharwal, 2023）<span class="why">为什么写出来能扩展能力，严格的版本。</span></li>
+  <li><a href="https://arxiv.org/abs/2408.03314">Scaling LLM Test-Time Compute Optimally Can be More Effective than Scaling Model Parameters</a>（Snell 等, 2024）<span class="why">推理时算力该怎么分配。</span></li>
+  <li><a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a>（2025）<span class="why">推理模型训练的公开配方与“aha moment”。</span></li>
+  <li><a href="https://arxiv.org/abs/2503.01307">Cognitive Behaviors that Enable Self-Improving Reasoners</a>（Gandhi 等, 2025）<span class="why">为什么有的基座 RL 得起来，有的不行。</span></li>
+  <li><a href="https://www.anthropic.com/research/reasoning-models-dont-say-think">Reasoning models don't always say what they think</a>（Anthropic, 2025）<span class="why">思维链忠实性的直接测量。</span></li>
+</ol>
+
+<div class="nextq">会推理的模型，下一步是会行动：调用工具、浏览网页、操作终端，在真实环境里连续完成几十上百步的任务。怎样让一个语言模型成为可靠的智能体？下一章（第 <a class="xref" data-ref="agents"></a> 章）。</div>
+
+<p class="src">资料：<a href="https://arxiv.org/abs/2112.00114">Scratchpad（Nye 等 2021）</a> · <a href="https://arxiv.org/abs/2205.11916">Zero-shot CoT</a> · <a href="https://arxiv.org/abs/2203.11171">Self-Consistency</a> · <a href="https://arxiv.org/abs/2203.14465">STaR</a> · <a href="https://arxiv.org/abs/2305.10601">Tree of Thoughts</a> · <a href="https://arxiv.org/abs/2305.20050">Let's Verify Step by Step</a> · <a href="https://arxiv.org/abs/2305.15408">Feng 等 2023</a> · <a href="https://arxiv.org/abs/2412.21187">Do NOT Think That Much for 2+3=?</a> · <a href="https://arxiv.org/abs/2507.14417">Inverse Scaling in Test-Time Compute</a> · <a href="https://arxiv.org/abs/2501.19393">s1</a> · <a href="https://arxiv.org/abs/2501.12599">Kimi k1.5</a> · <a href="https://arxiv.org/abs/2608.20256">Learning When to Think（2026）</a> · <a href="https://arxiv.org/abs/2608.07968">Thinking Hard, Not Smart（2026）</a> · <a href="https://machinelearning.apple.com/research/illusion-of-thinking">The Illusion of Thinking</a> · <a href="https://arxiv.org/abs/2506.09250">The Illusion of the Illusion of Thinking</a> · <a href="https://arxiv.org/abs/2305.04388">Turpin 等 2023</a> · <a href="https://openai.com/index/chain-of-thought-monitoring/">OpenAI：思维链监控</a> · <a href="https://arxiv.org/abs/2507.11473">Chain of Thought Monitorability</a> · <a href="https://arxiv.org/abs/2412.06769">Coconut</a> · <a href="https://arxiv.org/abs/2502.05171">Huginn（循环深度）</a> · <a href="https://arxiv.org/abs/2510.04871">TRM</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>
-
 <script defer src="assets/vendor/katex/katex.min.js"></script>
 <script defer src="assets/vendor/katex/auto-render.min.js"></script>
 <script defer src="assets/common.js"></script>
