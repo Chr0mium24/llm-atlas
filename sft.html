@@ -13,112 +13,278 @@
 <header>
   <div class="kicker"></div>
   <h1>SFT 与偏好优化：把续写机器变成助手</h1>
-  <p class="lede">预训练出来的基座模型只会续写：问它“法国的首都是哪里？”，它可能接着写出更多的问题，因为网上的问题列表常常是这样的。后训练的第一步是用示范数据教它“以助手的身份回答”（SFT），第二步是用偏好数据教它分辨好回答和差回答（RLHF、DPO）。这一章推导奖励模型和 DPO 的损失函数，讲清为什么对奖励模型优化过头会适得其反，然后是让普通人也能微调大模型的 LoRA，以及把几个微调模型“加”在一起的模型合并。</p>
+  <p class="lede">预训练出来的基座模型只会续写：问它“法国的首都是哪里？”，它可能接着写出更多的问题，因为网上的问题列表常常是这样的。后训练的第一步是用示范数据教它“以助手的身份回答”（SFT），第二步是用偏好数据教它分辨好回答和差回答（RLHF、DPO）。这一章先用三条示范、一组偏好的玩具，把 SFT 的损失、奖励模型、KL 约束和 DPO 全部手算一遍；再推导 SFT 为什么主要学到格式和风格、标注噪声怎样给奖励模型封顶、对奖励模型优化过头为什么适得其反；然后讲清 InstructGPT → DPO → 在线偏好优化每一代在修什么；最后是 LoRA 和模型合并。</p>
 </header>
 
-<div class="bridge">第二部分得到的是一个压缩了海量文本的基座模型。它的知识和能力大多已经在那里了，只是不知道该以什么方式拿出来。后训练要解决的，是“怎样说”和“说什么更好”。</div>
+<div class="bridge">第二部分（第 <a class="xref" data-ref="data"></a>、<a class="xref" data-ref="scaling"></a> 章）得到的是一个压缩了海量文本的基座模型。它的知识和能力大多已经在那里了，只是不知道该以什么方式拿出来。后训练要解决的，是“怎样说”和“说什么更好”。</div>
 
 <div class="prereq">
   <ul>
-    <li>交叉熵、teacher forcing：第 <a class="xref" data-ref="generation"></a> 章；对话模板与特殊 token：第 <a class="xref" data-ref="tokens"></a> 章</li>
+    <li>交叉熵、teacher forcing、把整段文本的概率拆成逐 token 的乘积：第 <a class="xref" data-ref="generation"></a> 章</li>
+    <li>softmax、对话模板与特殊 token：第 <a class="xref" data-ref="tokens"></a> 章</li>
     <li>中期训练与合成数据：第 <a class="xref" data-ref="data"></a> 章</li>
-    <li>sigmoid 函数、对数、矩阵的秩：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>sigmoid 函数、对数、梯度、矩阵的秩：<a class="xref" data-ref="nn-basics" data-full="1"></a></li>
+    <li>不需要强化学习背景。本章用到的 KL 散度和奖励，会在「从零开始」一节里先讲到够用；第 <a class="xref" data-ref="rl"></a> 章再系统展开。</li>
   </ul>
 </div>
 
 <h2 id="base">从基座到助手</h2>
-<p><dfn data-t="base-model">基座模型</dfn>（base model）是只经过预训练的模型。它的“目标”是续写出最像网上文本的内容，而不是回答问题。把它变成一个有用、诚实、无害的助手，所需的全部步骤统称<dfn data-t="post-training">后训练</dfn>。2026 年的后训练通常包括下图中预训练之后的几个阶段（点击查看每一阶段的数据、目标和代价）：</p>
+<p><dfn data-t="base-model">基座模型</dfn>（base model）是只经过预训练的模型。它的“目标”是续写出最像网上文本的内容，而不是回答问题。给它“法国的首都是哪里？”，常见的续写是“德国的首都是哪里？意大利的首都是哪里？”：网上的考题清单就长这样。它知道答案，只是不知道此刻该扮演回答问题的那一方。把它变成一个有用、诚实、无害的助手，所需的全部步骤统称<dfn data-t="post-training">后训练</dfn>。2026 年的后训练通常包括下图中预训练之后的几个阶段（点击查看每一阶段的数据、目标和代价）：</p>
 <div data-demo="training-pipeline"></div>
 <p>这一章讲前两步：监督微调和偏好优化。强化学习是第 <a class="xref" data-ref="rl"></a> 章，蒸馏是第 <a class="xref" data-ref="distillation"></a> 章。</p>
 
-<h2 id="sft">监督微调：模仿示范</h2>
-<p><dfn data-t="sft">监督微调</dfn>（SFT）的做法和预训练几乎一样：在“指令-回答”对上最小化交叉熵。唯一的区别是只对回答部分计算损失：</p>
-<div class="fx">
-\[ \mathcal L_{\text{SFT}} = -\sum_{t\,\in\,\htmlClass{c-new}{\text{回答}}}\log p_\theta\big(y_t \,\big|\, \htmlClass{sym-x}{x},\ y_{&lt;t}\big) \]
-  <div class="fx-read">把指令 \(x\) 和回答 \(y\) 按对话模板拼成一段文本，整段输入模型，但只把<span style="color:var(--s4)">回答部分</span>的 token 计入损失。模型学的是“看到这样的指令，应该这样回答”，而不是学着写用户的提问。</div>
-  <dl class="fx-syms">
-    <dt data-sym="x">\(x\)</dt><dd>指令（以及系统提示、之前的对话轮次）</dd>
-  </dl>
-  <div class="fx-eg">一条样本：系统提示 30 token + 用户提问 20 token + 助手回答 150 token。整段 200 个位置都参与前向计算，但只有 150 个回答位置的损失被计入；指令部分的损失被掩码掉（权重为 0）。</div>
-</div>
-<p>示范数据的来源一直在变：InstructGPT（2022）请人工写了约 1.3 万条；Alpaca（2023）用 OpenAI 的模型自动生成 5.2 万条，花费不到 600 美元，掀起了开源微调的浪潮；今天的 SFT 数据动辄数百万条，大部分由更强的模型生成并经过筛选，包括多轮对话、工具调用轨迹和长思维链。</p>
-<p>一个惊人的发现是：SFT 需要的数据可能非常少。LIMA（2023）只用 1000 条精心挑选的示范微调 65B 的 LLaMA，人类评测中有 43% 的回答被认为不差于 GPT-4。作者据此提出<dfn data-t="superficial-alignment">浅层对齐假说</dfn>：模型的知识和能力几乎全部来自预训练，SFT 只是教它用什么格式和风格把已有的东西说出来。推理上也有类似的结果：s1（2025）用 1000 道题加推理过程微调 Qwen2.5-32B，配合“模型想结束时强行插入 Wait 让它继续想”的技巧，AIME 2024 从 50% 提到 57%；LIMO 用 817 条，从 6.5% 提到 57.1%。</p>
-<aside class="dispute">
-  <h4>后训练是在教新东西，还是只把基座已有的能力调出来</h4>
-  <dl>
-    <dt>“调出来”派</dt><dd>LIMA、s1、LIMO 都用极少的数据带来巨大的变化，只能解释为基座本来就会。第 <a class="xref" data-ref="rl"></a> 章的“RL 是在挑选还是在发现”是同一个问题的另一面。</dd>
-    <dt>反方</dt><dd>LIMR（2025）发现这套少量数据的配方在 7B 模型上明显失效，小模型数据少时 RL 比 SFT 更有效；而且那 1000 条“精选数据”本身是从 R1 这样更强的模型蒸馏来的，等于把强模型的能力压缩后转移过来。Chu 等（2025）比较了 SFT 和 RL 的泛化：SFT 倾向于记住训练分布内的模式，换一种规则或视觉变化就失效；RL 学到的更能迁移。</dd>
-    <dt>现在怎么看</dt><dd>对足够强的基座，SFT 的主要作用确实是“激活”和“定格式”；能力越弱的模型，后训练越需要真正地教。这也解释了为什么现在的流程是“少量 SFT 冷启动 + 大量 RL 或蒸馏”，而不是堆 SFT 数据。</dd>
-  </dl>
-</aside>
-<aside class="dispute surprise">
-  <h4>意外：用模型不知道的知识做 SFT，会教它编造</h4>
-  <dl>
-    <dt>原以为</dt><dd>SFT 数据里包含新知识，模型就能学会这些知识。</dd>
-    <dt>实际发现</dt><dd>Gekhman 等（2024）把 SFT 样本分成“基座已经知道答案的”和“不知道的”。不知道的样本学得慢得多，而且一旦被学会，模型在其它问题上的幻觉明显增加。</dd>
-    <dt>为什么</dt><dd>对模型来说，用“不知道的事实”训练它给出自信的回答，学到的不是这条事实，而是“不知道的时候也要编一个像样的答案”这种行为。</dd>
-    <dt>现在怎么看</dt><dd>知识应在预训练或中期训练中注入；SFT 数据要过滤掉模型无法回答的问题，或者教它在不知道时说不知道。这是理解幻觉成因的一个关键线索（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
-  </dl>
-</aside>
+<h2 id="zero" data-short="后训练从零开始">从零开始：三条示范、一组偏好</h2>
+<p>这一节不碰真实的大模型。用一个只有三条示范、一道偏好题的玩具，把后面每一节都要用到的概念按顺序算一遍：回答掩码与 SFT 的损失，Bradley-Terry 模型与奖励模型，参考模型与 KL 约束，KL 约束下的最优策略，最后是 DPO。每个概念先在玩具上算出具体数字，再放回大模型。</p>
 
-<h2 id="rm">奖励模型：从“哪个更好”学出一个分数</h2>
-<p>模仿示范有一个天花板：示范只告诉模型“这样做”，不告诉它“这样比那样好多少”。而人类往往很难写出完美的回答，却很容易比较两个回答哪个更好。<dfn data-t="rlhf">RLHF</dfn>（基于人类反馈的强化学习）的思路是：收集大量“同一问题的两个回答，哪个更好”的标注，训练一个<dfn data-t="reward-model">奖励模型</dfn>给任意回答打分。从比较中学出分数，用的是 <dfn data-t="bradley-terry">Bradley-Terry 模型</dfn>：</p>
+<h3 id="z-demo">三条示范：基座模型差在哪</h3>
+<p>手里有三条人写的示范，按<span class="term" data-t="chat-template">聊天模板</span>拼成三段 token 序列。〈用户〉〈助手〉〈结束〉是三个<span class="term" data-t="special-token">特殊 token</span>，标出谁在说话、回答在哪里结束：</p>
+<ul>
+  <li>示范 1：〈用户〉 法国 的 首都 是 哪里 ？ 〈助手〉 <b>巴黎 。 〈结束〉</b></li>
+  <li>示范 2：〈用户〉 2 加 3 等于 几 ？ 〈助手〉 <b>5 。 〈结束〉</b></li>
+  <li>示范 3：〈用户〉 用 一句话 介绍 猫 。 〈助手〉 <b>猫 是 一种 常见 的 宠物 。 〈结束〉</b></li>
+</ul>
+<p>加粗的是回答，其余是提示。基座模型在示范 1 回答的三个位置上给正确 token 的概率（示意数字）：“巴黎” 30%，已经是所有候选里最高的；“。” 60%；“〈结束〉”只有 10%，剩下的大多给了“〈用户〉”，也就是接着编下一个问题。<b>它知道答案，但不知道答完就该停。</b></p>
+
+<h3 id="z-mask">SFT 的损失：只给回答算分</h3>
+<p>在这样的示范上继续训练，让模型给示范里的每个回答 token 更高的概率，就是<dfn data-t="sft">监督微调</dfn>（supervised fine-tuning，SFT）。它用的仍是预训练的<span class="term" data-t="cross-entropy">交叉熵</span>，只多了一步：提示部分的 token 照样输入模型，但不计入损失。给每个位置一个 0 或 1 的权重，提示为 0、回答为 1，这组权重叫<dfn data-t="loss-mask">损失掩码</dfn>（loss mask）：</p>
 <div class="fx">
-\[ P\big(\htmlClass{sym-yw}{y_w} \succ \htmlClass{sym-yl}{y_l} \mid x\big) = \htmlClass{sym-sig}{\sigma}\big(\htmlClass{c-adv}{r(x, y_w) - r(x, y_l)}\big),\qquad \mathcal L_{\text{RM}} = -\log\sigma\big(r(x,y_w) - r(x,y_l)\big) \]
-  <div class="fx-read">每个回答有一个分数 \(r\)。“\(y_w\) 比 \(y_l\) 好”的概率只取决于<span style="color:var(--s2)">两者的分差</span>，经 sigmoid 变成 0 到 1 之间的概率。训练奖励模型，就是让人类标注为更好的那个回答分数更高。</div>
+\[ \mathcal L_{\text{SFT}} = -\sum_{t=1}^{n} \htmlClass{c-new}{\htmlClass{sym-m}{m_t}}\,\log \htmlClass{sym-pi}{\pi_\theta}\big(\htmlClass{sym-s}{s_t}\mid s_{&lt;t}\big),\qquad m_t = \begin{cases} 1, & s_t \text{ 属于回答} \\ 0, & s_t \text{ 属于提示} \end{cases} \]
+  <div class="fx-read">把提示和回答拼成一条长度为 \(n\) 的序列，整条输入模型，算出每个位置给“下一个真实 token”的概率；但只把<span style="background:color-mix(in srgb, var(--s4) 28%, transparent)">掩码为 1</span> 的位置（回答）的 \(-\log\) 概率加起来。它等价于只对回答求和：\(-\sum_{t}\log\pi_\theta(y_t\mid x, y_{&lt;t})\)。</div>
+  <dl class="fx-syms">
+    <dt data-sym="s">\(s_t\)</dt><dd>拼接后序列的第 \(t\) 个 token；前面是提示 \(x\)，后面是回答 \(y\)</dd>
+    <dt data-sym="m">\(m_t\)</dt><dd>损失掩码：这个位置算不算进损失</dd>
+    <dt data-sym="pi">\(\pi_\theta\)</dt><dd>正在训练的模型，参数 \(\theta\)（后面讲偏好优化时，它也叫策略）</dd>
+  </dl>
+  <div class="fx-eg">示范 1：回答三个位置的损失是 \(-\ln 0.3 = 1.20\)、\(-\ln 0.6 = 0.51\)、\(-\ln 0.1 = 2.30\)，合计 4.02 nat，平均每个 token 1.34 nat。最大的一项是〈结束〉。如果不加掩码，提示部分的 7 个位置（“法国”只有 1% 的概率，用户会问什么本来就难猜）还要再加 11.28 nat，总损失的 74% 都花在“预测用户会问什么”上。</div>
+</div>
+<p>下面的演示把三条示范放在一起。切换“损失算在哪里”和“一批里怎么平均”，看每类 token 在损失里占多少：</p>
+<div data-demo="sft-mask" class="bleed"></div>
+<p>不加掩码时，这一批 68% 的损失来自提示，加上系统提示后升到 85%。加了掩码，6 个格式 token（句号和〈结束〉）占了回答损失的一半以上：基座本来就知道“巴黎”，不知道的是怎么收尾。<a href="#what">「SFT 学到的是什么」</a>一节会把这个观察推导成一般的规律。</p>
+
+<h3 id="z-bt">一组偏好：从“哪个更好”到一个分数</h3>
+<p>示范只告诉模型“这样做”，不告诉它“这样比那样好多少”。人很难写出完美的回答，却很容易比较两个回答。换一道题“澳大利亚的首都是哪里？”，SFT 之后的模型有三种回答：</p>
+<ul>
+  <li>A：“堪培拉。”（简洁、正确）</li>
+  <li>B：“堪培拉。”后面再写三句背景（正确，但啰嗦）</li>
+  <li>C：“悉尼。”（错，而且是最常见的错）</li>
+</ul>
+<p>请很多人两两比较：A 对 C，95% 的人选 A；A 对 B，60% 的人选 A。把这些比较变成每个回答的一个分数，用的是 <dfn data-t="bradley-terry">Bradley-Terry 模型</dfn>：每个回答有一个分数 \(R\)，“甲比乙好”的概率只取决于两者的分差，经 sigmoid 变成 0 到 1 之间的概率。只有两个选项时，<span class="term" data-t="softmax">softmax</span> 恰好就是分差的 sigmoid。</p>
+<div class="fx">
+\[ P\big(\htmlClass{sym-yw}{y_w} \succ \htmlClass{sym-yl}{y_l} \mid x\big) = \htmlClass{sym-sig}{\sigma}\big(\htmlClass{c-adv}{R(x, y_w) - R(x, y_l)}\big),\qquad \mathcal L_{\text{RM}} = -\log\sigma\big(R(x,y_w) - R(x,y_l)\big) \]
+  <div class="fx-read">每个回答有一个分数 \(R\)。“\(y_w\) 比 \(y_l\) 好”的概率只取决于<span style="color:var(--s2)">两者的分差</span>。训练一个打分模型，就是让人类标注为更好的那个回答分数更高；损失是“标注结果”的负对数概率。</div>
   <dl class="fx-syms">
     <dt data-sym="yw">\(y_w\)</dt><dd>被标注为更好的回答（w = win）</dd>
     <dt data-sym="yl">\(y_l\)</dt><dd>被标注为更差的回答（l = lose）</dd>
     <dt data-sym="sig">\(\sigma\)</dt><dd>sigmoid 函数 \(\sigma(z) = 1/(1 + e^{-z})\)，把任意实数压到 0 到 1 之间</dd>
   </dl>
-  <div class="fx-eg">分差 0：两者各 50%。分差 1：\(\sigma(1) = 0.73\)。分差 3：\(0.95\)。若奖励模型给好回答 2.0 分、差回答 0.5 分，预测正确的概率 \(\sigma(1.5) = 0.82\)，损失 \(-\ln 0.82 = 0.20\)。这和国际象棋的 Elo 等级分是同一个模型：分差决定胜率。</div>
+  <div class="fx-eg">分差 0：两者各 50%；分差 1：\(\sigma(1) = 0.73\)；分差 3：0.95。给 A 打 1.0 分、C 打 −2.0 分：预测“A 更好”的概率 \(\sigma(3) = 0.953\)，这条标注的损失 \(-\ln 0.953 = 0.049\)。如果某位标注者手滑选了 C，损失变成 \(-\ln 0.047 = 3.05\)，是前者的 60 多倍。这和国际象棋的 <span class="term" data-t="elo">Elo 等级分</span>是同一个模型：分差决定胜率。</div>
 </div>
-<p>注意分数本身没有绝对意义：所有回答同时加一个常数，所有比较概率都不变。奖励模型通常就是把一个语言模型的输出层换成输出一个数，在几万到几百万条比较数据上训练。</p>
-<p>有了奖励模型，就可以优化语言模型去获得高分。但不能无限制地优化：</p>
+<p>按这个模型、在比较数据上学出来的打分器，叫<dfn data-t="reward-model">奖励模型</dfn>（reward model），它给的分数叫<span class="term" data-t="reward">奖励</span>。分数只有相对意义：所有回答同时加 10 分，比较概率都不变。假设学出来的奖励模型打 \(R = (1.0,\ 1.5,\ -2.0)\)：C 压得很低，这是对的；但它给啰嗦的 B 打了最高分。按 60% 的人选 A 反推，A 应该比 B 高 \(\ln(0.6/0.4) = 0.41\) 分。真实的奖励模型常有这种偏差：训练数据里长回答常常确实更好，它就把“长”本身当成了好。</p>
+
+<h3 id="z-kl">别走太远：参考模型与 KL 约束</h3>
+<p>SFT 模型在这道题上给三个回答的概率是 \(\pi_{\text{ref}} = (0.5,\ 0.2,\ 0.3)\)，期望奖励 \(0.5\times1.0 + 0.2\times1.5 + 0.3\times(-2.0) = 0.2\)。只追求高分，最优解是把全部概率给 B，正好放大了奖励模型的偏差。办法是规定新模型不能离出发点太远。这个出发点（通常就是 SFT 模型，训练中冻结不动）叫<dfn data-t="reference-model">参考模型</dfn>（reference model）\(\pi_{\text{ref}}\)。衡量“离多远”用 <span class="term" data-t="kl">KL 散度</span>，第 <a class="xref" data-ref="rl"></a> 章会从零详细讲它，这里只用到定义：</p>
 <div class="fx">
-\[ \max_{\pi}\ \ \mathbb E_{y\sim\pi(\cdot|x)}\big[r(x, y)\big] \ -\ \htmlClass{sym-beta}{\beta}\ \htmlClass{c-new}{D_{\text{KL}}\big(\pi(\cdot|x)\,\big\|\,\pi_{\text{ref}}(\cdot|x)\big)} \]
-  <div class="fx-read">让模型 \(\pi\) 的回答尽量拿高分，同时<span style="color:var(--s4)">不要离原来的模型 \(\pi_{\text{ref}}\)（通常是 SFT 模型）太远</span>。<span class="term" data-t="kl">KL 散度</span>衡量两个分布的差异，\(\beta\) 控制这个约束有多紧。</div>
+\[ D_{\text{KL}}\big(\htmlClass{sym-p1}{\pi}\,\big\|\,\htmlClass{sym-p0}{\pi_{\text{ref}}}\big) = \sum_y \pi(y)\,\log\frac{\pi(y)}{\pi_{\text{ref}}(y)} \]
+<span class="eqnote">恒 ≥ 0，两个分布相同时为 0</span>
+  <div class="fx-read">新模型常说、参考模型很少说的回答，贡献最大；参考模型给 0 的回答，新模型只要给一点点概率，KL 就是无穷大。</div>
   <dl class="fx-syms">
-    <dt data-sym="beta">\(\beta\)</dt><dd>KL 惩罚系数：越大越保守，越小越激进</dd>
+    <dt data-sym="p1">\(\pi\)</dt><dd>新模型在这道题上给各个回答的概率</dd>
+    <dt data-sym="p0">\(\pi_{\text{ref}}\)</dt><dd>参考模型（SFT 模型）给的概率</dd>
+  </dl>
+  <div class="fx-eg">把概率全给 B：\(D_{\text{KL}} = 1\times\ln\frac{1}{0.2} = 1.61\) nat。改成 \((0.59,\ 0.39,\ 0.02)\)：\(0.59\ln\frac{0.59}{0.5} + 0.39\ln\frac{0.39}{0.2} + 0.02\ln\frac{0.02}{0.3}\approx 0.31\) nat。</div>
+</div>
+<p>于是目标变成“奖励减去离参考模型的距离”：</p>
+<div class="fx">
+\[ \max_{\pi}\ \ \mathbb E_{y\sim\pi(\cdot|x)}\big[R(x, y)\big] \ -\ \htmlClass{sym-beta}{\beta}\ \htmlClass{c-clip}{D_{\text{KL}}\big(\pi(\cdot|x)\,\big\|\,\pi_{\text{ref}}(\cdot|x)\big)} \]
+  <div class="fx-read">让模型 \(\pi\) 的回答尽量拿高分，同时<span style="color:var(--s3)">不要离参考模型 \(\pi_{\text{ref}}\) 太远</span>；\(\beta\) 控制这个约束有多紧。</div>
+  <dl class="fx-syms">
+    <dt data-sym="beta">\(\beta\)</dt><dd>KL 系数：越大越保守，越小越激进</dd>
   </dl>
   <div class="fx-eg">没有 KL 项时，模型会找到奖励模型的漏洞：InstructGPT 时代的经典现象是回答越写越长、越来越客套，因为奖励模型偏爱长而礼貌的回答，而人并不真的更喜欢。KL 项把模型拴在 SFT 模型附近，限制它往这些漏洞里钻。</div>
 </div>
-<p>为什么必须拴住？因为奖励模型只是人类偏好的一个不完美的代理。对代理指标优化得越狠，它与真实目标的偏差就越会被放大。下面的演示用最简单的优化方式（采样 \(n\) 个回答、挑奖励最高的）展示这一点：</p>
+<p>先用人类比较数据训练奖励模型，再用强化学习优化这个带 KL 约束的目标，这一整套做法叫 <dfn data-t="rlhf">RLHF</dfn>（基于人类反馈的强化学习）。在玩具上不需要强化学习：这个目标有一个可以直接写出来的最优解（<a href="#dpo">「DPO」</a>一节推导）：</p>
+<div class="fx">
+\[ \pi^\ast(y\mid x) = \frac{1}{\htmlClass{sym-Z}{Z(x)}}\,\pi_{\text{ref}}(y\mid x)\,\exp\!\Big(\frac{\htmlClass{c-adv}{R(x,y)}}{\beta}\Big) \]
+  <div class="fx-read">在参考模型的分布上，按 \(e^{R/\beta}\) 给每个回答重新加权，再归一化。\(\beta\) 越小，权重越悬殊，概率越集中到高分回答上。</div>
+  <dl class="fx-syms">
+    <dt data-sym="Z">\(Z(x)\)</dt><dd>归一化常数 \(\sum_y \pi_{\text{ref}}(y|x)\,e^{R(x,y)/\beta}\)，让概率加起来等于 1</dd>
+  </dl>
+  <div class="fx-eg">\(\beta = 1\)：权重 \(0.5e^{1} = 1.36\)、\(0.2e^{1.5} = 0.90\)、\(0.3e^{-2} = 0.04\)，\(Z = 2.30\)，\(\pi^\ast = (59\%,\ 39\%,\ 1.8\%)\)。期望奖励从 0.20 升到 1.14，KL 是 0.31，目标值 \(1.14 - 0.31 = 0.83\)，恰好等于 \(\beta\ln Z\)。\(\beta = 0.25\)：\(\pi^\ast = (25\%,\ 75\%,\ \approx 0)\)，期望奖励 1.37。</div>
+</div>
+<p>再看人真正的偏好。由上面的比较数据可以给三个回答一个“真实质量” \(Q = (1.0,\ 0.6,\ -2.0)\)（满足 \(\sigma(1.0 - 0.6) = 0.60\)、\(\sigma(3.0) = 0.95\)）。SFT 模型的真实质量是 0.02，\(\beta = 1\) 时升到 0.79；\(\beta = 0.25\) 时奖励分还在涨，真实质量却降到 0.70：</p>
+<div data-demo="sft-kl-tilt" class="bleed"></div>
+<p>真实质量的最高点在 \(\beta\approx 0.73\)，再往下就是在用真实质量换奖励分。把奖励模型给 B 的分拉回 0.6，这个先升后降就消失了。<b>KL 约束存在的全部理由，是奖励模型不完美</b>。</p>
+
+<h3 id="z-dpo">把奖励换成概率比：DPO 在玩具上</h3>
+<p>上面的最优解可以反过来读：如果知道 \(\pi^\ast\)，就能从它和 \(\pi_{\text{ref}}\) 的概率比反推奖励。在 \(\beta = 1\) 的 \(\pi^\ast\) 上算 \(\beta\ln\frac{\pi^\ast}{\pi_{\text{ref}}}\)：</p>
+\[ \beta\ln\frac{\pi^\ast}{\pi_{\text{ref}}} = \Big(\ln\frac{0.592}{0.5},\ \ln\frac{0.390}{0.2},\ \ln\frac{0.018}{0.3}\Big) = (0.17,\ 0.67,\ -2.83) = R - \underbrace{0.83}_{\beta\ln Z} \]
+<span class="eqnote">每个回答的概率比，恰好等于它的奖励减去同一个常数</span>
+<p>这个“用模型自己的概率比当作奖励”的量叫<dfn data-t="implicit-reward">隐式奖励</dfn>（implicit reward）\(\hat R_\theta = \beta\log\frac{\pi_\theta(y|x)}{\pi_{\text{ref}}(y|x)}\)。常数 0.83 对同一道题的所有回答都一样，在 Bradley-Terry 只看分差的比较里正好消掉：\(0.17 - (-2.83) = 3.0 = R_A - R_C\)。于是可以跳过奖励模型，<b>直接把隐式奖励放进 Bradley-Terry 的损失里训练语言模型</b>，这就是 <dfn data-t="dpo">DPO</dfn>（direct preference optimization，直接偏好优化）。在偏好对（A 好于 C）上算三次：</p>
+<ul>
+  <li>训练开始，\(\pi_\theta = \pi_{\text{ref}}\)：两个概率比都是 0，括号里是 0，损失 \(-\ln\sigma(0) = \ln 2 = 0.693\)。</li>
+  <li>训练一段时间后，\(\pi_\theta = (0.6,\ 0.25,\ 0.15)\)：\(\ln\frac{0.6}{0.5} = 0.18\)，\(\ln\frac{0.15}{0.3} = -0.69\)，括号里 \(0.18 + 0.69 = 0.875\)，损失 0.348；梯度权重 \(\sigma(-0.875) = 0.29\)，比开始时的 0.5 小：已经分对的样本，用力变小。</li>
+  <li>到达 \(\pi^\ast\)：括号里正好是 3.0，损失 0.049，和奖励模型在这一对上的损失相同。</li>
+</ul>
+<p>DPO 训练到最优时，得到的就是 RLHF 想要的那个 \(\pi^\ast\)，既不需要单独的奖励模型，也不需要强化学习。代价藏在细节里，后面几节逐个展开。</p>
+
+<h3 id="z-real">放到真实的大模型上</h3>
+<div class="tablewrap"><table>
+  <tr><th>概念</th><th>玩具</th><th>真实的大模型</th></tr>
+  <tr><td>示范数据</td><td>3 条，每条回答 3–8 个 token</td><td>几十万到几百万条，含多轮对话、工具调用、长思维链</td></tr>
+  <tr><td>损失掩码</td><td>只算 14 个回答 token</td><td>只算助手说的部分，多轮对话里每轮都算</td></tr>
+  <tr><td>可能的回答</td><td>3 个</td><td>天文数字：词表 \(V\) 个 token、长度 \(n\) 的回答有 \(V^n\) 种</td></tr>
+  <tr><td>偏好数据</td><td>2 组比较</td><td>几万到几百万组，人或模型标注</td></tr>
+  <tr><td><span class="term" data-t="reward-model">奖励模型</span></td><td>一张三个数的表</td><td>一个语言模型，把输出层换成输出一个数</td></tr>
+  <tr><td>最优策略 \(\pi^\ast\)</td><td>可以直接算出来</td><td>算不出来（\(Z(x)\) 要对所有回答求和）：用强化学习逼近（第 <a class="xref" data-ref="rl"></a> 章），或用 DPO 绕过</td></tr>
+  <tr><td>\(\beta\)</td><td>1</td><td>DPO 常用 0.1：对数概率比是几百个 token 的和，数值大得多</td></tr>
+</table></div>
+<p>和玩具相比难在三处：示范和偏好都有噪声，奖励模型有盲点，模型能写出的回答远远超出数据覆盖的范围。下面每一节都在应对其中一处。</p>
+
+<h2 id="sft">监督微调：模仿示范</h2>
+<p>真实的 <span class="term" data-t="sft">SFT</span> 和玩具上一样：在“指令-回答”对上最小化只算回答的交叉熵，学习率通常在 \(10^{-6}\) 到 \(10^{-5}\) 量级，数据过两三遍。Llama 3（2024-07）的报告写得很直白：在目标 token 上用标准交叉熵，同时把提示 token 的损失掩掉。变化最大的是数据从哪来，每一代都在修上一代的数据瓶颈：</p>
+<ul>
+  <li><b>人写（2022）。</b>InstructGPT 请标注员为约 1.3 万条提示写示范。质量高，但贵、慢，覆盖面窄。</li>
+  <li><b>让模型自己出题（2022-12）。</b>Self-Instruct 只写 175 条种子任务，让 GPT-3 仿照它们扩出约 5.2 万条指令和回答；用它微调 GPT-3，在 Super-NaturalInstructions 上提升 33 个百分点，接近 InstructGPT-001。</li>
+  <li><b>向更强的模型要（2023-03）。</b>Alpaca 换成更强的 text-davinci-003 生成 5.2 万条，花费不到 600 美元，掀起了开源微调的浪潮。这就是第 <a class="xref" data-ref="distillation"></a> 章的<span class="term" data-t="offline-distillation">离线蒸馏</span>。</li>
+  <li><b>少而精（2023-05）。</b>LIMA 证明 1000 条精选示范就够定格式（下一节）。今天的 SFT 数据动辄数百万条，大部分由更强的模型生成并筛选（<span class="term" data-t="synthetic-data">合成数据</span>），一部分还被提前放进了<span class="term" data-t="mid-training">中期训练</span>。</li>
+</ul>
+<p><b>损失怎么平均，也是一个超参数。</b>按 token 平均时长回答权重大，按样本平均时每条一样重（演示的第二个开关）。Tülu 3（2024-11）发现同一份配置换成梯度累积或多卡训练后效果变了，原因是框架在不同设置下悄悄换了平均方式；他们最后改成对 token 直接求和。<b>提示部分也不是一点都不该算</b>：Shi 等（NeurIPS 2024）发现，在指令长、回答短、数据又少的设置下（正是 LIMA 那种），把损失也加在指令上反而减轻了过拟合；数据充足时，标准做法仍是只算回答。</p>
+<details class="deep"><summary>只算回答，等于在学条件分布；SFT 的最优解就是示范者本人</summary><div class="in">
+<p><b>第 1 步，拆开整条序列的概率。</b>自回归模型给整条序列的概率是逐 token 条件概率的乘积（第 <a class="xref" data-ref="generation"></a> 章），所以可以先拆提示、再拆回答：</p>
+\[ \log\pi_\theta(x, y) = \underbrace{\log\pi_\theta(x)}_{\text{提示：用户会怎么问}} + \underbrace{\log\pi_\theta(y\mid x)}_{\text{回答：该怎么答}} \]
+<p>不加掩码的损失 \(-\log\pi_\theta(x, y)\) 同时在学这两项；加了掩码只剩第二项。助手只需要 \(\pi_\theta(y\mid x)\)：提问总是给定的，模型不需要会写它。</p>
+<p><b>第 2 步，最大似然等于缩小 KL。</b>设示范者（人或老师模型）对同一个提示写出各种回答的分布是 \(p_{\text{示范}}(y\mid x)\)。在大量示范上平均，掩码后的损失是</p>
+\[ \mathbb E_{x}\,\mathbb E_{y\sim p_{\text{示范}}}\big[-\log\pi_\theta(y\mid x)\big] = \mathbb E_x\Big[\underbrace{H\big(p_{\text{示范}}(\cdot|x)\big)}_{\text{与 }\theta\text{ 无关}} + D_{\text{KL}}\big(p_{\text{示范}}(\cdot|x)\,\big\|\,\pi_\theta(\cdot|x)\big)\Big] \]
+<p>熵那一项与模型无关，所以 SFT 就是在缩小“示范分布到模型分布”的 KL，最小值在 \(\pi_\theta = p_{\text{示范}}\) 时取到。</p>
+<p><b>第 3 步，KL 的方向。</b>这是正向 KL，按示范者的分布加权：示范者会写、模型却给了很低概率的回答，惩罚很重。模型被逼着“覆盖”示范里的一切，包括它自己并不知道的事实；几个示范者写法不同时，它把概率铺开在几种写法之间。</p>
+<p><b>这个推导告诉我们：</b>SFT 的天花板就是示范者本人，最好的结果是“像示范者一样回答”，不会更好，也改不掉示范者的毛病。正向 KL 还意味着它会硬学示范里自己不会的内容，下一节会看到这正是 SFT 诱发幻觉的机制（正向与反向 KL 的比较见第 <a class="xref" data-ref="distillation"></a> 章）。</p>
+</div></details>
+
+<h2 id="what">SFT 学到的是什么</h2>
+<p>一个惊人的发现是：SFT 需要的数据可能非常少。LIMA（2023）只用 1000 条精心挑选的示范微调 65B 的 LLaMA，人类评测中有 43% 的回答被认为不差于 GPT-4。作者据此提出<dfn data-t="superficial-alignment">浅层对齐假说</dfn>：模型的知识和能力几乎全部来自预训练，SFT 只是教它用什么格式和风格把已有的东西说出来。推理上也一样：s1（2025）用 1000 道题加推理过程微调 Qwen2.5-32B，配合“想结束时强行插入 Wait”的技巧，AIME 2024 从 50% 提到 57%；LIMO 用 817 条，从 6.5% 提到 57.1%（论文初版的数字）。</p>
+<p>逐 token 地看也是如此。URIAL（Lin 等, 2023-12）把对齐模型的回答逐个位置拿去问基座模型：Llama-2-7B 与 Llama-2-7B-Chat 在 77.7% 的位置首选同一个 token，14.5% 的位置对齐模型的选择在基座的前三名之内，只有 7.8% 的位置“换了首选”（另外两对 SFT 模型是 4.8% 和 5.2%）。换了首选的多是“不过”“以下是”“抱歉，我不能”这类语气和结构词，承载知识的 token 几乎没变。只用三条风格化的示例加一段系统提示，基座模型的对话表现就能接近 SFT 模型。但这只对强基座成立，而且“精选数据”常从更强的模型蒸馏而来（见<a href="#now">后面</a>的争议；第 <a class="xref" data-ref="rl"></a> 章的“挑选还是发现”是同一个问题的另一面）。</p>
+<details class="deep"><summary>SFT 的力气花在哪些 token 上</summary><div class="in">
+<p><b>第 1 步，单个位置的梯度。</b>某个位置的正确 token 是 \(y\)，模型输出 <span class="term" data-t="logit">logit</span> \(z\)、概率 \(p = \operatorname{softmax}(z)\)。交叉熵 \(-\log p_y\) 对 logit 的梯度是</p>
+\[ \frac{\partial(-\log p_y)}{\partial z_j} = p_j - \mathbb 1[j = y] \]
+<p>正确 token 那一维是 \(-(1 - p_y)\)，其它维是各自的概率 \(p_j\)。整个梯度向量的长度满足 \((1-p_y)^2 \le \|\nabla\|^2 \le 2(1-p_y)^2\)：<b>它完全由“模型给正确 token 的概率差 1 多少”决定</b>。</p>
+<p><b>第 2 步，代入玩具。</b>示范 1 的三个回答 token：“巴黎” \(1 - 0.3 = 0.7\)，“。” 0.4，“〈结束〉” 0.9。已经猜得很准的 token（\(p\to 1\)）几乎不产生梯度。</p>
+<p><b>第 3 步，分三类看。</b>对强基座，回答里的 token 大致有三类：基座已经会的内容（事实、推理步骤），\(p_y\) 高、梯度小，SFT 几乎不碰；格式、语气、收尾，基座不知道此刻该用助手的口吻，\(p_y\) 低、梯度大，而且在每条示范里都出现，几百上千条就能学会；基座不知道的事实，\(p_y\) 极低、梯度最大，要学会它，模型得改的不只是这条事实，还有“没把握时也给出肯定回答”这种行为。</p>
+<p><b>这个推导告诉我们：</b>SFT 自动把力气花在“基座和示范不一致”的地方。对强基座，那主要是格式和风格，这就是浅层对齐假说的机制；对示范里基座不知道的事实，它的作用是教模型硬答。前者解释了 LIMA，后者解释了下面这个意外。</p>
+</div></details>
+<aside class="dispute surprise">
+  <h4>意外：用模型不知道的知识做 SFT，会教它编造</h4>
+  <dl>
+    <dt>原以为</dt><dd>SFT 数据里包含新知识，模型就能学会这些知识。</dd>
+    <dt>实际发现</dt><dd>Gekhman 等（2024）把 SFT 样本分成“基座已经知道答案的”和“不知道的”。不知道的样本学得慢得多，而且一旦被学会，模型在其它问题上的幻觉明显增加。</dd>
+    <dt>为什么</dt><dd>对模型来说，用“不知道的事实”训练它给出自信的回答，学到的不是这条事实，而是“不知道的时候也要编一个像样的答案”这种行为。上面推导的第三类 token。</dd>
+    <dt>现在怎么看</dt><dd>知识应在预训练或中期训练中注入；SFT 数据要过滤掉模型无法回答的问题，或者教它在不知道时说不知道。这是理解幻觉成因的一个关键线索（第 <a class="xref" data-ref="alignment"></a> 章）。</dd>
+  </dl>
+</aside>
+
+<h2 id="rm">奖励模型：从“哪个更好”学出一个分数</h2>
+<p>真实的<span class="term" data-t="reward-model">奖励模型</span>通常是一个语言模型（常从 SFT 模型初始化），把输出词表概率的那一层换成输出一个数，读完“提示 + 回答”给出分数 \(R_\phi(x, y)\)（\(\phi\) 是它的参数）。InstructGPT 让模型对每个提示写 \(K = 4\) 到 9 个回答，标注员排好序，一次排序拆出 \(\binom{K}{2}\) 对比较，共约 3.3 万条提示；奖励模型在这些比较上按 <span class="term" data-t="bradley-terry">Bradley-Terry</span> 损失训练。</p>
+<details class="deep"><summary>Bradley-Terry 从哪来，奖励模型的梯度长什么样</summary><div class="in">
+<p><b>第 1 步，一个“带噪声的打分者”。</b>设标注者心里给回答的分数是 \(R(y)\) 加上一点随机波动 \(\varepsilon\)，再选分高的那个。如果波动服从 Gumbel 分布（极值分布的一种），两个独立 Gumbel 变量之差恰好服从 logistic 分布，于是</p>
+\[ P(y_w \succ y_l) = P\big(R_w + \varepsilon_w > R_l + \varepsilon_l\big) = \sigma(R_w - R_l) \]
+<p>换成正态波动得到的是 Thurstone 模型，曲线几乎重合。所以 Bradley-Terry 假设<b>人的偏好是“真实分差 + 随机波动”</b>，分差越小越容易选反。</p>
+<p><b>第 2 步，梯度。</b>一条标注的损失 \(\ell = -\log\sigma(\Delta)\)，\(\Delta = R_w - R_l\)。利用 \(\sigma'(z) = \sigma(z)(1-\sigma(z))\)：</p>
+\[ \frac{\partial\ell}{\partial R_w} = -\big(1-\sigma(\Delta)\big) = -\sigma(-\Delta),\qquad \frac{\partial\ell}{\partial R_l} = +\sigma(-\Delta) \]
+<p>力度是 \(\sigma(-\Delta)\)：模型越是“排反了”，推得越猛。玩具里 A 对 C 分差 3：标注选 A 时力度 0.047，手滑选 C 时 0.953，相差 20 倍。<b>被标反的样本，正是梯度最大的样本。</b></p>
+<p><b>第 3 步，损失降不到 0。</b>同一对回答被标注很多次，有比例 \(q\) 的人选 \(y_w\)。期望损失 \(-q\log\sigma(\Delta) - (1-q)\log\sigma(-\Delta)\) 在 \(\sigma(\Delta^\ast) = q\) 时最小，即 \(\Delta^\ast = \ln\frac{q}{1-q}\)；最小值是 \(-q\ln q - (1-q)\ln(1-q)\)，不是 0。玩具里 \(q = 0.6\) 时 \(\Delta^\ast = 0.41\)，最小损失 0.67；\(q = 0.95\) 时 \(\Delta^\ast = 2.94\)。</p>
+<p><b>这个推导告诉我们：</b>奖励模型的分差就是“人选它的对数几率”，分歧越大，分差被压得越小；训练损失的下限由标注者自己的分歧决定，而被标错的比较梯度最大，噪声的影响因此被放大。</p>
+</div></details>
+
+<h3 id="noise">标注噪声：奖励模型的天花板</h3>
+<p>人的偏好本来就不一致。让两位标注者独立比较同一对回答，两人选同一个的比例叫<dfn data-t="annotator-agreement">标注者一致率</dfn>（inter-annotator agreement）。InstructGPT 报告，训练标注员之间一致率 72.6% ± 1.5%，另一组没有参与训练数据的标注员之间是 77.3% ± 1.3%；更早的摘要实验里，研究员之间也只有 73% ± 4%。奖励模型预测这两组偏好的准确率是 72.4% 和 69.6%：<b>奖励模型猜人的准确率，和“再找一位标注者来猜”差不多</b>。</p>
+<p>最简单的噪声模型是：每对回答有一个真实的好坏，每位标注者以概率 \(\eta\) 看错（与难易无关）。</p>
+<div class="fx">
+\[ p_{\text{一致}} = (1-\htmlClass{sym-eta}{\eta})^2 + \eta^2,\qquad \htmlClass{c-clip}{\text{准确率}_{\max}} = 1-\eta = \tfrac12\Big(1+\sqrt{2\,\htmlClass{sym-pa}{p_{\text{一致}}}-1}\Big) \]
+  <div class="fx-read">两位标注者都没看错、或者都看错了，才会一致。一个完美知道“真实好坏”的奖励模型，在一条新的人类标注上也只能对 \(1-\eta\) 的比例：<span style="color:var(--s3)">剩下的是标注者自己看错的部分，谁也猜不中</span>。</div>
+  <dl class="fx-syms">
+    <dt data-sym="eta">\(\eta\)</dt><dd>单个标注者看错的概率</dd>
+    <dt data-sym="pa">\(p_{\text{一致}}\)</dt><dd>两位标注者独立比较同一对回答、选了同一个的概率</dd>
+  </dl>
+  <div class="fx-eg">一致率 72.6%：\(\sqrt{2\times 0.726 - 1} = 0.672\)，\(\eta = 16.4\%\)，上限 83.6%。一致率 60%：\(\eta = 27.6\%\)，上限 72.4%。一致率是 50% 时（两人完全随机），上限也是 50%。</div>
+</div>
+<p>上限只是一半的故事。另一半是：在测不到的地方，奖励模型能不能把“真实的好坏”排对，以及要多少数据才能排对。下面的演示在一个玩具模型里同时画出这两条线：</p>
+<div data-demo="sft-noise" class="bleed"></div>
+<details class="deep"><summary>每一条带噪声的比较，最多只顶 2·一致率 − 1 条干净比较</summary><div class="in">
+<p><b>第 1 步，噪声怎样改变标注概率。</b>设真实分差为 \(\Delta\)，干净标注选 \(y_w\) 的概率是 \(\sigma(\Delta)\)。每位标注者再以概率 \(\eta\) 看错，观察到的概率变成</p>
+\[ q(\Delta) = \eta + (1-2\eta)\,\sigma(\Delta) \]
+<p>曲线被压扁了：最高只到 \(1-\eta\)，最低不低于 \(\eta\)。</p>
+<p><b>第 2 步，一条标注含有多少信息。</b>衡量“一次观测平均能告诉我们多少关于参数的信息”用费希尔信息，估计误差的方差与它成反比。一次伯努利观测关于参数 \(\Delta\) 的费希尔信息是 \(q'(\Delta)^2 / \big(q(1-q)\big)\)。干净时 \(q = \sigma\)，信息是 \(\sigma(1-\sigma)\)；有噪声时 \(q' = (1-2\eta)\sigma(1-\sigma)\)，所以</p>
+\[ \frac{I_{\text{噪声}}}{I_{\text{干净}}} = (1-2\eta)^2\cdot\frac{\sigma(1-\sigma)}{q(1-q)} \ \le\ (1-2\eta)^2 \]
+<p>不等号成立是因为 \(q\) 比 \(\sigma\) 更靠近 1/2，所以 \(q(1-q)\ge\sigma(1-\sigma)\)；在难分的对（\(\Delta\approx 0\)）上取等号，在容易分的对上损失更多。</p>
+<p><b>第 3 步，换成一致率。</b>由 \(p_{\text{一致}} = 1 - 2\eta(1-\eta)\)，得 \((1-2\eta)^2 = 2p_{\text{一致}} - 1\)。估计误差的方差和信息量成反比，要达到同样的精度，带噪声的数据至少要多 \(1/(2p_{\text{一致}}-1)\) 倍。</p>
+<p>一致率 72.6% 时 \(2p - 1 = 0.45\)，至少要多 2.2 倍数据；60% 时是 5 倍；50% 时数据再多也没用。</p>
+<p><b>这个推导告诉我们：</b>标注噪声有两笔账。一是测得的准确率被封顶，奖励模型在新标注上的 70% 多并不说明它差。二是学习变慢，每条标注的信息只剩 \(2p_{\text{一致}}-1\)。多人重复标注、只保留意见一致的比较、加“明显更好 / 略好”的强度标签，都是在提高这个数。也要记住：一部分“不一致”不是看错，而是不同的人真的有不同的偏好。</p>
+</div></details>
+
+<h2 id="goodhart">对奖励模型优化过头：古德哈特定律</h2>
+<p>奖励模型只是人类偏好的不完美代理。经济学家古德哈特（1975）观察到，一个统计规律一旦被当作控制目标就会失效，常被转述为“一个指标一旦成为目标，就不再是好指标”。这条<dfn data-t="goodhart">古德哈特定律</dfn>（Goodhart's law）在后训练里随处可见：对代理优化得越狠，它与真实目标的偏差越会被放大。模型找到提高奖励、却不真正变好的办法，叫<span class="term" data-t="reward-hacking">钻奖励空子</span>。</p>
+<p>最简单的优化方式不需要训练：对同一个提示采样 \(n\) 个回答，留下奖励模型打分最高的那个，叫 <dfn data-t="best-of-n">best-of-n</dfn> 采样。把选出来的回答再拿去做 SFT，就是“拒绝采样微调”：Llama 3 每个提示采 10 到 30 个，DeepSeek-R1 用它造了约 60 万条推理数据。\(n\) 越大，优化压力越大：</p>
 <div data-demo="bon-goodhart"></div>
-<p>这就是<span class="term" data-t="reward-hacking">钻奖励空子</span>的根源。Gao 等（2022）用一个大奖励模型充当“真实偏好”、小奖励模型充当代理，测得了与上图同样形状的曲线，并发现奖励模型越大，过度优化来得越晚。PPO 版 RLHF 的具体做法见第 <a class="xref" data-ref="rl"></a> 章；奖励模型被攻破导致的谄媚等问题见第 <a class="xref" data-ref="alignment"></a> 章。</p>
+<p>演示里的两种误差对应古德哈特定律的两种形态：正态误差是回归型，真实质量涨得比奖励分慢、但不下降；重尾误差是极端型，越挑越容易挑中奖励模型错得离谱的离群者，真实质量先升后降。Gao 等（2022）认为后者是真实奖励模型过度优化的主要来源。他们用一个 6B 奖励模型充当“真实偏好”，用它的标注训练 300 万到 30 亿参数的代理奖励模型，再对代理做优化。这种“代理分一路上涨、真实质量先升后降”的现象叫<dfn data-t="overoptimization">奖励过度优化</dfn>（reward overoptimization）：</p>
+<div class="fx">
+\[ R_{\text{真}}^{\text{BoN}}(\rho) = \rho\,\big(c_1 - c_2\,\rho\big),\qquad R_{\text{真}}^{\text{RL}}(\rho) = \rho\,\big(c_1' - c_2'\log\rho\big),\qquad \htmlClass{sym-rho}{\rho} = \sqrt{D_{\text{KL}}(\pi\,\|\,\pi_{\text{ref}})} \]
+<span class="eqnote">横轴是“离参考模型多远”的平方根；两种优化方式，曲线形状不同，但都先升后降</span>
+  <div class="fx-read">真实分数（相对起点）随 \(\rho\) 先线性上升，然后被第二项拉下来：best-of-n 是抛物线，强化学习下降得慢一些（对数）。系数 \(c\) 随代理奖励模型的大小平滑变化。</div>
+  <dl class="fx-syms">
+    <dt data-sym="rho">\(\rho\)</dt><dd>KL 距离的平方根，衡量优化走了多远</dd>
+    <dt>\(c_1, c_2\)</dt><dd>拟合系数：\(c_1\) 是起步时的上升速度，\(c_2\) 是过度优化的速度；奖励模型越大，\(c_2/c_1\) 越小</dd>
+  </dl>
+  <div class="fx-eg">best-of-n 的真实分数在 \(\rho^\ast = c_1/(2c_2)\) 处最高；\(n = 4096\) 时 KL 约 7.3 nat，\(\rho\approx 2.7\)（推导见下）。论文的其它发现：奖励模型越大、数据越多，峰值越高、来得越晚；以 KL 为横轴，RL 的优化和过度优化都比 best-of-n 慢；调大 KL 惩罚只是让训练更早停在曲线上的某一点，没有抬高曲线本身，效果近似提前停止。</div>
+</div>
+<details class="deep"><summary>best-of-n 离原模型有多远：KL = ln n − (n − 1)/n</summary><div class="in">
+<p><b>第 1 步，把回答按奖励排位。</b>设从 \(\pi_{\text{ref}}\) 采一个回答，它的奖励的分布函数是 \(F\)。令 \(u = F(R(y))\in[0,1]\)：一个回答的 \(u\) 就是“它比多少比例的回答分高”。单次采样时 \(u\) 在 \([0,1]\) 上均匀分布。</p>
+<p><b>第 2 步，best-of-n 的分布。</b>\(n\) 个里最高的那个，\(u\) 的分布函数是 \(u^n\)，密度 \(n u^{n-1}\)。所以 best-of-n 相当于把每个回答的概率乘上 \(n u^{n-1}\)：</p>
+\[ \pi_{\text{BoN}}(y) = \pi_{\text{ref}}(y)\cdot n\,F\big(R(y)\big)^{n-1} \]
+<p><b>第 3 步，算 KL。</b></p>
+\[ D_{\text{KL}}(\pi_{\text{BoN}}\,\|\,\pi_{\text{ref}}) = \mathbb E_{\text{BoN}}\big[\ln\big(n\,u^{n-1}\big)\big] = \ln n + (n-1)\int_0^1 n u^{n-1}\ln u\,du = \ln n - \frac{n-1}{n} \]
+<p>最后一步用了 \(\int_0^1 n u^{n-1}\ln u\,du = -1/n\)（分部积分）。\(n = 4\) 时 0.64 nat，64 时 3.18，4096 时 7.32。回答可以重复时，它是真实 KL 的上界（Beirami 等, 2024）。</p>
+<p><b>这个推导告诉我们：</b>best-of-n 的 KL 只随 \(\ln n\) 增长，候选数翻 64 倍才多走约 4 nat，所以它是一种“很省 KL”的优化，也是 Gao 等能把它和 RL 放在同一根 KL 轴上比较的原因。它还说明，即使不做任何训练，只是“多采几个挑最好的”，也是在对奖励模型施加优化压力，同样会过度优化。</p>
+</div></details>
+<p>对策都围绕“不要太信任代理”：KL 约束；更大的奖励模型和更多的偏好数据；用几个奖励模型的集成、只信它们都同意的部分（Coste 等, 2023：best-of-n 的过度优化几乎消失）；随着策略变化重新采集偏好、重训奖励模型。DPO 没有显式的奖励模型，也逃不掉：Rafailov 等（2024）在 DPO、IPO 上测到了同样先升后降的曲线，常常不到一个 epoch 就开始下降。谄媚等后果见第 <a class="xref" data-ref="alignment"></a> 章，强化学习里的钻空子见第 <a class="xref" data-ref="rl"></a> 章。</p>
 
 <h2 id="dpo">DPO：跳过奖励模型和强化学习</h2>
-<p>RLHF 要训练一个奖励模型，再用 PPO 做强化学习，需要同时在显存里放四个大模型，调参极难。Rafailov 等（2023）注意到，上面带 KL 约束的目标有一个闭式最优解，由此可以直接在偏好数据上训练语言模型，完全不需要奖励模型和强化学习。这就是 <dfn data-t="dpo">DPO</dfn>（直接偏好优化）：</p>
+<p>PPO 版的 <span class="term" data-t="rlhf">RLHF</span> 训练时要同时在显存里放策略、参考模型、奖励模型、<span class="term" data-t="critic">价值网络</span>四个大模型，调参极难（第 <a class="xref" data-ref="rl"></a> 章）。Rafailov 等（2023）注意到带 KL 约束的目标有闭式最优解，由此可以直接在偏好数据上训练语言模型，就是玩具里算过的 <span class="term" data-t="dpo">DPO</span>：</p>
 <div class="fx">
-\[ \mathcal L_{\text{DPO}} = -\log\sigma\Big(\htmlClass{sym-beta2}{\beta}\log\frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta\log\frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)}\Big) \]
+\[ \mathcal L_{\text{DPO}} = -\log\sigma\Big(\htmlClass{sym-beta2}{\beta\log\frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)}} - \beta\log\frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)}\Big) \]
   <div class="fx-read">和奖励模型的损失形式完全相同，只是“分数”换成了 \(\beta\times\)（当前模型相对参考模型，给这个回答的对数概率提高了多少）。训练让好回答的概率相对提高、差回答的相对降低。</div>
   <dl class="fx-syms">
-    <dt data-sym="beta2">\(\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}\)</dt><dd>“隐式奖励”：模型自己就是一个奖励模型</dd>
+    <dt data-sym="beta2">\(\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}\)</dt><dd><span class="term" data-t="implicit-reward">隐式奖励</span>：模型自己就是一个奖励模型</dd>
   </dl>
   <div class="fx-eg">\(\beta = 0.1\)。训练中某一步，好回答的对数概率比参考模型高 1.0，差回答的低 2.0。括号里是 \(0.1\times(1.0 - (-2.0)) = 0.3\)，损失 \(-\ln\sigma(0.3) = 0.555\)。这条样本的梯度权重 \(\sigma(-0.3) = 0.43\)：模型越是已经分对了，这条样本的权重越小。</div>
-  <div class="fx-step" data-tex="\pi^\ast(y|x) = \frac{1}{Z(x)}\,\pi_{\text{ref}}(y|x)\,\exp\!\Big(\frac{1}{\beta}r(x,y)\Big)">第 1 步：带 KL 约束的奖励最大化，最优策略有闭式解：在参考模型的基础上，按奖励的指数重新加权。\(Z(x)\) 是让概率和为 1 的归一化常数（推导见下方折叠）。</div>
-  <div class="fx-step" data-tex="r(x,y) = \beta\log\frac{\pi^\ast(y|x)}{\pi_{\text{ref}}(y|x)} + \htmlClass{c-adv}{\beta\log Z(x)}">第 2 步：把上式反过来解出奖励：奖励 = \(\beta\times\) 对数概率比 + 一个只与 \(x\) 有关的常数。</div>
-  <div class="fx-step" data-tex="r(x,y_w) - r(x,y_l) = \beta\log\frac{\pi^\ast(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta\log\frac{\pi^\ast(y_l|x)}{\pi_{\text{ref}}(y_l|x)}">第 3 步：代入 Bradley-Terry 模型需要的分差。同一个 \(x\) 的两个回答，难算的 \(\beta\log Z(x)\) 正好相消。</div>
-  <div class="fx-step" data-tex="\mathcal L_{\text{DPO}} = -\log\sigma\big(\htmlClass{c-new}{\text{上式，用 }\pi_\theta\text{ 代替 }\pi^\ast}\big)">第 4 步：用正在训练的模型 \(\pi_\theta\) 代替 \(\pi^\ast\)，最大化偏好数据的似然，就得到 DPO 损失。</div>
+  <div class="fx-step" data-tex="\pi^\ast(y|x) = \frac{1}{Z(x)}\,\pi_{\text{ref}}(y|x)\,\exp\!\Big(\frac{1}{\beta}R(x,y)\Big)">第 1 步：KL 约束下的最优策略是参考模型按奖励的指数重新加权（推导见下方折叠）。</div>
+  <div class="fx-step" data-tex="R(x,y) = \beta\log\frac{\pi^\ast(y|x)}{\pi_{\text{ref}}(y|x)} + \htmlClass{c-adv}{\beta\log Z(x)}">第 2 步：反过来解出奖励：\(\beta\times\) 对数概率比 + 只与 \(x\) 有关的常数。</div>
+  <div class="fx-step" data-tex="R(x,y_w) - R(x,y_l) = \beta\log\frac{\pi^\ast(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \beta\log\frac{\pi^\ast(y_l|x)}{\pi_{\text{ref}}(y_l|x)}">第 3 步：Bradley-Terry 只用分差，难算的 \(\beta\log Z(x)\) 正好相消。</div>
+  <div class="fx-step" data-tex="\mathcal L_{\text{DPO}} = -\log\sigma\big(\htmlClass{c-new}{\text{上式，用 }\pi_\theta\text{ 代替 }\pi^\ast}\big)">第 4 步：用 \(\pi_\theta\) 代替 \(\pi^\ast\)，最大化偏好数据的似然。</div>
 </div>
-<details class="deep"><summary>推导第 1 步：KL 约束下的最优策略为什么是指数重加权</summary><div class="in">
-<p>对固定的 \(x\)，把目标写成对 \(\pi\) 的求和（省略 \(x\)）：</p>
-\[ J(\pi) = \sum_y \pi(y)\,r(y) - \beta\sum_y\pi(y)\log\frac{\pi(y)}{\pi_{\text{ref}}(y)} = -\beta\sum_y\pi(y)\log\frac{\pi(y)}{\pi_{\text{ref}}(y)\,e^{r(y)/\beta}} \]
-<p>令 \(Z = \sum_y\pi_{\text{ref}}(y)e^{r(y)/\beta}\)，\(\pi^\ast(y) = \pi_{\text{ref}}(y)e^{r(y)/\beta}/Z\)，它是一个合法的概率分布。于是：</p>
+<details class="deep"><summary>KL 约束下的最优策略为什么是指数重加权，以及 DPO 怎样从它推出来</summary><div class="in">
+<p><b>第 1 步，把目标写成一个 KL。</b>对固定的 \(x\)，把目标写成对所有回答的求和（省略 \(x\)）：</p>
+\[ \begin{aligned} J(\pi) &= \sum_y \pi(y)\,R(y) - \beta\sum_y\pi(y)\log\frac{\pi(y)}{\pi_{\text{ref}}(y)} \\ &= -\beta\sum_y\pi(y)\log\frac{\pi(y)}{\pi_{\text{ref}}(y)\,e^{R(y)/\beta}} \end{aligned} \]
+<p>第二行只是把 \(R(y) = \beta\log e^{R(y)/\beta}\) 并进了对数。</p>
+<p><b>第 2 步，补上归一化。</b>分母 \(\pi_{\text{ref}}(y)e^{R(y)/\beta}\) 加起来不等于 1。令 \(Z = \sum_y\pi_{\text{ref}}(y)e^{R(y)/\beta}\)，\(\pi^\ast(y) = \pi_{\text{ref}}(y)e^{R(y)/\beta}/Z\)，它是一个合法的概率分布。于是：</p>
 \[ J(\pi) = -\beta\sum_y\pi(y)\log\frac{\pi(y)}{\pi^\ast(y)} + \beta\log Z = -\beta\,D_{\text{KL}}(\pi\,\|\,\pi^\ast) + \beta\log Z \]
-<p>\(\beta\log Z\) 与 \(\pi\) 无关，KL 散度 \(\ge 0\) 且只在 \(\pi = \pi^\ast\) 时为 0。所以 \(J\) 在 \(\pi = \pi^\ast\) 时取最大值。</p>
-<p><b>这个推导告诉我们：</b>KL 约束下的“最优”不是只选最高分的回答，而是在原模型的分布上按 \(e^{r/\beta}\) 重新加权：\(\beta\) 越小，越集中到高分回答上。DPO 的全部技巧，是注意到这个关系可以反过来，用概率比表示奖励，而难算的 \(Z\) 在两两比较中相消。</p>
+<p>\(\beta\log Z\) 与 \(\pi\) 无关，KL 散度 \(\ge 0\) 且只在 \(\pi = \pi^\ast\) 时为 0，所以 \(J\) 在 \(\pi = \pi^\ast\) 时最大，最大值是 \(\beta\log Z\)。玩具里 \(\beta = 1\)：\(J = 1.14 - 0.31 = 0.83 = \ln 2.30\)。</p>
+<p><b>第 3 步，反过来解出奖励。</b>对 \(\pi^\ast\) 的定义取对数：\(R(y) = \beta\log\frac{\pi^\ast(y)}{\pi_{\text{ref}}(y)} + \beta\log Z\)。奖励由“最优策略相对参考模型的概率比”唯一确定，只差一个与回答无关的常数。</p>
+<p><b>第 4 步，常数在比较中相消。</b>Bradley-Terry 只用分差。把第 3 步代入 \(\sigma(R_w - R_l)\)，\(\beta\log Z\) 消掉，偏好概率完全由策略表示：</p>
+\[ P(y_w\succ y_l) = \sigma\Big(\beta\log\frac{\pi^\ast(y_w)}{\pi_{\text{ref}}(y_w)} - \beta\log\frac{\pi^\ast(y_l)}{\pi_{\text{ref}}(y_l)}\Big) \]
+<p><b>第 5 步，把最优策略换成可训练的模型。</b>不知道 \(\pi^\ast\)，就用参数化的 \(\pi_\theta\) 代入，最大化偏好数据在这个模型下的似然，也就是最小化 \(\mathcal L_{\text{DPO}}\)。如果 Bradley-Terry 是对的、数据足够多，最小值就在 \(\pi_\theta = \pi^\ast\) 处。</p>
+<p><b>这个推导告诉我们：</b>KL 约束下的“最优”不是只选最高分的回答，而是在原模型的分布上按 \(e^{R/\beta}\) 重新加权：\(\beta\) 越小，越集中到高分回答上。DPO 的全部技巧，是注意到这个关系可以反过来，用概率比表示奖励，而难算的 \(Z\) 在两两比较中相消。它依赖两个假设：偏好服从 Bradley-Terry；数据覆盖了模型会写出的回答。第二个假设在离线数据上并不成立，这是后面大部分问题的根源。</p>
 </div></details>
-<p>DPO 简单、稳定、便宜，2023 年底起迅速成为开源模型的标配（Zephyr、Tülu、Llama 3 的偏好阶段）。之后出现了一大批变体，它们的损失函数形状各不相同：</p>
+<p>对损失求导，可以看清 DPO 每一步在做什么。记 \(\hat R_w, \hat R_l\) 为两个回答的隐式奖励：</p>
+<div class="fx">
+\[ \nabla_\theta\mathcal L_{\text{DPO}} = -\beta\;\htmlClass{c-adv}{\sigma\big(\hat R_l - \hat R_w\big)}\;\Big[\htmlClass{c-dir}{\nabla_\theta\log\pi_\theta(y_w|x) - \nabla_\theta\log\pi_\theta(y_l|x)}\Big] \]
+  <div class="fx-read">沿<span style="color:var(--s1)">“提高好回答、降低差回答的对数概率”</span>的方向走，步子大小是<span style="color:var(--s2)">“模型现在把这一对排反的程度”</span>：排得越对，越不用力。</div>
+  <dl class="fx-syms">
+    <dt>\(\hat R_w,\ \hat R_l\)</dt><dd>好回答、差回答的隐式奖励 \(\beta\log\frac{\pi_\theta}{\pi_{\text{ref}}}\)</dd>
+  </dl>
+  <div class="fx-eg">玩具里这个权重从 0.5（训练开始）降到 0.29（训练中），再到 0.047（到达 \(\pi^\ast\)）。注意方括号里只有<b>两个对数概率之差</b>：只要差回答降得比好回答快，好回答本身的概率下降也被允许，下面的“似然位移”就来自这里。</div>
+</div>
+<p>DPO 简单、稳定、便宜，2023 年底起迅速成为开源模型的标配（Zephyr、Tülu、Llama 3 的偏好阶段）。下面的演示画出 DPO 和几个变体的损失与梯度形状：</p>
 <div data-demo="dpo-loss"></div>
-<div class="tablewrap"><table>
-  <tr><th>方法</th><th>改了什么</th><th>特点</th></tr>
-  <tr><td>IPO（2023）</td><td>sigmoid 换成平方损失，设一个目标间隔</td><td>防止在确定性偏好上过拟合；实测常略逊于 DPO</td></tr>
-  <tr><td>KTO（2024）</td><td>只需要“好 / 坏”单个标签，不需要成对数据</td><td>适合点赞、点踩这类反馈</td></tr>
-  <tr><td>ORPO（2024）</td><td>把 SFT 和偏好优化合成一步，不要参考模型</td><td>省事，效果一般</td></tr>
-  <tr><td>SimPO（2024）</td><td>不要参考模型，按长度平均对数概率，加间隔 γ</td><td>学术基准上常最好，但对超参数敏感、回答偏短</td></tr>
-</table></div>
-<p>DPO 也有自己的问题。一是长度偏差：隐式奖励是整条回答的对数概率比之和，越长的回答累积的数值越大，偏好数据里好回答又常常更长，模型因此学会写长（SimPO 用长度平均来缓解）。二是“似然位移”：训练中好回答和差回答的概率常常<b>一起下降</b>，只是差回答降得更多；概率被挪给了数据之外的回答，有时是更差的回答（Razin 等, 2024）。三是它只在固定的离线数据上学习，学不到数据里没有的东西。</p>
+<p>DPO 也有自己的问题。一是长度偏差：隐式奖励是整条回答的对数概率比之和，越长累积得越多，偏好数据里好回答又常常更长，模型因此学会写长。二是<dfn data-t="likelihood-displacement">似然位移</dfn>（likelihood displacement）：好回答和差回答的概率常常<b>一起下降</b>，只是差回答降得更多，概率被挪给了数据之外的回答，有时是更差的回答（Razin 等, 2024）。三是只在固定的离线数据上学，学不到数据里没有的东西。工程上的补丁很朴素：Llama 3（\(\beta = 0.1\)）把对话格式的特殊 token 从 DPO 损失里掩掉，因为它们同时出现在好坏两个回答里，DPO 要同时提高和压低它们，导致回答末尾重复或突然结束；再在好回答上加一项系数 0.2 的 SFT 损失，直接对付似然位移。</p>
 <aside class="dispute">
   <h4>DPO 能取代 PPO 吗</h4>
   <dl>
@@ -128,28 +294,102 @@
   </dl>
 </aside>
 
-<h2 id="lora">LoRA：只训练一个低秩的增量</h2>
-<p>全参数微调要为每个参数存权重、梯度和两份 Adam 状态，混合精度下每个参数约 16 字节：8B 模型需要 128 GB 以上的显存。<dfn data-t="lora">LoRA</dfn>（Hu 等, 2021）基于一个观察：微调带来的权重变化通常是低秩的，可以用两个“瘦长”的矩阵相乘来表示：</p>
+<h2 id="variants">DPO 之后：每一代在修什么</h2>
+<p>从 InstructGPT 到 2025 年，偏好优化的每一代都在修上一代暴露的一个问题，修的位置只有三处：<b>目标函数</b>、<b>数据</b>（回答从哪来）、<b>标注者</b>（谁来判断好坏）。</p>
+<div class="tablewrap"><table>
+  <tr><th>一代</th><th>时间</th><th>卡在哪</th><th>改了哪一项</th><th>代价</th></tr>
+  <tr><td>RLHF（PPO）</td><td>2022-03</td><td>示范定义不了“更好”</td><td>比较数据 + 奖励模型 + 带 KL 的 RL</td><td>四个大模型；被钻空子</td></tr>
+  <tr><td>DPO</td><td>2023-05</td><td>PPO 太重</td><td>目标：隐式奖励 + 分类损失</td><td>离线；长度偏差；似然位移</td></tr>
+  <tr><td>IPO</td><td>2023-10</td><td>每对只标一次时 \(\beta\) 管不住</td><td>目标：平方损失、有限间隔</td><td>常略逊于 DPO</td></tr>
+  <tr><td>KTO</td><td>2024-02</td><td>成对数据贵</td><td>数据：单个“好 / 坏”标签</td><td>信号更弱</td></tr>
+  <tr><td>ORPO</td><td>2024-03</td><td>两个阶段、多一个模型</td><td>目标：SFT + 几率比，无参考模型</td><td>效果一般</td></tr>
+  <tr><td>SimPO</td><td>2024-05</td><td>长度偏差；显存</td><td>目标：按长度平均，无参考模型</td><td>超参数敏感</td></tr>
+  <tr><td>在线 / 迭代 DPO</td><td>2024</td><td>离线数据跟不上模型</td><td>数据：当前模型采样再标注</td><td>要随叫随到的标注者</td></tr>
+  <tr><td>RLAIF、宪法 AI</td><td>2022-12 起</td><td>人工标注跟不上</td><td>标注者：人 → 模型</td><td>评委的偏差被继承</td></tr>
+  <tr><td>Delta learning</td><td>2025</td><td>模仿强模型已饱和</td><td>数据：强模型的回答 vs 弱模型的</td><td>要一对强弱模型</td></tr>
+</table></div>
+<p><b>目标函数这一支。</b>IPO 修的漏洞是：偏好数据大多每对只标一次，在数据看来“好回答永远赢”，DPO 的最优解因此要把差回答的概率推到 0（推导见下）。它换成平方损失，间隔到达有限的目标就停：</p>
 <div class="fx">
-\[ W' = W + \htmlClass{sym-dW}{\Delta W} = W + \frac{\alpha}{r}\,\htmlClass{sym-B}{B}\,\htmlClass{sym-Am}{A},\qquad B\in\mathbb R^{d\times \htmlClass{sym-r}{r}},\ A\in\mathbb R^{r\times k} \]
-  <div class="fx-read">冻结原权重 \(W\)，只训练两个小矩阵 \(B\) 和 \(A\)。它们的乘积是一个 \(d\times k\) 的矩阵，但秩最多为 \(r\)。\(B\) 初始化为 0，所以训练开始时 \(W' = W\)，模型行为不变。</div>
+\[ \mathcal L_{\text{IPO}} = \big(\htmlClass{sym-mg}{m} - \htmlClass{c-clip}{\htmlClass{sym-m0}{m_0}}\big)^2,\qquad m = \log\frac{\pi_\theta(y_w|x)}{\pi_{\text{ref}}(y_w|x)} - \log\frac{\pi_\theta(y_l|x)}{\pi_{\text{ref}}(y_l|x)} \]
+  <div class="fx-read">\(m\) 是 DPO 括号里的那个对数概率比之差（不乘 \(\beta\)）。DPO 希望它越大越好，IPO 只希望它<span style="color:var(--s3)">等于一个固定的目标</span>，超过了还会往回拉。</div>
+  <dl class="fx-syms">
+    <dt data-sym="mg">\(m\)</dt><dd>好回答与差回答相对参考模型的对数概率比之差，就是上面演示的横轴</dd>
+    <dt data-sym="m0">\(m_0\)</dt><dd>目标间隔，原文写作 \(1/(2\tau)\)；\(\tau\) 越小，允许离参考模型越远</dd>
+  </dl>
+  <div class="fx-eg">\(m_0 = 1\)。训练中 \(m = 3\)：DPO（\(\beta = 0.1\)）的梯度权重 \(\sigma(-0.3) = 0.43\)，还在往大推；IPO 的损失 \((3-1)^2 = 4\)，梯度把 \(m\) 往回拉到 1。</div>
+</div>
+<details class="deep"><summary>每对只标一次时，DPO 为什么会把差回答推向概率 0</summary><div class="in">
+<p><b>第 1 步，一对回答的最优间隔。</b>设某一对回答在数据里被标为“\(y_w\) 更好”的比例是 \(q\)。DPO 在这一对上的期望损失是</p>
+\[ \ell(m) = -q\log\sigma(\beta m) - (1-q)\log\sigma(-\beta m) \]
+<p>和奖励模型的推导一样，它在 \(\sigma(\beta m^\ast) = q\) 时最小：\(m^\ast = \frac1\beta\ln\frac{q}{1-q}\)。</p>
+<p><b>第 2 步，只标一次。</b>每对回答只有一条标注时，数据里的 \(q\) 就是 1，\(m^\ast = +\infty\)。\(m\) 要无限变大，最省事的办法是让 \(\pi_\theta(y_l)\to 0\)：对数概率可以一直降到负无穷。</p>
+<p><b>第 3 步，\(\beta\) 管不住。</b>\(\beta\) 本来是 KL 约束的强度，但在 \(m^\ast = \infty\) 时，它只改变“多快到达无穷”，不改变终点。推导 DPO 时用到的“KL 约束”只在最优解处起作用，而这个最优解已经不存在了。</p>
+<p><b>第 4 步，IPO 的修法。</b>平方损失 \((m - m_0)^2\) 的最小值在 \(m = m_0\)，与 \(q\) 是不是 1 无关。目标有限，约束就重新生效。</p>
+<p><b>这个推导告诉我们：</b>DPO 的“等价于 RLHF”依赖于偏好概率严格介于 0 和 1 之间。真实数据里每对只标一次，这个条件在训练集上处处不成立，于是 DPO 会持续地压低差回答，也常常连带压低好回答（似然位移）。提前停止、在好回答上加 SFT 损失、IPO 的有限目标，都是在补这个洞。</p>
+</div></details>
+<p>SimPO 修的是长度和显存：把隐式奖励换成按长度平均的对数概率 \(\frac{\beta}{|y|}\log\pi_\theta(y|x)\)，长回答不再因为 token 多而占便宜；不再除以参考模型的概率，省掉一个模型；再要求好回答至少领先一个间隔 \(\gamma\)（演示里相当于把 DPO 的曲线右移）。例如好回答 200 个 token、对数概率合计 −120，差回答 50 个 token、合计 −40：不归一化时差回答“概率更高”，按长度平均后好回答每 token 领先 0.2。</p>
+<p>KTO 只要单个回答“好 / 坏”的标签：好回答的隐式奖励要高于一个参考点，坏回答要低于它。ORPO 在 SFT 损失上加一项好坏回答的几率之比，一步完成两个阶段。RainbowPO（2024-10）把这些方法拆成部件逐个消融，发现真正起作用的主要是长度归一化和参考模型的用法。</p>
+<p><b>数据这一支。</b>离线 DPO 训练一段时间后，当前模型会写的回答早已不在数据里。<dfn data-t="iterative-dpo">在线 / 迭代 DPO</dfn>（online / iterative DPO）每隔一段时间就用当前模型重新采样、重新标注，再做一轮 DPO。Google 的 OAIF（2024-02）每一步都让当前模型写两个回答、请 <span class="term" data-t="llm-judge">LLM 评委</span>挑好的，人类评测中对离线版的平均胜率约 66%，离线 DPO 则在训练后期明显过拟合。Llama 3 把“奖励模型 → 拒绝采样 → SFT → DPO”重复了 6 轮；Tülu 3 发现偏好对里加入 SFT 模型自己写的回答，DPO 效果更好；Self-Rewarding（Meta, 2024-01）让模型给自己打分再迭代，Llama 2 70B 三轮后在 AlpacaEval 2.0 上超过了 Claude 2 和 GPT-4 0613。这条路走到头，就是第 <a class="xref" data-ref="rl"></a> 章的在线强化学习。</p>
+<p><b>标注者这一支。</b>在线需要源源不断的标注，人跟不上。<dfn data-t="rlaif">RLAIF</dfn>（reinforcement learning from AI feedback）用模型代替人做比较，最早来自 Anthropic 的<dfn data-t="constitutional-ai">宪法 AI</dfn>（Constitutional AI, 2022-12）：先写一组原则（“宪法”），让模型按原则批评、修改自己的回答做 SFT；再让模型按原则比较两个回答，用这些 AI 标注训练偏好模型、做强化学习。Google 的对比（Lee 等, 2023-09）显示，在摘要和对话上 RLAIF 与 RLHF 效果相当；Zephyr（2023-10）用 GPT-4 打分的 UltraFeedback 做 DPO，7B 模型的对话能力超过了许多更大的模型。今天绝大多数偏好数据由模型标注；宪法怎么写见第 <a class="xref" data-ref="alignment"></a> 章。</p>
+<p><b>2025 年的新变化</b>是“delta learning”：好回答不一定要好，只要比差回答好。OLMo 3（2025-11）发现，在 Qwen3-32B 写的推理过程上继续做 SFT 反而让模型变差，模仿已经饱和；改成 DPO，好回答来自 Qwen3-32B、差回答来自 Qwen3-0.6B，数学和代码推理都明显提升。学到的是两者之间的“差”。</p>
+
+<h2 id="now">2025–26：SFT 和偏好优化的新位置</h2>
+<p>推理模型出现后，SFT 和偏好优化不再是后训练的主体，而是变成了前后两端的环节。几份公开配方：</p>
+<ul>
+  <li><b>DeepSeek-R1（2025-01）。</b>先用“几千条”长思维链数据对基座做 SFT（冷启动），让输出可读、格式稳定，再做大规模推理 RL；然后从 RL 模型里拒绝采样约 60 万条推理数据、加约 20 万条非推理数据，再做一轮 SFT 和全场景 RL。这 80 万条拿去微调 Qwen 和 Llama，就是 R1-Distill 系列。</li>
+  <li><b>Qwen3（2025-05）。</b>旗舰模型四个阶段：长思维链冷启动 SFT → 推理 RL → “思考模式融合”（再做一次 SFT，把不思考的快速回答也教进同一个模型）→ 通用 RL。0.6B 到 30B 的小模型直接从大模型蒸馏，报告称效果好于对小模型做 RL，GPU 时只要约十分之一。</li>
+  <li><b>OLMo 3 Think（2025-11）。</b>SFT → DPO（delta learning）→ <span class="term" data-t="rlvr">RLVR</span>，三步的数据都公开。</li>
+</ul>
+<p>SFT 的角色变成了两种：RL 的起点（冷启动），把格式和基本的推理习惯定下来；能力的搬运工，把大模型的能力蒸馏给小模型和下一代模型（第 <a class="xref" data-ref="distillation"></a> 章）。偏好优化退守到风格、安全、指令遵循这些难以自动验证的方面。这个分工背后，是对 SFT 本身的重新理解：</p>
+<details class="deep"><summary>SFT 也是一种策略梯度，只是奖励很怪</summary><div class="in">
+<p><b>第 1 步，把 SFT 的梯度改写成期望。</b>只看一个提示 \(x\) 和它的示范回答 \(y^\ast\)。SFT 的梯度是 \(\nabla_\theta\log\pi_\theta(y^\ast|x)\)。把它写成“对模型自己的采样取期望”，只需要乘一个、除一个 \(\pi_\theta\)：</p>
+\[ \nabla_\theta\log\pi_\theta(y^\ast) = \sum_y \pi_\theta(y)\cdot\frac{\mathbb 1[y = y^\ast]}{\pi_\theta(y^\ast)}\cdot\nabla_\theta\log\pi_\theta(y) = \mathbb E_{y\sim\pi_\theta}\Big[\underbrace{\frac{\mathbb 1[y=y^\ast]}{\pi_\theta(y^\ast)}}_{\text{隐含的奖励}}\,\nabla_\theta\log\pi_\theta(y)\Big] \]
+<p><b>第 2 步，和强化学习对照。</b>第 <a class="xref" data-ref="rl"></a> 章会推出强化学习的梯度 \(\mathbb E_{y\sim\pi_\theta}[R(y)\,\nabla_\theta\log\pi_\theta(y)]\)：让模型自己写，按奖励加权，把写出的回答变得更可能。两式形状相同。所以 SFT 等价于一种强化学习，它的奖励是：写出和示范一模一样的回答得 \(1/\pi_\theta(y^\ast)\) 分，否则 0 分。</p>
+<p><b>第 3 步，这个奖励的毛病。</b>示范在模型看来越不可能，奖励越大。玩具里“〈结束〉”的概率 10%，隐含奖励 10；“。”的概率 60%，隐含奖励 1.7。SFT 把最大的力气用在模型最意想不到的 token 上，而且只认一种写法：模型自己写出的另一种正确回答得 0 分。</p>
+<p><b>第 4 步，一种修法。</b>Wu 等（2025-08，ICLR 2026）的 DFT 把每个 token 的损失乘上它自己的概率、且不对这个系数求导：\(-\sum_t \operatorname{sg}\big(\pi_\theta(y^\ast_t)\big)\log\pi_\theta(y^\ast_t)\)（\(\operatorname{sg}\) 表示停止梯度）。隐含奖励从 \(1/\pi\) 变回常数 1，作者报告数学推理等任务上的泛化好于标准 SFT；代价是模型本来不会的 token 学得更慢。</p>
+<p><b>这个推导告诉我们：</b>SFT 和 RL 的区别不在损失的形式，而在样本从哪来（示范者，还是模型自己）和奖励怎么给（“和示范一字不差”且按 \(1/\pi\) 放大，还是按结果好坏）。前者让 SFT 离模型自己的分布越走越远，这正是下面“遗忘”之争的核心。</p>
+</div></details>
+<aside class="dispute">
+  <h4>SFT 记忆、RL 泛化？</h4>
+  <dl>
+    <dt>主张</dt><dd>Chu 等（2025-01）在纸牌算术和导航任务上发现：SFT 在训练分布内很好，换一种规则表述就失效；RL 学到的规则能迁移。RL's Razor（Shenfeld 等, 2025-09）补上遗忘的一面：新任务做到同样好时，RL 忘掉的旧能力比 SFT 少得多；遗忘程度由“微调后模型与基座在新任务上的 KL”预测得很准，而 RL 在自己的采样上学，天然偏向 KL 最小的解法。</dd>
+    <dt>反方</dt><dd>“Debunk the Myth of SFT Generalization”（2025-09）发现 SFT 的失败主要来自固定的提示模板，加入多样的提示和思维链后，泛化追平甚至超过 RL。Ren 等（2026-04）发现长思维链 SFT 的跨领域表现“先降后升”，过早的检查点会低估它；强基座能从少量思维链里学到可迁移的做法（比如回溯检查），弱基座只学到表面风格，这和 LIMR（2025）在 7B 模型上看到少量 SFT 数据的配方失效是一致的。</dd>
+    <dt>现在怎么看</dt><dd>“SFT 只会记忆”说得太重：它能泛化，但条件更苛刻。RL's Razor 的 KL 视角更持久：把模型推离自己的分布越远，忘得越多，SFT 只是最容易推远的那种。所以 2025 年以后的配方让 SFT 少而精、只做冷启动，把主要的能力提升交给在自己的样本上学习的方法（RL、在线蒸馏）。</dd>
+  </dl>
+</aside>
+
+<h2 id="lora">LoRA：只训练一个低秩的增量</h2>
+<p>全参数微调要为每个参数存权重、梯度和两份 Adam 状态，混合精度下每个参数约 16 字节：8B 模型需要 128 GB 以上的显存。<dfn data-t="lora">LoRA</dfn>（Hu 等, 2021）基于一个观察：微调带来的权重变化通常是低<span class="term" data-t="matrix-rank">秩</span>的，可以用两个“瘦长”的矩阵相乘来表示：</p>
+<div class="fx">
+\[ W' = W + \htmlClass{sym-dW}{\Delta W} = W + \frac{\htmlClass{sym-al}{\alpha}}{r}\,\htmlClass{sym-B}{B}\,\htmlClass{sym-Am}{A},\qquad B\in\mathbb R^{d_{\text{out}}\times \htmlClass{sym-r}{r}},\ \ A\in\mathbb R^{r\times d_{\text{in}}} \]
+<span class="eqnote">可训练参数 r(d_in + d_out)，原矩阵是 d_in · d_out</span>
+  <div class="fx-read">冻结原权重 \(W\)，只训练两个小矩阵 \(B\) 和 \(A\)。它们的乘积是一个 \(d_{\text{out}}\times d_{\text{in}}\) 的矩阵，但秩最多为 \(r\)。\(B\) 初始化为 0，所以训练开始时 \(W' = W\)，模型行为不变。</div>
   <dl class="fx-syms">
     <dt data-sym="dW">\(\Delta W\)</dt><dd>微调带来的权重变化</dd>
-    <dt data-sym="B">\(B\)</dt><dd>\(d\times r\)，初始化为 0</dd>
-    <dt data-sym="Am">\(A\)</dt><dd>\(r\times k\)，随机初始化</dd>
-    <dt data-sym="r">\(r\)</dt><dd>秩，通常 8–64；\(\alpha/r\) 是缩放系数，让换秩时不必重调学习率</dd>
+    <dt data-sym="B">\(B\)</dt><dd>\(d_{\text{out}}\times r\)，初始化为 0（这里的 \(A\)、\(B\) 沿用 LoRA 论文的记号，与优势 \(A\)、batch 大小 \(B\) 无关）</dd>
+    <dt data-sym="Am">\(A\)</dt><dd>\(r\times d_{\text{in}}\)，随机初始化</dd>
+    <dt data-sym="r">\(r\)</dt><dd>秩，通常 8–64</dd>
+    <dt data-sym="al">\(\alpha\)</dt><dd>缩放系数；乘 \(\alpha/r\) 让换秩时不必重调学习率</dd>
   </dl>
-  <div class="fx-eg">\(4096\times 4096\) 的矩阵有 1680 万个参数。\(r = 16\) 的 LoRA 只有 \(2\times 4096\times 16 = 13.1\) 万个，不到 0.8%。训练完可以把 \(BA\) 加回 \(W\)，推理时没有额外开销；也可以为不同任务保存不同的小矩阵，按需切换。</div>
+  <div class="fx-eg">8B 级模型 MLP 的一个投影是 \(14336\times 4096\)，有 5872 万个参数。\(r = 16\) 的 LoRA 只有 \(16\times(4096 + 14336) = 29.5\) 万个，0.50%。训练完可以把 \(BA\) 加回 \(W\)，推理时没有额外开销；也可以为不同任务保存不同的小矩阵，按需切换。</div>
 </div>
 <div data-demo="lora"></div>
+<p>为什么低秩就够？Aghajanyan 等（2020）先给出了一个更极端的结果：把微调限制在一个随机选取的低维子空间里，RoBERTa 只调 200 个参数，就在 MRPC 任务上达到全参数微调 90% 的效果。能达到这种效果的最小子空间维数叫<dfn data-t="intrinsic-dim">内在维度</dfn>（intrinsic dimension）；预训练越充分、模型越大，内在维度越低。LoRA 是把这个思想做成了实用的结构。</p>
+<details class="deep"><summary>为什么低秩够用：最优低秩近似与信息量</summary><div class="in">
+<p><b>第 1 步，最好的秩 r 近似。</b>对任意矩阵 \(\Delta W\) 做<span class="term" data-t="svd">奇异值分解</span>，奇异值从大到小是 \(\sigma_1\ge\sigma_2\ge\dots\)。Eckart–Young 定理说，在所有秩不超过 \(r\) 的矩阵里，离 \(\Delta W\) 最近的就是保留前 \(r\) 个奇异值的截断，误差</p>
+\[ \min_{\operatorname{rank}(M)\le r}\|\Delta W - M\|_F^2 = \sum_{i&gt;r}\sigma_i^2 \]
+<p>所以“低秩够不够”只取决于 \(\Delta W\) 的奇异值衰减得多快。例如奇异值按 \(\sigma_i\propto i^{-1}\) 衰减时，在 4096 维里，前 16 个奇异值就占了总能量 \(\sum\sigma_i^2\) 的约 96%。LoRA 论文对微调得到的 \(\Delta W\) 做过这种分析：\(r = 8\) 和 \(r = 64\) 学到的最主要方向高度重合。</p>
+<p><b>第 2 步，信息量的上限。</b>强化学习的每条回答只带来一个分数，约 1 比特（第 <a class="xref" data-ref="rl"></a> 章），一万条约一万比特。8B 模型上秩为 1 的 LoRA 也有约 300 万个参数，按第 <a class="xref" data-ref="data"></a> 章“每个参数约存 2 比特”估计，容量是信号的数百倍。SFT 每个 token 都是监督信号，一亿 token 的数据就可能超过低秩 LoRA 的容量。</p>
+<p><b>这个推导告诉我们：</b>LoRA 能不能追上全参数微调，取决于“要写进模型的东西”有多少，而不是任务看起来有多难。格式、风格、RL 的偏好调整都是低信息量的改动，低秩足够；大规模 SFT 注入的大量新内容，才会撞上秩的上限。</p>
+</div></details>
 <p>QLoRA（2023）再把冻结的 \(W\) 量化成 4 比特的 NF4 格式（第 <a class="xref" data-ref="quantization"></a> 章），让一张 48 GB 的显卡就能微调 65B 的模型。LoRA 和 QLoRA 是个人和小团队微调大模型的主要方式。</p>
 <aside class="dispute surprise">
   <h4>意外：做强化学习时，秩为 1 的 LoRA 就够了</h4>
   <dl>
     <dt>原以为</dt><dd>秩越高，LoRA 越接近全参数微调；学复杂的推理能力需要较高的秩。</dd>
-    <dt>实际发现</dt><dd>Thinking Machines 的 “LoRA Without Regret”（2025）：做 RL 时，秩为 1 的 LoRA 就能达到全参数微调的效果。做 SFT 时则不然，数据量和 batch 越大，LoRA 落后越多。其它要点：LoRA 要加在所有层上（尤其是 MLP），只加在注意力层上明显更差；它的最优学习率约是全参数微调的 10 倍。</dd>
-    <dt>为什么</dt><dd>信息量。RL 中每条回答只带来一个优势值，约 O(1) 比特信息；即使是秩为 1 的 LoRA，在 8B 模型上也有约 300 万个参数，容量绰绰有余。一条几千 token 的 SFT 样本则提供 O(token 数) 比特，需要更大的容量（推导见第 <a class="xref" data-ref="rl"></a> 章）。</dd>
-    <dt>现在怎么看</dt><dd>LoRA 的容量是否够用，取决于训练信号的信息量，而不是任务看起来有多难。另一项研究（Biderman 等, 2024）的总结也很贴切：LoRA 学得少，也忘得少。</dd>
+    <dt>实际发现</dt><dd>Thinking Machines 的 “LoRA Without Regret”（2025-09）：做 RL 时，秩为 1 的 LoRA 就能达到全参数微调的效果；做 SFT 时，数据量和 batch 越大，LoRA 落后越多。另外，LoRA 要加在所有层上（尤其是 MLP），最优学习率约是全参数微调的 10 倍。</dd>
+    <dt>为什么</dt><dd>上面推导的第 2 步：RL 每条回答约 1 比特，SFT 每个 token 都是信号（第 <a class="xref" data-ref="rl"></a> 章有同一结论的另一种讲法）。</dd>
+    <dt>现在怎么看</dt><dd>LoRA 够不够，取决于训练信号的信息量。Biderman 等（2024）的总结也很贴切：LoRA 学得少，也忘得少。</dd>
   </dl>
 </aside>
 
@@ -164,16 +404,16 @@
   </dl>
   <div class="fx-eg">数学模型和代码模型各自的任务向量在某个参数上分别是 +0.02 和 −0.01。直接相加得 +0.01，两个改动互相抵消了一部分。TIES（2023）的做法是：先丢掉每个任务向量中幅度最小的大部分元素，再在每个位置上按多数决定符号，只合并同号的改动；DARE（2023）则随机丢掉 90% 以上的改动并把剩下的放大，发现几乎不损失能力。</div>
 </div>
-<p>为什么权重可以直接相加？从同一个预训练点出发的微调，改动都很小，彼此处在同一个“盆地”里，线性插值路径上的损失不会升高（线性模式连通性）。如果两个模型分别从头训练，直接平均权重就会彻底失败。2026 年的研究还发现，不同合并方法适合不同训练程度的专家：简单平均在专家训练不足时最好，TIES / DARE 在专家已经过拟合时最好。</p>
-<p>趋势上，“把多个专科模型合成一个”的主流做法正在从权重合并转向蒸馏合并：让学生模型在自己的采样上，分别向各个专科老师学习（第 <a class="xref" data-ref="distillation"></a> 章的 MOPD）。权重平均则更多用在训练过程中，例如平均相邻的几个检查点来稳定结果。</p>
+<p>为什么权重可以直接相加？从同一个预训练点出发的微调，改动都很小，彼此处在同一个“盆地”里：在两个模型之间沿直线插值，损失不会先升高再降低。这个性质叫<dfn data-t="linear-mode-connectivity">线性模式连通性</dfn>（linear mode connectivity）。在任务 \(i\) 微调后的点附近展开，加上另一个任务向量 \(\tau_j\) 的一阶影响正比于 \(\nabla L_i\cdot\tau_j\)，而极小值附近 \(\nabla L_i\approx 0\)，干扰只剩与 \(\|\tau_j\|^2\) 成正比的二阶项；TIES 和 DARE 都在削减这一项。从头训练的两个模型落在不同的盆地，直接平均就会彻底失败。</p>
+<p>合并已经进入前沿模型的生产流程。Llama 3 在奖励模型、SFT、DPO 每个阶段，都把不同数据版本和超参数训练出的模型做权重平均。Cohere 的 Command A（2025-03）把后训练拆成代码、数学、多语言、长上下文、智能体、安全等并行的专家轨道，各自做 SFT 和 RL 再合并，事后还能不重新训练就调整各项能力的比重；美团的 LongCat-Flash-Thinking（2025-09）也用任务向量合并各领域的 RL 专家。2026 年的研究发现，简单平均在专家训练不足时最好，TIES / DARE 在专家已经过拟合时最好。</p>
+<p>另一条路是用蒸馏代替权重合并：让学生在自己的采样上分别向各个专科老师学习（第 <a class="xref" data-ref="distillation"></a> 章的 <span class="term" data-t="mopd">MOPD</span>）。它更贵，但不要求同一个起点，也不受“改动要小”的限制。</p>
 
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
-  <li><b class="m">SFT 数据越多越好。</b>对强基座，少量高质量数据就能定好格式；大量低质量或模型不知道答案的数据反而会教它编造。</li>
-  <li><b class="m">奖励模型的分数越高，回答越好。</b>奖励模型只是代理。优化压力越大，越容易找到它的漏洞，真实质量可能下降（古德哈特定律）。</li>
-  <li><b class="m">DPO 不需要奖励模型，所以不会钻奖励空子。</b>DPO 的隐式奖励同样会被过度优化：回答变长、似然位移、过度拒绝都有报道。它省掉的是显式的奖励模型和 RL 训练，而不是这个问题。</li>
-  <li><b class="m">LoRA 是全参数微调的廉价近似，效果一定更差。</b>在 RL 和小数据 SFT 上，调好的 LoRA 可以与全参数微调持平；在大数据 SFT 上才会明显落后。</li>
-  <li><b class="m">偏好数据必须由人来标注。</b>现在大部分偏好数据由强模型按照写好的原则打分生成（RLAIF、宪法 AI），人工标注集中在难例和评测上（第 <a class="xref" data-ref="alignment"></a> 章）。</li>
+  <li><b class="m">SFT 数据越多越好。</b>对强基座，少量高质量数据就能定好格式；大量低质量或模型不知道答案的数据反而会教它编造，而且把模型推离自己的分布越远，忘掉的旧能力越多。</li>
+  <li><b class="m">奖励模型的分数越高，回答越好。</b>奖励模型只是代理。优化压力越大，越容易找到它的漏洞，真实质量可能下降（古德哈特定律）。玩具里 \(\beta\) 从 0.73 调到 0.25，奖励分从 1.20 涨到 1.37，真实质量从 0.81 降到 0.70。</li>
+  <li><b class="m">奖励模型在人类标注上只有 70% 准确率，说明它很差。</b>两位标注者之间的一致率也只有 73% 左右，测得的准确率被标注噪声封顶。它在“真实好坏”上可能排得准得多，只是这一点测不到。</li>
+  <li><b class="m">DPO 不需要奖励模型，所以不会钻奖励空子。</b>DPO 的隐式奖励同样会被过度优化：回答变长、似然位移、过度拒绝都有报道，而且常在一个 epoch 之内就开始。它省掉的是显式的奖励模型和 RL 训练，而不是这个问题。</li>
 </ul>
 
 <h2 id="history">演进史</h2>
@@ -183,74 +423,87 @@
     <h4>指令微调：用指令格式的多任务数据微调</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>GPT-3 要靠精心设计的提示和示例才能完成任务，直接下指令效果差。</dd>
-      <dt>怎么解决</dt><dd>FLAN、T0 把几十上百个 NLP 数据集改写成自然语言指令的形式来微调，模型在没见过的任务上也能按指令完成。</dd>
+      <dt>怎么解决</dt><dd>FLAN、T0 把上百个 NLP 数据集改写成自然语言指令来微调，模型在没见过的任务上也能按指令完成。</dd>
       <dt>代价</dt><dd>数据来自学术任务，回答简短、机械，不像对话。</dd>
-      <dt>引出</dt><dd>怎样让模型的回答符合真实用户的期望？</dd>
+      <dt>引出</dt><dd>怎样让回答符合真实用户的期望？</dd>
     </dl>
   </div>
   <div class="hist-node">
     <div class="hist-date">2022-03</div>
     <h4>InstructGPT：SFT → 奖励模型 → PPO</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>真实用户想要有帮助、诚实、无害的回答，这很难只靠示范来定义。</dd>
-      <dt>怎么解决</dt><dd>人工示范做 SFT，人工比较训练奖励模型，再用 PPO 优化。1.3B 的 InstructGPT 在人类评测中胜过 175B 的 GPT-3。年底的 ChatGPT 用的就是这套方法。</dd>
-      <dt>代价</dt><dd>人工标注昂贵；PPO 要四个模型、难调；奖励模型被钻空子。</dd>
-      <dt>引出</dt><dd>能不能更便宜？</dd>
+      <dt>卡在哪</dt><dd>“有帮助、诚实、无害”很难只靠示范来定义。</dd>
+      <dt>怎么解决</dt><dd>人工示范做 SFT，人工比较训练奖励模型，再用带 KL 约束的 PPO 优化。1.3B 的 InstructGPT 在人类评测中胜过 175B 的 GPT-3；年底的 ChatGPT 用的就是这套方法。</dd>
+      <dt>代价</dt><dd>标注贵、一致率只有七成多；PPO 要四个模型；奖励模型被钻空子，回答变长、变客套。</dd>
+      <dt>引出</dt><dd>能不能让模型来造数据？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt alive">延续至今</span>用 AI 反馈代替人类反馈（2022-12）</summary><div>Anthropic 的宪法 AI 让模型按照一组写好的原则批评和修改自己的回答，并用 AI 的比较代替人类标注来训练偏好模型（RLAIF）。今天绝大多数偏好数据都由模型生成（第 <a class="xref" data-ref="alignment"></a> 章）。</div></details>
+    <details class="hist-branch"><summary><span class="bt alive">延续至今</span>用 AI 反馈代替人类反馈（2022-12）</summary><div>宪法 AI 让模型按成文原则批评、修改自己的回答，并用 AI 的比较训练偏好模型（RLAIF）。它在 2024 年随在线偏好优化普及（第 <a class="xref" data-ref="alignment"></a> 章）。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2023 上半年</div>
-    <h4>开源微调的爆发：Alpaca、LIMA、LoRA / QLoRA</h4>
+    <div class="hist-date">2022-12 – 2023 上半年</div>
+    <h4>合成指令与少而精：Self-Instruct、Alpaca、LIMA、QLoRA</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>开源界有了 LLaMA 基座，但没有对话数据，也没有足够的显卡。</dd>
-      <dt>怎么解决</dt><dd>Alpaca 用闭源模型生成 5.2 万条指令数据；LIMA 证明 1000 条精选数据就够；QLoRA 让单卡微调 65B 成为可能。</dd>
+      <dt>怎么解决</dt><dd>Self-Instruct 从 175 条种子扩出 5.2 万条指令；Alpaca 向更强的闭源模型要数据，花费不到 600 美元；LIMA 证明 1000 条精选就够；QLoRA 让单卡微调 65B 成为可能。</dd>
       <dt>代价</dt><dd>模仿闭源模型的输出，学到的多是风格。</dd>
       <dt>引出</dt><dd>开源模型怎样做偏好对齐？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt dead">被证明有限</span>“模仿闭源模型就能追上”</summary><div>Gudibande 等（2023）发现，用 ChatGPT 的输出微调的开源模型，在人类评测中看起来与 ChatGPT 相当，但在事实准确性上几乎没有提高：模仿学到的是语气和格式，而不是能力。这强化了“能力来自基座”的观点。</div></details>
+    <details class="hist-branch"><summary><span class="bt dead">被证明有限</span>“模仿闭源模型就能追上”</summary><div>Gudibande 等（2023）发现，用 ChatGPT 的输出微调的开源模型在人类评测中看起来相当，事实准确性却几乎没有提高：模仿学到的是语气和格式。后来的蒸馏因此改为模仿老师的推理过程，甚至逐 token 的概率。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2023-05 – 2024</div>
     <h4>DPO 及其家族</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>PPO 版 RLHF 对开源社区来说太重。</dd>
-      <dt>怎么解决</dt><dd>DPO 用闭式损失直接在偏好对上训练；Zephyr 用 AI 标注的偏好数据加 DPO 训练出很强的 7B 对话模型；IPO、KTO、ORPO、SimPO 相继出现；Llama 3 用多轮“拒绝采样 + DPO”；Tülu 3 公开了 SFT → DPO → RLVR 的完整配方。</dd>
-      <dt>代价</dt><dd>离线数据的上限；长度偏差；变体众多但收益难以复现。</dd>
-      <dt>引出</dt><dd>怎样让模型学到偏好数据之外的能力？</dd>
+      <dt>怎么解决</dt><dd>DPO 用闭式损失直接在偏好对上训练；Zephyr 用 AI 标注加 DPO 训练出很强的 7B 对话模型；IPO、KTO、ORPO、SimPO 各修 DPO 的一个毛病；Tülu 3 公开了 SFT → DPO → RLVR 的完整配方。</dd>
+      <dt>代价</dt><dd>离线数据的上限、长度偏差、似然位移；变体众多但收益难以复现。</dd>
+      <dt>引出</dt><dd>怎样让偏好数据跟上正在变化的模型？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt debate">争论</span>DPO 还是 PPO</summary><div>2024 年的系统比较显示调好的 PPO 更强，但 DPO 的简单性让它在开源界占据主流。2025 年这场争论被新的问题取代：推理能力需要在线、可验证奖励的 RL。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>DPO 还是 PPO</summary><div>2024 年的系统比较显示调好的 PPO 更强，但 DPO 的简单让它在开源界占据主流。2025 年这场争论被新的问题取代：推理能力需要在线、可验证奖励的 RL。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024</div>
+    <h4>在线与迭代：每一轮都用当前模型重新采样</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>离线 DPO 在训练后期过拟合，学不到数据之外的东西。</dd>
+      <dt>怎么解决</dt><dd>Llama 3 把“奖励模型 → 拒绝采样 → SFT → DPO”重复 6 轮；OAIF 每一步请 LLM 评委挑当前模型的回答；Self-Rewarding 让模型给自己打分。</dd>
+      <dt>代价</dt><dd>需要随叫随到的评委，评委的偏差被系统性地学进去。</dd>
+      <dt>引出</dt><dd>既然要在线采样、打分，为什么不直接做强化学习？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt alive">分支</span>合并而不是再训练</summary><div>Llama 3 在每个阶段平均多个训练结果的权重；Command A（2025）把后训练拆成并行的专家轨道再合并。代价是要求专家从同一个起点出发、改动不能太大；另一条路是多教师蒸馏（第 <a class="xref" data-ref="distillation"></a> 章）。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2025–2026</div>
     <h4>SFT 变成冷启动，偏好优化变成一个环节</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>模仿和离线偏好都无法让模型超越数据本身，推理能力提升有限。</dd>
-      <dt>怎么解决</dt><dd>SFT 只用少量长思维链数据做冷启动（DeepSeek-R1、Qwen3）；主力转向可验证奖励的强化学习（第 <a class="xref" data-ref="rl"></a> 章）和在线蒸馏（第 <a class="xref" data-ref="distillation"></a> 章）；偏好优化和 RLHF 用于风格、安全等难以验证的方面。</dd>
-      <dt>代价</dt><dd>流程变长、阶段之间互相干扰（“跷跷板”）。</dd>
+      <dt>卡在哪</dt><dd>模仿和离线偏好都超不过数据本身；大量 SFT 还会把模型推离自己的分布、忘掉旧能力。</dd>
+      <dt>怎么解决</dt><dd>SFT 只用少量长思维链数据做冷启动（DeepSeek-R1、Qwen3）；主力转向可验证奖励的 RL（第 <a class="xref" data-ref="rl"></a> 章）和在线蒸馏（第 <a class="xref" data-ref="distillation"></a> 章）；偏好优化管风格和安全，或在模仿饱和后用 delta learning 继续提升（OLMo 3）。</dd>
+      <dt>代价</dt><dd>流程变长、阶段之间互相干扰（<span class="term" data-t="seesaw">跷跷板效应</span>）。</dd>
       <dt>引出</dt><dd>怎样不靠模仿，让模型在自己的尝试中变强？（第 <a class="xref" data-ref="rl"></a> 章）</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>SFT 会不会泛化</summary><div>“SFT 记忆、RL 泛化”（2025-01）一度成为共识，随后被修正：提示多样、训练够久、基座够强时，SFT 也能泛化。留下的共识是 KL 视角：离自己的分布走得越远，忘得越多。</div></details>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. 奖励模型给两个回答打分 1.2 和 −0.3。按 Bradley-Terry 模型，第一个被认为更好的概率是多少？如果给所有回答都加 10 分，结果会变吗？</summary><div class="ans">\(\sigma(1.5) = 1/(1 + e^{-1.5})\approx 0.82\)。不会变：概率只依赖分差，这也说明奖励模型的分数只有相对意义。</div></details>
-<details class="quiz"><summary>2. DPO 中 \(\beta = 0.1\)，某条样本里当前模型相对参考模型，好回答的对数概率比为 −0.5，差回答为 +0.5（模型更偏向差回答）。损失和梯度权重各是多少？与上面例子中“已经分对”的样本相比如何？</summary><div class="ans">括号内为 \(0.1\times(-0.5 - 0.5) = -0.1\)。损失 \(-\ln\sigma(-0.1) = -\ln 0.475\approx 0.744\)；梯度权重 \(\sigma(0.1)\approx 0.525\)。比“已经分对”的样本（权重 0.43）大：DPO 会把更多力气花在模型分错的样本上。</div></details>
-<details class="quiz"><summary>3. 一个 8B 模型有 32 层，每层的注意力投影和 MLP 合计约 7 个大矩阵，平均尺寸约 \(4096\times 7000\)。在所有这些矩阵上加 \(r = 8\) 的 LoRA，可训练参数约多少？占全模型的比例呢？</summary><div class="ans">每个矩阵 \(r(d + k) = 8\times(4096 + 7000)\approx 8.9\) 万；\(32\times 7\times 8.9\text{万}\approx 2000\) 万，约占 8B 的 0.25%。Adam 状态和梯度只需为这 2000 万参数保存，显存主要花在冻结的权重和激活值上。</div></details>
+<details class="quiz"><summary>1. 一条 SFT 样本：提示 40 个 token，基座模型在这些位置上平均每个 −ln p = 2.5 nat；回答 10 个 token，平均 0.8 nat。不加损失掩码时，回答在这条样本的损失里占多少？加掩码后按 token 平均，这条样本和另一条只有 2 个回答 token 的样本，在一批里的权重之比是多少？</summary><div class="ans">不加掩码：提示 \(40\times2.5 = 100\)，回答 \(10\times0.8 = 8\)，回答只占 \(8/108\approx 7.4\%\)，92.6% 的梯度在教模型预测提示。加掩码、按 token 平均：权重正比于计入损失的 token 数，\(10 : 2 = 5 : 1\)；如果按样本平均，则是 \(1:1\)。</div></details>
+<details class="quiz"><summary>2. 奖励模型给两个回答打分 1.2 和 −0.3。按 Bradley-Terry 模型，第一个被认为更好的概率是多少？如果给所有回答都加 10 分，结果会变吗？如果标注者之间的一致率是 80%，按“随机看错”模型，完美的奖励模型在新标注上的准确率上限是多少？</summary><div class="ans">\(\sigma(1.5) = 1/(1 + e^{-1.5})\approx 0.82\)。不会变：概率只依赖分差，奖励模型的分数只有相对意义。一致率 80%：\(\sqrt{2\times0.8-1} = \sqrt{0.6} = 0.775\)，\(\eta = (1-0.775)/2 = 11.3\%\)，上限 \(1-\eta\approx 88.7\%\)；每条比较只顶 \(2\times0.8-1 = 0.6\) 条干净比较。</div></details>
+<details class="quiz"><summary>3. DPO 中 \(\beta = 0.1\)，某条样本里当前模型相对参考模型，好回答的对数概率比为 −0.5，差回答为 +0.5（模型更偏向差回答）。损失和梯度权重各是多少？与“已经分对”的样本（权重 0.43）相比如何？</summary><div class="ans">括号内为 \(0.1\times(-0.5 - 0.5) = -0.1\)。损失 \(-\ln\sigma(-0.1) = -\ln 0.475\approx 0.744\)；梯度权重 \(\sigma(0.1)\approx 0.525\)。比“已经分对”的样本大：DPO 会把更多力气花在模型分错的样本上。注意这条样本里好回答的对数概率比已经是负的：好回答的概率比参考模型还低，这正是似然位移的样子。</div></details>
+<details class="quiz"><summary>4. 一个 8B 模型有 32 层，每层的注意力投影和 MLP 合计约 7 个大矩阵，平均尺寸约 \(4096\times 7000\)。在所有这些矩阵上加 \(r = 8\) 的 LoRA，可训练参数约多少？占全模型的比例呢？</summary><div class="ans">每个矩阵 \(r(d_{\text{in}} + d_{\text{out}}) = 8\times(4096 + 7000)\approx 8.9\) 万；\(32\times 7\times 8.9\text{万}\approx 2000\) 万，约占 8B 的 0.25%。Adam 状态和梯度只需为这 2000 万参数保存，显存主要花在冻结的权重和激活值上。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
-  <li><a href="https://arxiv.org/abs/2203.02155">Training language models to follow instructions with human feedback</a>（Ouyang 等, 2022）<span class="why">InstructGPT，现代后训练流程的原型。</span></li>
+  <li><a href="https://arxiv.org/abs/2203.02155">Training language models to follow instructions with human feedback</a>（Ouyang 等, 2022）<span class="why">InstructGPT，现代后训练流程的原型；附录里的标注一致率和奖励模型准确率值得细看。</span></li>
   <li><a href="https://arxiv.org/abs/2305.18290">Direct Preference Optimization</a>（Rafailov 等, 2023）<span class="why">推导短而漂亮，值得自己推一遍。</span></li>
   <li><a href="https://arxiv.org/abs/2305.11206">LIMA: Less Is More for Alignment</a>（Zhou 等, 2023）<span class="why">浅层对齐假说。</span></li>
-  <li><a href="https://arxiv.org/abs/2210.10760">Scaling Laws for Reward Model Overoptimization</a>（Gao 等, 2022）<span class="why">过度优化的定量刻画。</span></li>
+  <li><a href="https://arxiv.org/abs/2210.10760">Scaling Laws for Reward Model Overoptimization</a>（Gao 等, 2022）<span class="why">过度优化的定量刻画，以及回归型、极端型古德哈特的区分。</span></li>
   <li><a href="https://arxiv.org/abs/2106.09685">LoRA</a>（Hu 等, 2021）与 <a href="https://thinkingmachines.ai/blog/lora/">LoRA Without Regret</a>（Thinking Machines, 2025）<span class="why">原始方法和 2025 年的系统实验。</span></li>
-  <li><a href="https://arxiv.org/abs/2411.15124">Tülu 3</a>（Lambert 等, 2024）<span class="why">一份完全公开的后训练配方。</span></li>
+  <li><a href="https://arxiv.org/abs/2411.15124">Tülu 3</a>（Lambert 等, 2024）<span class="why">一份完全公开的后训练配方，连损失怎么平均这种坑都写了。</span></li>
 </ol>
 
-<div class="nextq">SFT 和偏好优化都在模仿：模仿示范，或者模仿“更好的那个”。模仿的天花板是示范本身。要让模型超越示范，需要让它自己尝试、根据结果改进：强化学习。下一章（第 <a class="xref" data-ref="rl"></a> 章）从零开始讲。</div>
+<div class="nextq">SFT 和偏好优化都在模仿：模仿示范，或者模仿“更好的那个”。模仿的天花板是示范本身；在线 DPO 已经开始让模型在自己的回答上学习，只差最后一步：不要偏好对，直接按结果打分。要让模型超越示范，需要让它自己尝试、根据结果改进：强化学习。下一章（第 <a class="xref" data-ref="rl"></a> 章）从零开始讲。</div>
 
-<p class="src">资料：<a href="https://arxiv.org/abs/2109.01652">FLAN</a> · <a href="https://crfm.stanford.edu/2023/03/13/alpaca.html">Alpaca</a> · <a href="https://arxiv.org/abs/2501.19393">s1</a> · <a href="https://arxiv.org/abs/2502.03387">LIMO</a> · <a href="https://arxiv.org/abs/2502.11886">LIMR</a> · <a href="https://arxiv.org/abs/2501.17161">SFT Memorizes, RL Generalizes</a> · <a href="https://arxiv.org/abs/2405.05904">Gekhman 等 2024</a> · <a href="https://arxiv.org/abs/2212.08073">Constitutional AI</a> · <a href="https://arxiv.org/abs/2305.15717">The False Promise of Imitating Proprietary LLMs</a> · <a href="https://arxiv.org/abs/2310.16944">Zephyr</a> · <a href="https://arxiv.org/abs/2310.12036">IPO</a> · <a href="https://arxiv.org/abs/2402.01306">KTO</a> · <a href="https://arxiv.org/abs/2403.07691">ORPO</a> · <a href="https://arxiv.org/abs/2405.14734">SimPO</a> · <a href="http://www.columbia.edu/~wt2319/RainbowPO.pdf">RainbowPO</a> · <a href="https://arxiv.org/abs/2410.08847">似然位移</a> · <a href="https://arxiv.org/abs/2404.10719">Is DPO Superior to PPO?</a> · <a href="https://arxiv.org/abs/2406.09279">Unpacking DPO and PPO</a> · <a href="https://arxiv.org/abs/2305.14314">QLoRA</a> · <a href="https://arxiv.org/abs/2405.09673">LoRA Learns Less and Forgets Less</a> · <a href="https://arxiv.org/abs/2212.04089">Task Arithmetic</a> · <a href="https://arxiv.org/abs/2306.01708">TIES</a> · <a href="https://arxiv.org/abs/2311.03099">DARE</a> · <a href="https://arxiv.org/abs/2607.11997">专家训练时长对合并的影响</a>。</p>
+<p class="src">资料：<a href="https://arxiv.org/abs/2109.01652">FLAN</a> · <a href="https://arxiv.org/abs/2212.10560">Self-Instruct</a> · <a href="https://crfm.stanford.edu/2023/03/13/alpaca.html">Alpaca</a> · <a href="https://arxiv.org/abs/2312.01552">URIAL（对齐前后的 token 分布）</a> · <a href="https://arxiv.org/abs/2405.14394">Instruction Tuning With Loss Over Instructions</a> · <a href="https://arxiv.org/abs/2407.21783">Llama 3</a> · <a href="https://arxiv.org/abs/2501.19393">s1</a> · <a href="https://arxiv.org/abs/2502.03387">LIMO</a> · <a href="https://arxiv.org/abs/2502.11886">LIMR</a> · <a href="https://arxiv.org/abs/2501.17161">SFT Memorizes, RL Generalizes</a> · <a href="https://arxiv.org/abs/2509.04259">RL's Razor</a> · <a href="https://arxiv.org/abs/2510.00237">Debunk the Myth of SFT Generalization</a> · <a href="https://arxiv.org/abs/2604.06628">Rethinking Generalization in Reasoning SFT（2026）</a> · <a href="https://arxiv.org/abs/2508.05629">DFT：SFT 的 RL 视角</a> · <a href="https://arxiv.org/abs/2405.05904">Gekhman 等 2024</a> · <a href="https://arxiv.org/abs/2501.12948">DeepSeek-R1</a> · <a href="https://arxiv.org/abs/2505.09388">Qwen3</a> · <a href="https://arxiv.org/abs/2512.13961">OLMo 3</a> · <a href="https://arxiv.org/abs/2507.06187">Delta Learning</a> · <a href="https://arxiv.org/abs/2401.01879">best-of-n 的 KL 上界</a> · <a href="https://arxiv.org/abs/2310.02743">奖励模型集成</a> · <a href="https://arxiv.org/abs/2406.02900">DPO 类方法的过度优化</a> · <a href="https://arxiv.org/abs/2212.08073">Constitutional AI</a> · <a href="https://arxiv.org/abs/2309.00267">RLAIF vs. RLHF</a> · <a href="https://arxiv.org/abs/2310.01377">UltraFeedback</a> · <a href="https://arxiv.org/abs/2402.04792">OAIF（在线 AI 反馈）</a> · <a href="https://arxiv.org/abs/2401.10020">Self-Rewarding Language Models</a> · <a href="https://arxiv.org/abs/2305.15717">The False Promise of Imitating Proprietary LLMs</a> · <a href="https://arxiv.org/abs/2310.16944">Zephyr</a> · <a href="https://arxiv.org/abs/2310.12036">IPO</a> · <a href="https://arxiv.org/abs/2402.01306">KTO</a> · <a href="https://arxiv.org/abs/2403.07691">ORPO</a> · <a href="https://arxiv.org/abs/2405.14734">SimPO</a> · <a href="http://www.columbia.edu/~wt2319/RainbowPO.pdf">RainbowPO</a> · <a href="https://arxiv.org/abs/2410.08847">似然位移</a> · <a href="https://arxiv.org/abs/2404.10719">Is DPO Superior to PPO?</a> · <a href="https://arxiv.org/abs/2406.09279">Unpacking DPO and PPO</a> · <a href="https://arxiv.org/abs/2012.13255">内在维度</a> · <a href="https://arxiv.org/abs/2305.14314">QLoRA</a> · <a href="https://arxiv.org/abs/2405.09673">LoRA Learns Less and Forgets Less</a> · <a href="https://arxiv.org/abs/2212.04089">Task Arithmetic</a> · <a href="https://arxiv.org/abs/2306.01708">TIES</a> · <a href="https://arxiv.org/abs/2311.03099">DARE</a> · <a href="https://arxiv.org/abs/2504.00698">Command A</a> · <a href="https://arxiv.org/abs/2509.18883">LongCat-Flash-Thinking</a> · <a href="https://arxiv.org/abs/2607.11997">专家训练时长对合并的影响</a>。本章三个新演示（回答掩码、标注噪声、KL 约束下的最优策略）都是玩具模型：掩码演示里的概率是示意数字；噪声演示的数字来自实际抽样和拟合；最优策略演示是按公式精确计算的。</p>
 
 <footer id="pager"></footer>
 </div></main>
