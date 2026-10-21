@@ -69,7 +69,7 @@ A.defineDemo('scaling-repeat', function (mount) {
     const more = best(C * 10, U), gain = cur.l - more.l, gainInf = curInf.l - best(C * 10, 1e30).l;
     const sat = gain < 0.002;
     stats.innerHTML = '';
-    [['最优参数量', A.human(cur.N, 1) + '（数据不限：' + A.human(curInf.N, 1) + '）'], ['训练遍数', cur.ep < 1.05 ? '1 遍' : (sat ? '—（已饱和）' : cur.ep.toFixed(1) + ' 遍')],
+    [['最优参数量', (sat ? '—（已饱和，任意）' : A.human(cur.N, 1)) + '（数据不限：' + A.human(curInf.N, 1) + '）'], ['训练遍数', cur.ep < 1.05 ? '1 遍' : (sat ? '—（已饱和）' : cur.ep.toFixed(1) + ' 遍')],
       ['每个训练 token 平均相当于', sat ? '—' : (cur.Dp / cur.D).toFixed(2) + ' 个新 token'], ['比“数据不限”高出的损失', '+' + (cur.l - curInf.l).toFixed(3)],
       ['再加 10 倍算力，损失还能降', gain.toFixed(3) + '（数据不限：' + gainInf.toFixed(3) + '）']]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));

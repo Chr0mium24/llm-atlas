@@ -1,7 +1,7 @@
 /* chinchilla — interactive demo (moved from ch05-training.html) */
 A.defineDemo('chinchilla', function (mount) {
   const { bd } = A.demo(mount, 'Chinchilla 计算器：给定算力，模型该多大？', 'L(N, D) = E + A/N^α + B/D^β；常数来自 Hoffmann 等 2022 及 Besiroglu 等 2024 的修正');
-  const FITS = { fix: [1.82, 482.01, 2085.43, 0.3478, 0.3658], orig: [1.69, 406.4, 410.7, 0.34, 0.28] };
+  const FITS = { fix: [1.82, 482.01, 2085.43, 0.3478, 0.3658], orig: [1.6934, 406.4, 410.7, 0.3392, 0.2849] };
   let E, Aa, B, al, be;
   const setFit = (k) => { [E, Aa, B, al, be] = FITS[k]; };
   setFit('fix');
@@ -9,26 +9,25 @@ A.defineDemo('chinchilla', function (mount) {
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   A.seg(ctl, [{ v: 'fix', t: '2024 复现修正的拟合' }, { v: 'orig', t: '2022 原论文方法 3' }], 'fix', (v) => { setFit(v); draw(); }, '拟合常数');
   const Cs = A.slider(ctl, { label: '训练算力 C（FLOPs）', min: 1e18, max: 1e27, log: true, value: 5.76e23, fmt: (v) => A.sci(v), on: draw, width: 280 });
-  const Is = A.slider(ctl, { label: '预期推理 token 数（上线后总量）', min: 1e9, max: 1e16, log: true, value: 1e9, fmt: (v) => A.human(v, 0), on: draw, width: 280 });
+  const Is = A.slider(ctl, { label: '预期推理 token 数（上线后总量）', min: 1e9, max: 1e16, log: true, value: 1e13, fmt: (v) => A.human(v, 0), on: draw, width: 280 });
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   const legend = A.el('div', { class: 'legend' }); bd.append(legend);
-  bd.append(A.el('p', { class: 'hint' }, '每条曲线是一个固定算力预算（等 FLOPs 线）：模型太小，数据虽多但容量不够；模型太大，每个参数分到的数据太少。曲线最低点就是 Chinchilla 最优。灰点是真实模型的大致位置（MoE 模型按激活参数画，仅供参考）。默认的 5.76×10²³ 就是 Chinchilla 本身的训练算力。切换到“原论文方法 3”的常数，最优点会跑到约 30B 参数、每参数近百个 token，与论文另外两种方法得到的“约 70B、每参数 20 token”矛盾；修正后的拟合与之一致。'));
+  bd.append(A.el('p', { class: 'hint' }, '每条曲线是一个固定算力预算（等 FLOPs 线）：模型太小，数据虽多但容量不够；模型太大，每个参数分到的数据太少。曲线最低点就是 Chinchilla 最优。灰点是几个真实模型的大致位置。橙点是把上线后的推理成本算进去之后、达到同样损失的最优点（默认推理 10 万亿 token）。默认的 5.76×10²³ 就是 Chinchilla 本身的训练算力。切换到“原论文方法 3”的常数，最优点会跑到约 40B 参数、每参数约 60 个 token，与论文另外两种方法得到的“约 70B、每参数 20 token”矛盾；修正后的拟合与之一致。'));
   const MODELS = [
-    ['GPT-3', 175e9, 300e9], ['Gopher', 280e9, 300e9], ['Chinchilla', 70e9, 1.4e12], ['Llama 2 70B', 70e9, 2e12],
-    ['Llama 3 8B', 8e9, 15e12], ['Llama 3 70B', 70e9, 15e12], ['Llama 3.1 405B', 405e9, 15.6e12], ['DeepSeek-V3（激活 37B）', 37e9, 14.8e12],
+    ['GPT-3', 175e9, 300e9], ['Chinchilla', 70e9, 1.4e12], ['Llama 3 8B', 8e9, 15e12], ['Llama 3.1 405B', 405e9, 15.6e12],
   ];
   const Ns = []; for (let e = 7; e <= 13.0001; e += 0.02) Ns.push(Math.pow(10, e));
   function optimum(C) { let best = null; Ns.forEach((N) => { const D = C / (6 * N); const l = L(N, D); if (!best || l < best.l) best = { N, D, l }; }); return best; }
   let hover = null;
   const view = A.canvas(cv, { aspect: 0.55 }, (ctx, W, H) => {
     const box = { x: 50, y: 20, w: W - 70, h: H - 56 };
-    const ax = A.axes(ctx, box, { xmin: 1e7, xmax: 1e13, xlog: true, ymin: 1.8, ymax: 4.2, xfmt: (v) => A.human(v, 0), yfmt: (v) => v.toFixed(1), xlabel: '参数量 N', ylabel: '损失 L', ylabelOffset: 42, xgrid: true });
+    const ax = A.axes(ctx, box, { xmin: 1e7, xmax: 1e13, xlog: true, ymin: 1.8, ymax: 2.8, xfmt: (v) => A.human(v, 0), yfmt: (v) => v.toFixed(1), xlabel: '参数量 N', ylabel: '损失 L', ylabelOffset: 42, xgrid: true });
     const cols = A.series();
-    const budgets = [1e19, 1e21, 1e23, 1e25, 1e27];
+    const budgets = [1e19, 1e21, 1e25, 1e27];
     budgets.forEach((C) => curve(ctx, ax, C, A.css('--axis'), 1.2, box));
     curve(ctx, ax, Cs.value, cols[0], 2.5, box);
-    budgets.forEach((C) => { const o = optimum(C); if (o.l < 4.2) A.text(ctx, A.sci(C), ax.X(o.N), ax.Y(o.l) + 12, { size: 10.5, color: A.css('--muted'), align: 'center' }); });
+    budgets.forEach((C) => { const o = optimum(C); if (o.l < 2.75) A.text(ctx, A.sci(C), ax.X(o.N), ax.Y(o.l) + 12, { size: 10.5, color: A.css('--muted'), align: 'center' }); });
     // models
     MODELS.forEach(([n, N, D]) => {
       const x = ax.X(N), y = ax.Y(L(N, D));
@@ -71,6 +70,6 @@ A.defineDemo('chinchilla', function (mount) {
     items.forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, v))));
     view.redraw();
   }
-  legend.innerHTML = '<span><i class="line" style="background:var(--s1)"></i>当前算力的等 FLOPs 曲线 / 训练最优点</span><span><i class="line" style="background:var(--axis)"></i>10¹⁹ … 10²⁷ FLOPs</span><span><i style="background:var(--s2);border-radius:50%"></i>考虑推理成本后、达到同样损失的最优点</span>';
+  legend.innerHTML = '<span><i class="line" style="background:var(--s1)"></i>当前算力的等 FLOPs 曲线 / 训练最优点</span><span><i class="line" style="background:var(--axis)"></i>10¹⁹、10²¹、10²⁵、10²⁷ FLOPs</span><span><i style="background:var(--s2);border-radius:50%"></i>考虑推理成本后、达到同样损失的最优点</span>';
   draw();
 });

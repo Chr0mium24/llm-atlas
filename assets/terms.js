@@ -130,7 +130,7 @@ window.ATLAS_TERMS = {
   'power-law': { t: '幂律', en: 'power law', d: String.raw`\(y = Kx^{-\alpha}\)：在双对数坐标里是斜率为 \(-\alpha\) 的直线。\(x\) 增加 10 倍，\(y\) 变为 \(10^{-\alpha}\) 倍。`, at: 'scaling#z-loglog' },
   'scaling-law': { t: '规模定律', en: 'scaling law', d: String.raw`损失随参数量、数据量、算力按幂律下降的经验规律，例如 \(L(N,D) = E + A/N^\alpha + B/D^\beta\)。用于从小规模实验外推大模型的表现。`, at: 'scaling#powerlaw' },
   'irreducible-loss': { t: '不可约损失', en: 'irreducible loss', d: String.raw`规模定律中的常数项 \(E\)：数据本身的熵，无论模型多大、数据多多都消不掉。`, at: 'scaling#z-floor' },
-  overtraining: { t: '过度训练', en: 'overtraining', d: '用远超训练算力最优值的数据训练较小的模型（如 Llama 3 8B 用 15T token，约每参数 1900 个）。训练多花算力，换来推理更便宜。', at: 'scaling#chinchilla' },
+  overtraining: { t: '过度训练', en: 'overtraining', d: '用远超训练算力最优值的数据训练较小的模型（如 Llama 3 8B 用 15T token，约每参数 1900 个）。训练多花算力，换来推理更便宜。', at: 'scaling#infer' },
   emergence: { t: '涌现', en: 'emergent abilities', d: '某些任务的表现在模型达到一定规模后看似突然出现。很大程度上可由不连续的评分方式解释（如精确匹配）。', at: 'scaling#emergence' },
   adam: { t: 'Adam', en: 'Adam optimizer', d: String.raw`维护梯度的滑动平均 \(\mathbf m\) 和梯度平方的滑动平均 \(\mathbf v\)，按 \(\hat{\mathbf m}/\sqrt{\hat{\mathbf v}}\) 更新：动量 + 逐参数自适应步长。每个参数多存两份状态。`, at: 'scaling#optim' },
   adamw: { t: 'AdamW', en: 'AdamW', d: '把权重衰减从梯度中解耦、直接作用于参数的 Adam。2017 年起大模型训练的默认优化器。', at: 'scaling#optim' },
