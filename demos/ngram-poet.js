@@ -83,7 +83,7 @@ A.defineDemo('ngram-poet', function (mount) {
     });
     const cp = copied.filter(Boolean).length / Math.max(1, body.length);
     const nctx = counts[Math.min(n - 1, 4)].size;
-    info.innerHTML = `逐字照抄比例 <b>${A.pct(cp, 0)}</b>。语料共 ${text.length} 字，其中出现过的 ${n - 1} 字上下文有 ${nctx} 种；而所有可能的 ${n - 1} 字组合约有 ${n > 1 ? A.sci(Math.pow(counts[0].get('').size, n - 1)) : 1} 种，绝大多数从未出现过。`;
+    info.innerHTML = `逐字照抄比例 <b>${A.pct(cp, 0)}</b>。语料共 ${text.length} 字，其中出现过的 ${n - 1} 字上下文有 ${nctx} 种；${n > 2 ? `而所有可能的 ${n - 1} 字组合约有 ${A.sci(Math.pow(counts[0].get('').size, n - 1))} 种，绝大多数从未出现过。` : ''}`;
   }
   pre.addEventListener('input', A.debounce(() => gen(), 200));
   gen();

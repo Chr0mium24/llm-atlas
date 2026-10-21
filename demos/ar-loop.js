@@ -1,6 +1,6 @@
 /* ar-loop — the autoregressive sampling loop, step by step: logits → temperature softmax → top-p → draw u → append */
 A.defineDemo('ar-loop', function (mount) {
-  const { bd } = A.demo(mount, '自回归生成：一个词一个词地采样', '玩具模型：每个词后面接什么词，logit 是手工设定的；其余数字都按公式实际计算');
+  const { bd } = A.demo(mount, '自回归生成：一个词一个词地采样', '比正文的 5 词模型大一点（约 50 个词），但仍只看上一个词；logit 是手工设定的，其余数字都按公式实际计算');
   const ANIMAL = { '，': 2.2, 住在: 1.8, 喜欢: 1.2, 很: 1.0, '。': 0.8 };
   const END = { '。': 2.2, '，': 1.6 };
   const PRON = { 喜欢: 1.8, 每天: 1.6, 很: 1.4, 想: 1.3, 住在: 1.0 };
@@ -37,7 +37,7 @@ A.defineDemo('ar-loop', function (mount) {
     { t: '抽随机数', tex: String.raw`u\sim\mathcal U(0,1),\quad x_t = \min\Big\{i : \textstyle\sum_{j\le i}p'_j \ge u\Big\}`, say: '把保留下来的候选按概率排成一条总长为 1 的线段，抽一个 0 到 1 之间的随机数 u，它落在哪一段，就选哪个词。' },
     { t: '接到末尾', tex: String.raw`x_{<t+1} = (x_{<t},\ x_t)`, say: '把选中的词接到前缀末尾，再回到第 1 步预测下一个。整段文字就是这个循环跑很多次的结果，每一步都依赖上一步的选择，所以无法并行。' },
   ];
-  let T = 1, P = 0.9, seed = 11, k = 0, seq = [], timer = null;
+  let T = 1, P = 1, seed = 11, k = 0, seq = [], timer = null;
   const bar = A.el('div', { class: 'flex', style: { marginBottom: '8px' } });
   const prev = A.el('button', { onclick: () => go(k - 1) }, '← 上一步');
   const next = A.el('button', { class: 'primary', onclick: () => go(k + 1) }, '下一步 →');

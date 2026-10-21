@@ -109,7 +109,7 @@
 
 <h3 id="rl0-entropy">探索与熵</h3>
 <p>演示里把学习率调大、把初始偏好调向 A，会看到一部分运行很快就几乎只按 A 或 B，再也不去试 C。原因是<dfn data-t="exploration">探索与利用</dfn>的矛盾：利用是选目前看来最好的，探索是去试别的、看会不会更好。策略一旦变得几乎确定，就不再探索，早期的运气就变成了永久的选择。</p>
-<p>衡量策略“还有多随机”的量是<dfn data-t="entropy">熵</dfn>：</p>
+<p>衡量策略“还有多随机”的量是<span class="term" data-t="entropy">熵</span>（第 <a class="xref" data-ref="generation"></a> 章）：</p>
 <div class="fx">
 \[ H(\pi) = -\sum_a \pi(a)\log_2\pi(a) \]
 <span class="eqnote">四个按钮完全均匀时 H = 2 比特；总按同一个时 H = 0</span>

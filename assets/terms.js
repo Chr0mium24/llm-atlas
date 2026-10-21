@@ -40,7 +40,7 @@ window.ATLAS_TERMS = {
   baseline: { t: '基线', en: 'baseline', d: String.raw`从奖励里减去的参考值 \(b\)，通常取平均得分。它不改变梯度的期望，但能大幅降低梯度估计的方差。`, at: 'rl#rl0-baseline' },
   advantage: { t: '优势', en: 'advantage', d: String.raw`\(A = R - b\)：这个动作（或这条回答）比平均水平好多少。正的就加强，负的就削弱。`, at: 'rl#rl0-baseline' },
   'gradient-variance': { t: '梯度估计的方差', en: 'variance of the gradient estimate', d: '用少量样本估计梯度时，每次估计结果的波动大小。方差大，训练就慢、不稳定。', at: 'rl#rl0-baseline' },
-  entropy: { t: '熵（策略的）', en: 'entropy', d: String.raw`\(H(\pi) = -\sum_a \pi(a)\log\pi(a)\)，衡量策略的随机程度：完全均匀时最大，总选同一个动作时为 0。`, at: 'rl#rl0-entropy' },
+  entropy: { t: '熵', en: 'entropy', d: String.raw`分布的平均信息量 \(H(p) = -\sum_x p(x)\log p(x)\)：完全均匀时最大，只剩一个结果时为 0。语言模型里衡量下一个 token 有多不确定；强化学习里衡量策略还有多随机。`, at: 'generation#g0-info' },
   exploration: { t: '探索与利用', en: 'exploration vs. exploitation', d: '利用：选目前看来最好的动作；探索：尝试其它动作，看会不会更好。只利用不探索，可能永远发现不了更好的选择。', at: 'rl#rl0-entropy' },
   'entropy-collapse': { t: '熵塌缩', en: 'entropy collapse', d: '训练中策略的熵过早地降到接近 0：模型几乎总做同一种选择，停止探索。', at: 'rl#rl0-entropy' },
   state: { t: '状态', en: 'state', d: String.raw`智能体做决定时能看到的全部信息 \(s_t\)。语言模型里是题目加上已经生成的前缀。`, at: 'rl#rl0-steps' },

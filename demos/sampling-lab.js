@@ -30,8 +30,9 @@ A.defineDemo('sampling-lab', function (mount) {
     const keep = new Array(p.length).fill(true);
     const k = K.value >= 15 ? p.length : K.value;
     order.forEach((i, r) => { if (r >= k) keep[i] = false; });
+    const zk = A.sum(p.filter((v, i) => keep[i]));
     let cum = 0;
-    order.forEach((i) => { if (!keep[i]) return; if (cum >= P.value) keep[i] = false; cum += p[i]; });
+    order.forEach((i) => { if (!keep[i]) return; if (cum >= P.value) keep[i] = false; cum += p[i] / zk; });
     const mx = Math.max(...p);
     p.forEach((v, i) => { if (v < MP.value * mx) keep[i] = false; });
     keep[order[0]] = true;
