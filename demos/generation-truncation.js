@@ -84,8 +84,8 @@ A.defineDemo('generation-truncation', function (mount) {
     }).join('')}</table>`;
     const tp = cur[2], mp = cur[3], tk = cur[1];
     let msg;
-    if (T <= 1.05) msg = `T ≤ 1 时三种截断都把垃圾挡在外面（不截断时每步仍有 ${fmtP(cur[0].junk)} 的概率抽到垃圾，几百步下来几乎必然出事）。它们的区别在右图：${kind === 'open' ? `30 个候选差不多一样好时，固定的 k = ${k} 砍掉了 ${A.pct(tk.goodCut, 0)} 的合理概率，top-p 和 min-p 按分布自动伸缩，几乎不砍。` : '一个明显答案时，top-p 和 min-p 只留下一两个候选，top-k 仍留满 k 个（多出来的是垃圾，只是此刻概率极小）。'}把温度往右拖。`;
-    else msg = `温度升高，2 万个垃圾 token 的总概率迅速变大。top-p 只管“累计到 ${P.toFixed(2)}”，于是一口气放进 ${A.human(tp.nk)} 个候选，每步有 ${fmtP(tp.junk)} 抽到垃圾；min-p 的门槛跟着最高概率走，只留 ${A.human(mp.nk)} 个，垃圾 ${fmtP(mp.junk)}。这就是 min-p 论文的主张“高温下更稳”。但实际部署很少用 T > 1.2，在常用温度下三者差别不大（见下面的争议）。${kind === 'peak' ? `确定的上下文里，top-k 的 ${k} 个名额有 ${k - 4 > 0 ? k - 4 : 0} 个只能分给垃圾。` : ''}`;
+    if (T <= 1.05) msg = `T ≤ 1 时三种截断都把垃圾挡在外面（不截断时每步仍有 ${fmtP(cur[0].junk)} 的概率抽到垃圾，几百步下来几乎必然出事）。它们的区别在右图：${kind === 'open' ? `30 个候选差不多一样好时，被砍掉的合理概率：top-k（k = ${k}）${A.pct(tk.goodCut, 0)}，top-p ${A.pct(tp.goodCut, 0)}，min-p ${A.pct(mp.goodCut, 0)}。温度低时分布变尖，top-p 和 min-p 也会只留下前几个。` : '一个明显答案时，top-p 和 min-p 只留下一两个候选，top-k 仍留满 k 个（多出来的是垃圾，只是此刻概率极小）。'}把温度往右拖。`;
+    else msg = `温度升高，2 万个垃圾 token 的总概率迅速变大。top-p 只管“累计到 ${P.toFixed(2)}”，于是一口气放进 ${A.human(tp.nk)} 个候选，每步有 ${fmtP(tp.junk)} 抽到垃圾；min-p 的门槛跟着最高概率走，只留 ${A.human(mp.nk)} 个，垃圾 ${fmtP(mp.junk)}。这就是 min-p 论文的主张“高温下更稳”。实际部署很少用 T > 1.2；在常用温度下 min-p 的优势有多大，仍有争议（见下面的争议框）。${kind === 'peak' ? `确定的上下文里，top-k 的 ${k} 个名额有 ${k - 4 > 0 ? k - 4 : 0} 个只能分给垃圾。` : ''}`;
     hint.textContent = msg;
     view.redraw();
   }
