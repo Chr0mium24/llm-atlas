@@ -13,7 +13,7 @@
 <header>
   <div class="kicker"></div>
   <h1>世界模型：先在想象里把世界跑一遍</h1>
-  <p class="lede">一个模型如果能根据当前的状态和你的动作，预测世界下一刻会变成什么样，它就是一个<b>世界模型</b>。有了它，智能体可以先在“想象”里试几步再动手，视频可以用键盘实时操控，自动驾驶和机器人可以一遍遍重演罕见的危险场景。这一章先用一个 9×9 的小球世界把基本概念从零讲一遍，再沿着 World Models → Dreamer → MuZero → GameNGen → Genie 3 讲清每一代在修什么，推导误差为什么按指数累积、为什么只敢想十几步、为什么从无标注视频里能学出“动作”，最后是一场还没结束的路线之争：预测像素，还是预测抽象的表示。</p>
+  <p class="lede">一个模型如果能根据当前的状态和你的动作，预测世界下一刻会变成什么样，它就是一个<b>世界模型</b>。有了它，智能体可以先在“想象”里试几步再动手，视频可以用键盘实时操控，机器人和自动驾驶可以重演罕见的危险场景。这一章要讲清三件事：模型的状态该保留什么，误差怎样一步步累积、因而能想多远，以及没有动作标签的视频怎样变成可以玩的世界。</p>
 </header>
 
 <div class="bridge">第 <a class="xref" data-ref="video"></a> 章的自回归视频模型能一帧帧地生成；第 <a class="xref" data-ref="spatial"></a> 章的三维模型能生成可以走进去的场景。把“下一帧”和“用户的动作”联系起来，并且足够快、足够稳，就得到一个可以交互的世界。强化学习那边早有同样的想法：先学一个环境的模拟器，再在里面练习。</div>
@@ -22,7 +22,7 @@
   <ul>
     <li>策略、奖励、价值函数、轨迹、回报：第 <a class="xref" data-ref="rl"></a> 章（下面「从零开始」会把用到的部分再讲一遍）</li>
     <li>VAE 与潜空间：第 <a class="xref" data-ref="image"></a> 章；KL 散度：第 <a class="xref" data-ref="rl"></a> 章</li>
-    <li>自回归视频、漂移、Diffusion Forcing 与 Self Forcing：第 <a class="xref" data-ref="video"></a> 章；少步蒸馏：第 <a class="xref" data-ref="diffusion"></a> 章</li>
+    <li>自回归视频、漂移、Diffusion Forcing 与 Self Forcing：第 <a class="xref" data-ref="video"></a> 章；少步生成：第 <a class="xref" data-ref="image"></a> 章</li>
     <li>三维表示（高斯泼溅）：第 <a class="xref" data-ref="spatial"></a> 章</li>
   </ul>
 </div>
@@ -31,14 +31,15 @@
 <p><dfn data-t="world-model">世界模型</dfn>学习的是环境的动态：给定到目前为止的观测和动作，下一刻会观测到什么：</p>
 <div class="fx">
 \[ \htmlClass{sym-s}{\mathbf s_{t+1}} \sim p_\theta\big(\mathbf s_{t+1}\ \big|\ \mathbf s_{\le t},\ \htmlClass{c-new}{\htmlClass{sym-a}{\mathbf a_t}}\big) \]
-  <div class="fx-read">\(\mathbf s\) 可以是画面的像素、画面的潜编码，也可以是一个抽象的状态向量；\(\mathbf a\) 是<span style="color:var(--s4)">动作</span>：键盘按键、方向盘角度、机械臂的关节指令。和视频生成的区别只在于多了动作这个条件，而且要足够快地一步步生成。</div>
+  <div class="fx-read">\(\mathbf s\) 可以是画面的像素、画面的潜编码，也可以是一个抽象的状态向量；\(\mathbf a\) 是<span style="color:var(--s4)">动作</span>：键盘按键、方向盘角度、机械臂的关节指令。和视频生成的区别只在于多了动作这个条件，而且要足够快地一步步生成。这里暂时把观测和状态都记作 \(\mathbf s\)，下一节会把两者分开。</div>
   <dl class="fx-syms">
     <dt data-sym="s">\(\mathbf s_t\)</dt><dd>时刻 \(t\) 的观测或状态</dd>
     <dt data-sym="a">\(\mathbf a_t\)</dt><dd>时刻 \(t\) 采取的动作</dd>
   </dl>
   <div class="fx-eg">下面的小球世界里，\(\mathbf s\) 是小球的坐标或一张 24×24 的画面，\(\mathbf a\) 是 ↑↓←→ 或不动。Genie（2024）里 \(\mathbf s\) 是游戏画面，\(\mathbf a\) 是 8 个从无标注视频里学出来的“潜动作”之一；GameNGen 里 \(\mathbf a\) 是《毁灭战士》的按键；Waymo 的世界模型里 \(\mathbf a\) 是驾驶动作，\(\mathbf s\) 同时包括摄像头画面和激光雷达点云。</div>
 </div>
-<p>世界模型有两条源流。一条来自强化学习：先学一个环境模型，让智能体在模型里练习，省下与真实环境交互的代价（Sutton 的 Dyna, 1990；Ha 与 Schmidhuber 的《World Models》, 2018；PlaNet 与 Dreamer；DeepMind 的 MuZero）。另一条来自视频生成：Wayve 的 GAIA-1（2023）用视频模型模拟驾驶，OpenAI 的 Sora 技术报告（2024-02）称视频模型是“世界模拟器”，Genie、GameNGen、Oasis 等让视频模型按动作实时生成。2025–26 年，两条线在机器人和自动驾驶上汇合。</p>
+<p>世界模型有两条源流。一条来自强化学习：先学一个环境模型，让智能体在模型里练习，省下与真实环境交互的代价（Dreamer、MuZero）。另一条来自视频生成：让视频模型按动作逐帧生成，变成可以操控的视频（Genie、GameNGen）。两条线并行发展，2025–26 年在机器人和自动驾驶上汇合；时间线见章末演进史。</p>
+<p>这一章里的“世界模型”只指一件事：以动作为条件的下一刻预测器。“语言模型内部有没有世界模型”是另一个问题，放在「路线之争」之后的争议框里。读完这一章要能回答的是：这个预测器的状态该保留什么。全章用同一条轴来分：<b>是否还原观测</b>。Dreamer、GameNGen、Genie、Cosmos 要求模型能还原画面；MuZero 只留对决策有用的东西，JEPA 只留能预测的东西，两者都不还原画面。误差累积决定能想多远，这个选择决定模型学什么、能拿来做什么。</p>
 <p>强化学习里，用世界模型的方法叫<dfn data-t="model-based-rl">基于模型的强化学习</dfn>（model-based RL）；不学模型、直接从真实交互里学策略和价值的叫<dfn data-t="model-free-rl">无模型强化学习</dfn>（model-free RL），第 <a class="xref" data-ref="rl"></a> 章的 PPO、GRPO 都属于后者。语言模型的 RL 几乎都是无模型的：“环境”就是判分程序，不需要再造一个模拟器。世界模型的价值出现在真实交互很贵、很慢或很危险的地方：机器人会摔坏，汽车会出事故。</p>
 
 <h2 id="basics" data-short="世界模型从零开始">从零开始：一个 9×9 的小球世界</h2>
@@ -69,9 +70,9 @@
 
 <h3 id="wm0-latent">从画面到潜状态</h3>
 <p>智能体看到的不是坐标，而是 1728 个像素。有两种做法。</p>
-<p><b>直接在像素上预测。</b>输入这一帧和动作，输出下一帧的 1728 个数。下面的演示就是这样一个模型：它不知道小球的坐标，每一帧都由去噪生成，条件是上一帧的图像和你的按键。毛病直接看得见：每一步都要把背景、房子、树重新画一遍；一步画得稍微糊一点，糊的画面又成了下一步的输入。</p>
+<p><b>直接在像素上预测。</b>输入这一帧和动作，输出下一帧的 1728 个数。下面的演示就是这样一个模型：它不知道小球的坐标，每一帧都由去噪生成，条件是上一帧的图像和你的按键。它的毛病是：每一步都要把背景、房子、树重新画一遍；一步画得稍微糊一点，糊的画面又成了下一步的输入。默认设置下画面是清晰的，按几次方向键，演示下方的偏差约 0.02；把“每帧去噪步数”调到 1、“上下文模糊度”调到 0.3 以上，再连按几次，偏差跳到约 0.09 并停在那里，不再回落：糊掉的帧成了下一帧的条件。</p>
 <div data-demo="world-model-toy"></div>
-<p><b>先压缩，再预测。</b>用编码器把画面压成一个短向量 \(\mathbf z\)，在 \(\mathbf z\) 上预测下一步，需要看画面时再解码。这个短向量叫<dfn data-t="latent-state">潜状态</dfn>（latent state），小球世界里理想的潜状态就是 \((x, y)\)。Dreamer、MuZero、V-JEPA 2 都属于这一类，区别在于要求潜状态保留什么：Dreamer 要求它能还原画面，MuZero 只要求它能预测奖励和价值，JEPA 要求它能预测下一刻的潜状态本身。</p>
+<p><b>先压缩，再预测。</b>用编码器把画面压成一个短向量 \(\mathbf z\)，在 \(\mathbf z\) 上预测下一步，需要看画面时再解码。这个短向量叫<dfn data-t="latent-state">潜状态</dfn>（latent state），小球世界里理想的潜状态就是 \((x, y)\)。Dreamer、MuZero、V-JEPA 2 都属于这一类，区别在于要求潜状态保留什么：Dreamer 要求它能还原画面，MuZero 只要求它能预测奖励和价值，JEPA 要求它能预测下一刻的潜状态本身。后面三节逐个展开。</p>
 <p>还有一个问题：一帧画面不一定包含全部状态。如果小球会滚动、带着速度，单看一帧分不出它往哪边走。这叫<dfn data-t="partial-observability">部分可观测</dfn>（partial observability）。办法是让模型带一个记忆 \(\mathbf h_t\)，把看过的帧汇总起来：两帧之差就是速度。下一节 Dreamer 的 RSSM 正是“记忆 \(\mathbf h\) + 当前潜状态 \(\mathbf z\)”的结构。</p>
 
 <h3 id="wm0-plan">在脑子里试几步：想象中的规划</h3>
@@ -102,11 +103,12 @@
 <h3 id="wm0-error">模型错一点会怎样</h3>
 <p>假设智能体只在冰面上走过 5 次，碰巧一次都没滑。按计数公式，模型的滑落概率 \(\hat p = 0\)，于是在模型里计划 A 的回报是 \(\gamma^3 = 0.729\)，比计划 B 的 0.590 高，规划器选 A。它的真实期望回报是 −0.07。真实滑落概率是 0.2 时，5 次都不滑的概率是 \(0.8^5\approx 33\%\)：大约三次里有一次，模型会得出这个过于乐观的结论。</p>
 <p>这里有两件事。第一，模型错了，低估了风险。第二，规划器会专挑模型错得对自己有利的地方：模型高估风险，规划器只是多绕点路；低估了，规划器就冲进去。在许多候选里挑“模型说最好”的那个，挑出来的往往是被高估最多的那个。这叫<dfn data-t="model-exploitation">钻模型的空子</dfn>（model exploitation）。它和第 <a class="xref" data-ref="rl"></a> 章的<span class="term" data-t="reward-hacking">钻奖励空子</span>是同一类现象：优化的压力会找到评估者的漏洞。</p>
-<p>另一个问题是误差累积：每一步的输出又是下一步的输入，小误差会一步步传下去（上面的演示里把去噪步数调少、把 τ 调大就能看到）。后面每一种世界模型都要面对这两个问题。</p>
+<p>另一个问题是误差累积：每一步的输出又是下一步的输入，小误差会一步步传下去（上面的演示里把去噪步数调少、把上下文模糊度调大就能看到）。后面每一种世界模型都要面对这两个问题。</p>
 
 
 <h2 id="rssm">Dreamer 的世界模型：重建、预测与 KL</h2>
-<p>在像素上滚动预测太贵、容易糊；在潜空间里预测，又得保证潜状态装着足够的信息。PlaNet（Hafner 等, 2018-11）提出了<dfn data-t="rssm">RSSM</dfn>（循环状态空间模型，recurrent state-space model）：潜状态分两部分，一个确定性的记忆 \(\mathbf h_t\)（一个循环网络），和一个随机的 \(\mathbf z_t\)。PlaNet 在这个潜空间里用 CEM 做 MPC，在大多数连续控制任务上，500 局的成绩与无模型方法 D4PG 用 10 万局的成绩相当。Dreamer 系列（2019–2023）沿用了这个结构：</p>
+<p>在像素上滚动预测太贵、容易糊；在潜空间里预测，又得保证潜状态装着足够的信息。PlaNet（Hafner 等, 2018-11）提出了<dfn data-t="rssm">RSSM</dfn>（循环状态空间模型，recurrent state-space model）：潜状态分两部分，一个确定性的记忆 \(\mathbf h_t\)（一个循环网络），和一个随机的 \(\mathbf z_t\)。PlaNet 在这个潜空间里用 CEM 做 MPC，在大多数连续控制任务上，500 局的成绩与 D4PG（当时最强的无模型连续控制算法之一）用 10 万局的成绩相当。</p>
+<p>为什么潜状态要分两部分？回到小球世界：在 (1, 4) 按 →，有时到冰面 (2, 4)，有时滑进 (2, 5)，这一步是随机的。如果模型只有确定性的记忆 \(\mathbf h\)，它只能预测一个“平均”的未来，相当于把小球画在两个格子中间；如果只有随机的 \(\mathbf z\)，每一步都重新抽签，前面几帧汇总出来的东西（比如小球的速度）就记不住。RSSM 两样都留：\(\mathbf h\) 负责记，\(\mathbf z\) 负责“这一步抽到了哪一种”。Dreamer 系列（2019–2023）沿用了这个结构：</p>
 <div class="fx">
 \[ \begin{aligned} \htmlClass{sym-h}{\mathbf h_t} &= f_\phi(\mathbf h_{t-1},\ \mathbf z_{t-1},\ \mathbf a_{t-1}) && \text{序列模型（记忆）}\\ \htmlClass{sym-q}{\mathbf z_t} &\sim q_\phi(\mathbf z_t\mid \mathbf h_t,\ \mathbf x_t) && \text{编码器：看了这一帧}\\ \htmlClass{sym-p}{\hat{\mathbf z}_t} &\sim p_\phi(\hat{\mathbf z}_t\mid \mathbf h_t) && \text{动力学预测：没看这一帧}\\ \htmlClass{sym-d}{\hat{\mathbf x}_t,\ \hat r_t,\ \hat c_t} &\sim p_\phi(\,\cdot \mid \mathbf h_t,\ \mathbf z_t) && \text{解码器、奖励、是否结束} \end{aligned} \]
   <div class="fx-read">记忆 \(\mathbf h\) 把过去汇总起来。同一时刻有两个版本的 \(\mathbf z\)：编码器看了当前画面给出的 \(q\)，和动力学预测器只凭记忆猜出来的 \(p\)。训练时两者都有；想象时没有画面，只能用 \(p\)。</div>
@@ -121,7 +123,7 @@
 <p>让 \(p\) 尽量接近 \(q\)，就是让“没看画面时的猜测”尽量接近“看了画面之后的判断”，这正是世界模型要学的东西。DreamerV3 的训练目标有三项：</p>
 <div class="fx">
 \[ \begin{aligned} \mathcal L(\phi) &= \htmlClass{sym-Lp}{\mathcal L_{\text{pred}}} + \htmlClass{sym-bd}{\beta_{\text{dyn}}}\,\htmlClass{sym-Ld}{\mathcal L_{\text{dyn}}} + \htmlClass{sym-br}{\beta_{\text{rep}}}\,\htmlClass{sym-Lr}{\mathcal L_{\text{rep}}} \\ \htmlClass{sym-Lp}{\mathcal L_{\text{pred}}} &= -\ln p_\phi(\mathbf x_t\mid \mathbf h_t,\mathbf z_t) - \ln p_\phi(r_t\mid \mathbf h_t,\mathbf z_t) - \ln p_\phi(c_t\mid \mathbf h_t,\mathbf z_t) \\ \htmlClass{sym-Ld}{\mathcal L_{\text{dyn}}} &= \htmlClass{c-clip}{\max\big(1,}\ \mathrm{KL}\big[\htmlClass{sym-sg}{\operatorname{sg}}(q_\phi)\,\big\|\,p_\phi\big]\htmlClass{c-clip}{\big)} \\ \htmlClass{sym-Lr}{\mathcal L_{\text{rep}}} &= \htmlClass{c-clip}{\max\big(1,}\ \mathrm{KL}\big[q_\phi\,\big\|\,\htmlClass{sym-sg}{\operatorname{sg}}(p_\phi)\big]\htmlClass{c-clip}{\big)} \end{aligned} \]
-  <div class="fx-read">第一项要求潜状态能还原画面、预测奖励和“是否结束”；后两项是同一个 <span class="term" data-t="kl">KL 散度</span>，一项只改动力学预测器（让先验追上后验），一项只改编码器（让后验变得容易预测）。KL 小于 1 nat 时<span style="color:var(--s5)">截住</span>，不再惩罚。</div>
+  <div class="fx-read">第一项要求潜状态能还原画面、预测奖励和“是否结束”；后两项是同一个 <span class="term" data-t="kl">KL 散度</span>，一项只改动力学预测器（让先验追上后验），一项只改编码器（让后验变得容易预测）。KL 小于 1 nat（nat 是用自然对数计的信息量，1 nat ≈ 1.44 比特）时<span style="color:var(--s5)">截住</span>，不再惩罚。</div>
   <dl class="fx-syms">
     <dt data-sym="Lp">\(\mathcal L_{\text{pred}}\)</dt><dd>预测损失：画面、奖励、继续标志的负对数似然</dd>
     <dt data-sym="Ld">\(\mathcal L_{\text{dyn}}\)</dt><dd>动力学损失：训练 \(p\) 去预测 \(q\)</dd>
@@ -132,7 +134,7 @@
   </dl>
   <div class="fx-eg">一个两类的潜变量，后验 \(q = (0.9, 0.1)\)。若先验 \(p = (0.5, 0.5)\)：\(\mathrm{KL} = 0.9\ln1.8 + 0.1\ln0.2\approx 0.37\) nat，小于 1，被截成常数 1，没有梯度，力气全留给预测损失。若先验 \(p = (0.1, 0.9)\)，猜反了：\(\mathrm{KL} = 0.9\ln 9 + 0.1\ln\tfrac19\approx 1.76\) nat，超过 1，梯度照常，先验被拉向后验。</div>
 </div>
-<p>表示损失的权重只有 0.1，是因为编码器最省事的做法是什么都不编码：让 \(q\) 变成和 \(p\) 一样的平淡分布，KL 就是 0，潜状态就塌缩了。权重小、再加上 KL 低于 1 nat 不惩罚（这个技巧叫<dfn data-t="free-bits">free bits</dfn>），两边的拉扯才不会把信息挤掉。以前的世界模型要按画面复杂度调这个权重（三维场景细节多，要强正则；静态背景的游戏里个别像素就很要紧，要弱正则）；DreamerV3 靠 free bits 加一个小的表示损失，用同一组系数跑通了雅达利、DMLab、ProcGen、机器人控制和《我的世界》等 150 多个任务。</p>
+<p>表示损失的权重只有 0.1，是因为编码器最省事的做法是什么都不编码：让 \(q\) 变成和 \(p\) 一样的平淡分布，KL 就是 0，潜状态就塌缩了。权重小、再加上 KL 低于 1 nat 不惩罚（这个技巧叫<dfn data-t="free-bits">free bits</dfn>），两边的拉扯才不会把信息挤掉。以前的世界模型要按画面复杂度调这个权重（三维场景细节多，要强正则；静态背景的游戏里个别像素就很要紧，要弱正则）；DreamerV3 靠 free bits 加一个小的表示损失，用同一组系数跑通了雅达利、DMLab、ProcGen、机器人控制和《我的世界》等 150 多个任务。下面的推导说明，这套损失就是一个按时间展开的 VAE：重建项要潜状态装得下画面，KL 项要它尽量能从过去预测出来，两者的拉锯决定了潜状态保留哪些细节。</p>
 
 <details class="deep"><summary>Dreamer 的损失从哪来：按时间展开的 VAE 与证据下界</summary><div class="in">
 <p><b>第 1 步，想要什么。</b>理想的目标是让模型给真实观测序列尽量高的概率：最大化 \(\ln p(\mathbf x_{1:T}\mid \mathbf a_{1:T})\)。但这个概率要对所有可能的潜变量序列 \(\mathbf z_{1:T}\) 求和（积分），算不出来。</p>
@@ -144,7 +146,7 @@
 <p>第一项是重建，第二项是“看了画面之后对 \(\mathbf z_t\) 的认识”和“只凭记忆的预测”之间的差距。这就是一个在时间上展开的<span class="term" data-t="vae">VAE</span>：普通 VAE 的先验是固定的标准正态，这里的先验是动力学模型的预测。</p>
 <p><b>第 4 步，加上奖励，再把 KL 拆成两半。</b>奖励和继续标志也当作要预测的观测，加进重建项，得到 \(\mathcal L_{\text{pred}}\)。KL 的梯度同时流向 \(p\) 和 \(q\)：</p>
 \[ \nabla\,\mathrm{KL}[q\|p] = \nabla\,\mathrm{KL}[\operatorname{sg}(q)\|p] + \nabla\,\mathrm{KL}[q\|\operatorname{sg}(p)] \]
-<p>所以 \(\beta_{\text{dyn}} = \beta_{\text{rep}} = 1\) 时恰好回到原始的 ELBO。DreamerV2 把这个拆分叫 KL 平衡（取 0.8 对 0.2），DreamerV3 取 1 对 0.1：大部分力气用来让先验追上后验，只用一点力气让后验迁就先验。</p>
+<p>所以 \(\beta_{\text{dyn}} = \beta_{\text{rep}} = 1\) 时（不计 free bits 截断）恰好回到原始的 ELBO。DreamerV2 把这个拆分叫 KL 平衡（取 0.8 对 0.2），DreamerV3 取 1 对 0.1：大部分力气用来让先验追上后验，只用一点力气让后验迁就先验。</p>
 <p><b>第 5 步，KL 是信息量。</b>平均之后，KL 项衡量每一步从画面里“新读进来”多少信息（1 nat ≈ 1.44 比特）：能从过去预测的部分不算。free bits 等于说：每一步免费读进 1 nat，超过的部分才收费。</p>
 <p><b>这个推导告诉我们：</b>Dreamer 的世界模型是一个按时间展开的 VAE。重建项要求潜状态装得下画面，KL 项要求它尽量能从过去预测出来，两者的拉锯决定了潜状态保留哪些细节。后面 MuZero 和 JEPA 的分歧，就是对“重建项该不该有”的不同回答。</p>
 </div></details>
@@ -152,69 +154,66 @@
 <h2 id="rl">在想象中练习：Dreamer 怎样学策略</h2>
 <p>有了世界模型，训练策略不再需要真实环境。这种做法叫<dfn data-t="imagination">想象训练</dfn>（learning in imagination）：从回放缓冲区里取一段真实经历，用编码器得到起点 \((\mathbf h, \mathbf z)\)；策略在潜空间里选动作，动力学预测器给出下一个 \(\hat{\mathbf z}\)，奖励头给出 \(\hat r\)，继续头给出 \(\hat c\)；这样往前想象 \(H\) 步。每一步只是几个小网络的前向计算，不必生成画面：DreamerV2 在一张 GPU 上能同时想象 2500 条潜轨迹。策略的目标是想象轨迹上的回报：</p>
 <div class="fx">
-\[ \begin{aligned} &\max_{\pi}\ \mathbb E\Big[\sum_{t=0}^{\htmlClass{sym-H}{H}} R^\lambda_t\Big],\qquad \hat{\mathbf s}_{t+1}\sim p_\phi(\cdot\mid\hat{\mathbf s}_t,\ \mathbf a_t),\ \ \mathbf a_t\sim\pi(\cdot\mid\hat{\mathbf s}_t) \\ &\htmlClass{sym-R}{R^\lambda_t} = \hat r_t + \gamma\,\hat c_t\Big[(1-\htmlClass{sym-lam}{\lambda})\,\htmlClass{sym-v}{v_\psi(\hat{\mathbf s}_{t+1})} + \htmlClass{sym-lam}{\lambda}\,R^\lambda_{t+1}\Big],\qquad R^\lambda_H = v_\psi(\hat{\mathbf s}_H) \end{aligned} \]
-  <div class="fx-read">从真实经历中的某个状态出发，用世界模型想象接下来 \(H\) 步。每一步的目标回报 \(R^\lambda\) 是“这一步的奖励 + 下一步的价值”和“这一步的奖励 + 再往后的目标回报”按 \(\lambda\) 混合；最后一步只能用价值网络的估计。然后按第 <a class="xref" data-ref="rl"></a> 章的策略梯度和价值函数改进策略。整个过程不碰真实环境。</div>
+\[ \begin{aligned} &\max_{\pi}\ \mathbb E\Big[\sum_{t=0}^{\htmlClass{sym-H}{H}} G^\lambda_t\Big],\qquad \hat{\mathbf s}_{t+1}\sim p_\phi(\cdot\mid\hat{\mathbf s}_t,\ \mathbf a_t),\ \ \mathbf a_t\sim\pi(\cdot\mid\hat{\mathbf s}_t) \\ &\htmlClass{sym-R}{G^\lambda_t} = \hat r_t + \gamma\,\hat c_t\Big[(1-\htmlClass{sym-lam}{\lambda})\,\htmlClass{sym-v}{v_\psi(\hat{\mathbf s}_{t+1})} + \htmlClass{sym-lam}{\lambda}\,G^\lambda_{t+1}\Big],\qquad G^\lambda_H = v_\psi(\hat{\mathbf s}_H) \end{aligned} \]
+  <div class="fx-read">从真实经历中的某个状态出发，用世界模型想象接下来 \(H\) 步。每一步的目标回报 \(G^\lambda\) 是“这一步的奖励 + 下一步的价值”和“这一步的奖励 + 再往后的目标回报”按 \(\lambda\) 混合；最后一步只能用价值网络的估计。然后按第 <a class="xref" data-ref="rl"></a> 章的策略梯度和价值函数改进策略。整个过程不碰真实环境。</div>
   <dl class="fx-syms">
-    <dt data-sym="H">\(H\)</dt><dd>想象的步数，DreamerV3 取 15（原因见「误差累积」一节）</dd>
-    <dt data-sym="R">\(R^\lambda_t\)</dt><dd>λ-回报：第 \(t\) 步的训练目标</dd>
+    <dt data-sym="H">\(H\)</dt><dd>想象的步数，DreamerV3 取 15，是经验取值；为什么不取更长，见「误差累积」一节</dd>
+    <dt data-sym="R">\(G^\lambda_t\)</dt><dd>λ-回报：第 \(t\) 步的训练目标</dd>
     <dt data-sym="lam">\(\lambda\)</dt><dd>混合系数：0 只看一步、其余全靠价值网络；1 用完 \(H\) 步的想象奖励再加末尾的价值。DreamerV3 取 0.95</dd>
     <dt data-sym="v">\(v_\psi(\cdot)\)</dt><dd>价值网络（critic）对潜状态的估计</dd>
   </dl>
-  <div class="fx-eg">想象 3 步，\(\gamma = 0.9\)，\(\lambda = 0.5\)，想象的奖励 \((0, 0, 1)\)，价值网络对第 1–3 步状态的估计 \((0.6, 0.8, 0.5)\)。倒着算：\(R_3 = 0.5\)；\(R_2 = 1 + 0.9(0.5\times0.5 + 0.5\times0.5) = 1.45\)；\(R_1 = 0.9(0.5\times0.8 + 0.5\times1.45) \approx 1.01\)；\(R_0 = 0.9(0.5\times0.6 + 0.5\times1.01)\approx 0.73\)。若 \(\lambda = 0\)：\(R_0 = 0.9\times0.6 = 0.54\)，全信价值网络；若 \(\lambda = 1\)：\(R_0 = 0.81 + 0.729\times0.5\approx 1.17\)，全信想象。</div>
+  <div class="fx-eg">想象 3 步，\(\gamma = 0.9\)，\(\lambda = 0.5\)，想象的奖励 \((0, 0, 1)\)，价值网络对第 1–3 步状态的估计 \((0.6, 0.8, 0.5)\)。倒着算：\(G_3 = 0.5\)；\(G_2 = 1 + 0.9(0.5\times0.5 + 0.5\times0.5) = 1.45\)；\(G_1 = 0.9(0.5\times0.8 + 0.5\times1.45) \approx 1.01\)；\(G_0 = 0.9(0.5\times0.6 + 0.5\times1.01)\approx 0.73\)。若 \(\lambda = 0\)：\(G_0 = 0.9\times0.6 = 0.54\)，全信价值网络；若 \(\lambda = 1\)：\(G_0 = 0.81 + 0.729\times0.5\approx 1.17\)，全信想象。</div>
 </div>
 <p>这个 \(\lambda\) 和第 <a class="xref" data-ref="rl"></a> 章 <span class="term" data-t="gae">GAE</span> 里的 \(\lambda\) 是同一个东西。上式就是 <dfn data-t="lambda-return">λ-回报</dfn>（λ-return）。DreamerV3 的折扣 \(\gamma = 0.997\)，相当于约 333 步的有效视野，可想象只有 15 步：15 步以后的回报全部靠价值网络补上。</p>
-<p>效果：DreamerV1（2019-12）在 20 个从画面学习的连续控制任务上，数据效率和最终成绩都超过了当时的方法；DreamerV2（2020-10）是第一个在单独训练的世界模型里学习、在 55 个雅达利游戏上达到人类水平的智能体，只用一张 GPU；DreamerV3（2023-01 发布，2025-04 发表于 Nature）用同一套超参数在 150 多个任务上取得好成绩，并第一个不借助人类数据和课程、从零开始在《我的世界》中挖到钻石：要连续完成砍树、做工具、挖铁、炼铁等十几个子目标，预算 1 亿个环境步（约合游戏内 100 天）。模型从 1200 万参数加到 4 亿参数，成绩和数据效率都随之提高。</p>
+<p>效果：DreamerV3（2023-01 发布，2025-04 发表于 Nature）用同一套超参数在 150 多个任务上取得好成绩，并第一个不借助人类数据和课程、从零开始在《我的世界》中挖到钻石：要连续完成砍树、做工具、挖铁、炼铁等十几个子目标，预算 1 亿个环境步（约合游戏内 100 天）。模型从 1200 万参数加到 4 亿参数，成绩和数据效率都随之提高。前两代的战绩见演进史。</p>
 
 <h2 id="muzero">只预测对决策有用的东西：MuZero</h2>
-<p>Dreamer 的潜状态要能还原画面，可规划时用到的只有三样东西：这一步的奖励、这个局面值多少（价值）、该走哪一步（策略）。DeepMind 的 MuZero（2019-11 发布，2020-12 发表于 Nature）干脆只训练模型预测这三样。它有三个网络：表示函数 \(h_\theta\) 把过去的观测变成初始隐藏状态；动力学函数 \(g_\theta\) 根据隐藏状态和动作给出奖励和下一个隐藏状态；预测函数 \(f_\theta\) 给出策略和价值。</p>
+<p>Dreamer 的潜状态要能还原画面，可规划时用到的只有三样东西：这一步的奖励、这个局面值多少（价值）、该走哪一步（策略）。DeepMind 的 MuZero（2019-11 发布，2020-12 发表于 Nature）干脆只训练模型预测这三样。它有三个网络：表示函数把过去的观测变成初始隐藏状态；动力学函数根据隐藏状态和动作给出奖励和下一个隐藏状态；预测函数给出策略和价值。</p>
 <p>规划用<dfn data-t="mcts">蒙特卡洛树搜索</dfn>（MCTS）：从当前隐藏状态出发，反复挑一条“看起来有希望又还没探索够”的路径往下展开，给新节点估价，再把估价沿路径传回去。几十到几百次模拟之后，根节点各动作的访问次数构成一个比网络直接输出更好的策略。AlphaZero 也用 MCTS，但用的是真实棋规；MuZero 把棋规换成了学出来的动力学函数。</p>
 <div class="fx">
-\[ \ell_t(\theta) = \sum_{k=0}^{\htmlClass{sym-K}{K}}\Big[\,\ell^{r}\big(\htmlClass{sym-u}{u_{t+k}},\ r^k_t\big) + \ell^{v}\big(\htmlClass{sym-z}{z_{t+k}},\ v^k_t\big) + \ell^{p}\big(\htmlClass{sym-pi}{\boldsymbol\pi_{t+k}},\ \mathbf p^k_t\big)\Big] + c\,\|\theta\|^2 \]
+\[ \ell_t(\theta) = \sum_{k=0}^{\htmlClass{sym-K}{K}}\Big[\,\ell^{r}\big(\htmlClass{sym-u}{u_{t+k}},\ r^k_t\big) + \ell^{v}\big(\htmlClass{sym-z}{G_{t+k}},\ v^k_t\big) + \ell^{p}\big(\htmlClass{sym-pi}{\boldsymbol\pi_{t+k}},\ \mathbf p^k_t\big)\Big] + c\,\|\theta\|^2 \]
   <div class="fx-read">从真实轨迹的第 \(t\) 步出发，按真实发生过的动作把模型展开 \(K\) 步。每一步，模型预测的奖励 \(r^k\)、价值 \(v^k\)、策略 \(\mathbf p^k\) 分别去对齐真实奖励、真实回报和搜索得到的策略。没有任何一项要求隐藏状态能画出画面。</div>
   <dl class="fx-syms">
     <dt data-sym="K">\(K\)</dt><dd>训练时模型展开的步数，MuZero 取 5</dd>
     <dt data-sym="u">\(u_{t+k}\)</dt><dd>真实轨迹上第 \(t+k\) 步观察到的奖励</dd>
-    <dt data-sym="z">\(z_{t+k}\)</dt><dd>价值目标：往后 \(n\) 步的真实奖励再加一个价值估计（雅达利上 \(n = 10\)），棋类直接用终局胜负</dd>
+    <dt data-sym="z">\(G_{t+k}\)</dt><dd>价值目标：往后 \(n\) 步的真实奖励再加一个价值估计（雅达利上 \(n = 10\)），棋类直接用终局胜负</dd>
     <dt data-sym="pi">\(\boldsymbol\pi_{t+k}\)</dt><dd>当时 MCTS 搜索给出的动作分布，作为策略的目标</dd>
   </dl>
   <div class="fx-eg">小球世界的角落加一盏随机亮灭、与奖励无关的灯：Dreamer 的重建项会逼着潜状态记录它（否则画面还原不对）；MuZero 的隐藏状态可以完全不管它。</div>
 </div>
-<p>MuZero 在围棋、国际象棋、将棋上达到了 AlphaZero 的超人水平，却没有被告知棋规；在 57 个雅达利游戏上刷新了当时的最好成绩。后继的 EfficientZero（2021-10）加了一项自监督损失：让展开的隐藏状态和真实下一帧编码出的隐藏状态一致（和后面 JEPA 的思路相同），在只允许约 2 小时游戏时间的 Atari 100k 上，平均成绩达到人类的 194%。</p>
-<p>MuZero 背后的原理叫<dfn data-t="value-equivalence">价值等价</dfn>（value equivalence，Grimm、Barreto、Singh、Silver, 2020）：模型不必在每个细节上和真实世界一致，只要用它做规划算出来的价值和真实世界一样，它就够用了。</p>
+<p>MuZero 在围棋、国际象棋、将棋上达到了 AlphaZero 的超人水平，却没有被告知棋规；在 57 个雅达利游戏上刷新了当时的最好成绩。后继的 EfficientZero（2021-10）加了三项改进，其中之一是自监督一致性损失：让展开的隐藏状态和真实下一帧编码出的隐藏状态一致（和后面 JEPA 的思路相同）；另两项是预测一段奖励之和（value prefix）、修正旧数据的价值目标。三项合起来，在只允许约 2 小时游戏时间的 Atari 100k 上，平均成绩达到人类的 194%。</p>
+<p>MuZero 背后的原理叫<dfn data-t="value-equivalence">价值等价</dfn>（value equivalence，Grimm、Barreto、Singh、Silver, 2020）：模型不必在每个细节上和真实世界一致，只要用它做规划算出来的价值和真实世界一样，它就够用了（下面的推导给出条件：要让选出的动作也一样，规划会问到的策略要足够多）。好处是容量全部花在和决策有关的东西上；代价是模型学什么取决于奖励：换一个任务（比如“把角落的灯打开得 1 分”），不管灯的模型就不够用了，它的隐藏状态也画不出来，没法给人看。</p>
 
 <details class="deep"><summary>价值等价：为什么一个“画不出世界”的模型也能规划</summary><div class="in">
 <p><b>第 1 步，规划在算什么。</b>给定策略 \(\pi\)，价值函数满足贝尔曼方程。把右边写成一个算子 \(\mathcal T^\pi_m\)，下标 \(m\) 表示用哪个模型（真实环境记作 \(m^*\)）：</p>
 \[ (\mathcal T^\pi_m V)(\mathbf s) = \sum_{\mathbf a}\pi(\mathbf a\mid\mathbf s)\Big[r_m(\mathbf s,\mathbf a) + \gamma\sum_{\mathbf s'} p_m(\mathbf s'\mid\mathbf s,\mathbf a)\,V(\mathbf s')\Big] \]
-<p>策略评估就是反复作用这个算子；它是压缩映射（每作用一次，任意两个函数的最大差距至少缩小 \(\gamma\) 倍），收敛到唯一的不动点 \(V^\pi_m\)。价值迭代、MCTS 的回传都是它的变体。</p>
+<p>策略评估就是反复作用这个算子；它是压缩映射（每作用一次，任意两个函数的最大差距至少缩小到原来的 \(\gamma\) 倍），收敛到唯一的不动点 \(V^\pi_m\)。价值迭代、MCTS 的回传都是它的变体。</p>
 <p><b>第 2 步，定义价值等价。</b>给定一组策略 \(\Pi\) 和一组函数 \(\mathcal V\)，如果对所有 \(\pi\in\Pi\)、\(V\in\mathcal V\) 都有 \(\mathcal T^\pi_m V = \mathcal T^\pi_{m^*} V\)，就说模型 \(m\) 和真实环境价值等价。</p>
-<p><b>第 3 步，等价就够用。</b>设真实价值 \(V^\pi\) 属于 \(\mathcal V\)。它是真实算子的不动点：\(\mathcal T^\pi_{m^*}V^\pi = V^\pi\)。由价值等价，\(\mathcal T^\pi_m V^\pi = \mathcal T^\pi_{m^*}V^\pi = V^\pi\)，所以 \(V^\pi\) 也是 \(\mathcal T^\pi_m\) 的不动点；不动点唯一，于是 \(V^\pi_m = V^\pi\)：模型里评估出的价值和真实价值完全相同，选出的动作也相同。</p>
+<p><b>第 3 步，等价就够用。</b>设真实价值 \(V^\pi\) 属于 \(\mathcal V\)。它是真实算子的不动点：\(\mathcal T^\pi_{m^*}V^\pi = V^\pi\)。由价值等价，\(\mathcal T^\pi_m V^\pi = \mathcal T^\pi_{m^*}V^\pi = V^\pi\)，所以 \(V^\pi\) 也是 \(\mathcal T^\pi_m\) 的不动点；不动点唯一，于是 \(V^\pi_m = V^\pi\)：对 \(\Pi\) 里的每个策略，模型里评估出的价值和真实价值完全相同。</p>
+<p><b>第 3.5 步，评估相同还不等于选出的动作相同。</b>选动作比较的是 \(Q_m(\mathbf s,\mathbf a) = r_m(\mathbf s,\mathbf a) + \gamma\sum_{\mathbf s'} p_m(\mathbf s'\mid\mathbf s,\mathbf a)V(\mathbf s')\)，它是“在 \(\mathbf s\) 先取 \(\mathbf a\)”的那个策略的算子作用在 \(V\) 上。如果 \(\Pi\) 包含所有确定性策略（至少包含在每个状态分别取每个动作的那些策略），第 2 步的等式就对每个动作单独成立，\(Q_m = Q\)，一步贪心改进选出的动作也相同。\(\Pi\) 太小时只能保证评估一致，模型可能在 \(\Pi\) 之外的动作上答错。</p>
 <p><b>第 4 步，小球世界加一盏灯。</b>真实状态是 \((x, y, \ell)\)，灯 \(\ell\) 每一步以 50% 的概率随机亮灭，和小球、和奖励都无关。取一个完全不管灯的模型 \(m\)。对任何不依赖 \(\ell\) 的 \(V\)，真实算子里对 \(\ell'\) 的求和是 \(\sum_{\ell'} \tfrac12 V(x',y') = V(x',y')\)，和 \(m\) 算的一样，所以规划结果不受影响。逐像素的模型却必须预测灯：灯是随机的，它最多只能画出一个“半亮”的平均值，还要为此花掉容量。</p>
-<p><b>第 5 步，问题越多，模型越像世界。</b>Grimm 等证明：\(\Pi\) 和 \(\mathcal V\) 越大，价值等价的模型集合越小，最后只剩真实模型。换一个任务（“把灯打开得 1 分”），不管灯的模型就不再够用。后续工作（2021）证明，最小化 MuZero 的损失可以理解为在采样到的策略和价值上近似满足这种等价。</p>
+<p><b>第 5 步，问题越多，模型越像世界。</b>Grimm 等证明：\(\Pi\) 和 \(\mathcal V\) 越大，价值等价的模型集合越小，最后只剩真实模型。换一个任务（“把灯打开得 1 分”），不管灯的模型就不再够用。后续工作（Proper VE, 2021）论证，MuZero 的损失可以看作这种等价损失的一个上界：最小化它，就是在采样到的策略和价值上近似满足等价。</p>
 <p><b>这个推导告诉我们：</b>世界模型不必“像”世界，只需要在规划会问到的问题上答对。好处是容量全部花在和决策有关的东西上；代价是模型学什么取决于奖励，换一个任务可能要重学，它的隐藏状态也画不出来，没法给人看，也没法直接给别的任务用。</p>
 </div></details>
 
-<aside class="dispute">
-  <h4>语言模型里有没有世界模型</h4>
-  <dl>
-    <dt>主张</dt><dd>Othello-GPT（Li 等, 2022-10）：只用黑白棋的合法着法序列训练一个 GPT，事后能从它的内部激活里用<span class="term" data-t="probe">探针</span>读出完整的棋盘；人为修改这些表示，它的下一步预测随之改变。Nanda 等（2023）发现按“我方 / 对方”的子来读，棋盘是线性可读的。</dd>
-    <dt>反方</dt><dd>Vafa 等（NeurIPS 2024）：用纽约出租车的逐路口转向序列训练 Transformer，下一个转向几乎 100% 合法；可从它的行为重建出的地图有方向不可能的街道和凭空的高架桥，一要求绕路就失败。预测得准，不等于内部有连贯的世界模型。</dd>
-    <dt>再反驳</dt><dd>2026 年的一篇预印本（World Modeling in Transformers）对一个出租车模型做机制分析，发现内部存着一张相当准确的地图，出错的是在地图上定位的机制；从行为重建地图分不清这两种情况。</dd>
-    <dt>现在怎么看</dt><dd>和 MuZero 的教训一致：只看下一步预测准不准，判断不了模型内部有没有可以用来规划的世界。要检验，就要像价值等价那样换问题：绕路、改任务、没见过的状态下还答得对吗。</dd>
-  </dl>
-</aside>
 
 <h2 id="drift">误差累积：为什么只敢想十几步</h2>
-<p>回到「从零开始」的两个问题。世界模型的每一步预测都有一点误差，而下一步又以这个有误差的预测为输入，误差会层层放大：</p>
+<p>回到「从零开始」的两个问题。世界模型的每一步预测都有一点误差，而下一步又以这个有误差的预测为输入，误差会一步步传下去。第 <a class="xref" data-ref="video"></a> 章的漂移已经用过这个递推；这一节把它展开，并说清放大误差的到底是谁：</p>
 <div class="fx">
 \[ \|\mathbf e_H\| \lesssim \htmlClass{sym-eps}{\varepsilon}\,\frac{\htmlClass{sym-L}{L}^{H} - 1}{L - 1} \]
-  <div class="fx-read">每一步引入的新误差约为 \(\varepsilon\)；如果动力学把输入中的误差放大 \(L\) 倍（\(L > 1\)），\(H\) 步之后累积的误差按 \(L^H\) 指数增长。这就是想象只能走十几步、视频世界模型几分钟后画面崩坏的根源，也是第 <a class="xref" data-ref="video"></a> 章“漂移”和第 <a class="xref" data-ref="generation"></a> 章<span class="term" data-t="exposure-bias">暴露偏差</span>的定量版本。</div>
+  <div class="fx-read">每一步新引入的误差约为 \(\varepsilon\)；上一步已有的误差经过一步预测，变成原来的 \(L\) 倍。\(L > 1\) 时 \(H\) 步后的误差按 \(L^H\) 指数增长；\(L = 1\) 时线性增长 \(\varepsilon H\)；\(L &lt; 1\) 时停在上限 \(\varepsilon/(1-L)\)。这是第 <a class="xref" data-ref="video"></a> 章“漂移”和第 <a class="xref" data-ref="generation"></a> 章<span class="term" data-t="exposure-bias">暴露偏差</span>的定量版本。</div>
   <dl class="fx-syms">
-    <dt data-sym="eps">\(\varepsilon\)</dt><dd>单步的预测误差</dd>
-    <dt data-sym="L">\(L\)</dt><dd>误差放大系数：真实动力学（想象中训练策略时，是“动力学 + 策略”合起来的闭环）对输入扰动的敏感程度，即<span class="term" data-t="jacobian">雅可比矩阵</span>在误差方向上的大小</dd>
+    <dt data-sym="eps">\(\varepsilon\)</dt><dd>单步的预测误差（本章专用记号，不是第 <a class="xref" data-ref="rl"></a> 章的裁剪阈值）</dd>
+    <dt data-sym="L">\(L\)</dt><dd>误差放大系数（本章专用记号，不是层数）：上一步的误差经过一步预测后变成几倍，和第 <a class="xref" data-ref="video"></a> 章的 \(L\) 是同一个量。想象中训练策略时，是“模型 + 策略”合起来的闭环。它受两件事限制：世界本身的放大 \(L_{\text{世界}}\)，和模型对自己带瑕疵输入的放大 \(\hat L\)，见正文</dd>
   </dl>
-  <div class="fx-eg">\(\varepsilon = 0.01\)，\(L = 1.1\)：15 步后误差约 \(0.01\times(4.18 - 1)/0.1 = 0.32\)；30 步后约 1.6，已经比信号本身还大。\(L = 1\) 时 30 步后是 \(0.01\times 30 = 0.3\)。降低 \(L\)（训练时让模型习惯有噪声或有瑕疵的输入，即第 <a class="xref" data-ref="video"></a> 章的 Diffusion Forcing、Self Forcing）比降低 \(\varepsilon\) 更有效。</div>
+  <div class="fx-eg">\(\varepsilon = 0.01\)，\(L = 1.1\)：15 步后误差约 \(0.01\times(4.18 - 1)/0.1 = 0.32\)；30 步后约 1.6，已经比信号本身还大。\(L = 1\) 时 30 步后是 \(0.01\times 30 = 0.3\)；\(L = 0.9\) 时 30 步后约 0.096，永远不超过 \(0.01/0.1 = 0.1\)。\(H\) 较大时，把 \(L\) 从 1.1 压到 1 以下比把 \(\varepsilon\) 减半有用得多。</div>
 </div>
-<p>这种一步步传下去的误差叫<dfn data-t="compounding-error">误差累积</dfn>（compounding error）。\(L\) 取决于世界本身：碰撞、多个物体互动的世界，位置误差在碰撞后变成方向误差，\(L\) 明显大于 1；平滑的机械臂控制，\(L\) 可以接近 1。同一个递推在本书里出现了三次：视频生成的漂移（第 <a class="xref" data-ref="video"></a> 章）、行为克隆的“越走越偏”（第 <a class="xref" data-ref="embodied"></a> 章），和这里的想象规划。</p>
+<p>这种一步步传下去的误差叫<dfn data-t="compounding-error">误差累积</dfn>（compounding error）。放大误差的有两方（推导第 1 步）：</p>
+<ul>
+  <li><b>世界本身的放大 \(L_{\text{世界}}\)。</b>真实动力学对小偏差有多敏感。碰撞、多物体互动的世界里，位置误差在碰撞后变成方向误差，\(L_{\text{世界}}\) 明显大于 1；平滑的机械臂控制可以接近 1。这一部分训练改不了：一个准确的模型，沿着物理上真实的方向必须和世界一样放大，否则它就预测错了。它决定了“想得准”的上限。</li>
+  <li><b>模型自己的放大 \(\hat L\)。</b>模型拿到一个带瑕疵的输入（一帧有伪影的画面、一个偏离数据的潜状态）时，是把瑕疵放大、照抄，还是压下去。这正是第 <a class="xref" data-ref="video"></a> 章的 \(L\)。只在干净数据上训练的模型没见过自己的瑕疵，在“不像真实数据”的方向上 \(\hat L\) 约等于 1 甚至更大。上下文加噪、Diffusion Forcing、Self Forcing 让模型训练时就见到带瑕疵的上下文，把这些方向上的 \(\hat L\) 压到 1 以下，同时降低模型在自己生成的状态上的单步误差 \(\varepsilon\)。</li>
+</ul>
+<p>所以训练技巧能降的是 \(\varepsilon\) 和模型这一侧的放大；世界那一侧的放大只能靠少想几步、常回到真实状态来应付。同一种误差累积现象在本书里出现三次：视频生成的漂移（第 <a class="xref" data-ref="video"></a> 章，用的正是这个递推）、这里的想象规划，以及下一章行为克隆的“越走越偏”（第 <a class="xref" data-ref="embodied"></a> 章，那里用的是另一种界：策略犯一次错就走到专家没去过的状态，代价按 \(T^2\varepsilon\) 增长）。</p>
 <p>想得太短也不行：目标在视野之外时，第 \(H\) 步以后的回报只能交给价值函数，而价值函数也有误差。Dreamer、MuZero 和许多方法用的都是同一种“想象 \(H\) 步、价值补尾巴”的估计：</p>
 <div class="fx">
 \[ \htmlClass{sym-T}{T_H(\mathbf s_0)} = \underbrace{\sum_{t=0}^{H-1}\gamma^t\,\hat r_t}_{\htmlClass{c-dir}{\text{模型想象的 }H\text{ 步}}} + \underbrace{\gamma^H\,\htmlClass{sym-V}{\hat V(\hat{\mathbf s}_H)}}_{\htmlClass{c-adv}{\text{价值函数补的尾巴}}} \]
@@ -223,60 +222,63 @@
     <dt data-sym="T">\(T_H(\mathbf s_0)\)</dt><dd>从状态 \(\mathbf s_0\) 出发、想象 \(H\) 步的回报估计；\(H = 0\) 时就是价值函数本身</dd>
     <dt data-sym="V">\(\hat V(\hat{\mathbf s}_H)\)</dt><dd>价值函数对想象出来的第 \(H\) 步状态的估计</dd>
   </dl>
-  <div class="fx-eg">按下面演示的默认设置（\(\varepsilon = 0.05\)，\(L = 1.1\)，价值函数误差 \(\sigma = 8\)，\(\gamma = 0.95\)），打分误差的两部分：\(H = 0\) 时模型 0、价值函数 8.0；\(H = 10\) 时 2.1 和 4.8，合计约 5.2，最小；\(H = 20\) 时 9.3 和 2.9，合计 9.7；\(H = 40\) 时模型那份涨到 45。</div>
+  <div class="fx-eg">按下面演示的默认设置（\(\varepsilon = 0.05\)，\(L = 1.1\)，价值函数误差 \(\sigma = 8\)，\(\gamma = 0.95\)），打分误差的两部分：\(H = 0\) 时模型 0、价值函数 8.0；\(H = 10\) 时 2.1 和 4.8，合计（两者独立，平方和开方）约 5.2，最小；\(H = 20\) 时 9.3 和 2.9，合计 9.7；\(H = 40\) 时模型那份涨到 45。</div>
 </div>
-<p>实际方法都选得很短：Dreamer 想象 15 步；MuZero 训练时只展开 5 步，靠树搜索和价值网络看得更远；MBPO（Janner 等, 2019-06，“When to Trust Your Model”）只从真实经历过的状态出发向前想象几步，同时得到了基于模型方法的数据效率和无模型方法的最终成绩。Wang 等（2019）的基准测试发现，视野加长常常让成绩下降，即使用真实动力学也如此（搜索空间随视野指数增长），用学到的模型时还要再加上模型误差。下面的演示把“挑选”也放进来：</p>
+<p>实际方法都选得很短：DreamerV3 想象 15 步，MBPO 只从真实经历过的状态出发想几步（推导第 5 步）。具体取几步是各自调出来的经验值。Wang 等（2019）的基准测试发现，视野加长常常让成绩下降，即使用真实动力学也如此（搜索空间随视野指数增长），用学到的模型时还要再加上模型误差。下面的演示把“挑选”也放进来：</p>
 <div data-demo="world-models-horizon" class="bleed"></div>
-<p>默认设置下，只靠价值函数（\(H = 0\)）拿到最好计划回报的 78%；想象 10 步最好，89%；想象 40 步只剩 22%，规划器却以为自己选中的计划比最好的还好 4 倍多。打分误差越大，挑中的越可能是“被高估最多的那个”，这叫<dfn data-t="optimizers-curse">优化者的诅咒</dfn>（optimizer's curse）：在一堆有噪声的估计里取最大值，取出来的估计平均是偏高的。小球世界里 \(\hat p = 0\) 的例子，就是它在一个计划上的表现。</p>
-<p>《World Models》（Ha 与 Schmidhuber, 2018-03）里有一个更直观的例子。他们用 VAE 把《毁灭战士》的画面压成 64 维潜变量，用循环网络学它的动态，然后完全在这个“梦”里训练一个只有 1088 个参数的控制器去躲火球。智能体在梦里找到了一种走法，能让模型里的怪物一个火球都不发，这是模型的漏洞。作者给梦加了一个“温度” \(\tau\)，调大它让预测更随机、更难钻空子：</p>
+<p>默认设置下，只靠价值函数（\(H = 0\)）拿到最好计划回报的 78%；想象 10 步最好，89%；想象 40 步只剩 22%，规划器却以为自己选中的计划是最好计划回报的 4.6 倍。左图默认停在 \(H = 30\)：这组 16 个候选里，被选中的计划打分 37.3，真实回报只有 10.1，真正最好的那个是 27.8。打分误差越大，挑中的越可能是“被高估最多的那个”，这叫<dfn data-t="optimizers-curse">优化者的诅咒</dfn>（optimizer's curse）：在一堆有噪声的估计里取最大值，取出来的估计平均是偏高的。它和「从零开始」里的“钻模型的空子”是同一件事的两面：那里是现象（\(\hat p = 0\) 的例子就是它在一个计划上的表现），这里是统计机制。第 <a class="xref" data-ref="sft"></a> 章 best-of-n 里的“回归型古德哈特”也是同一个机制。</p>
+<p>《World Models》（Ha 与 Schmidhuber, 2018-03）里有一个更直观的例子。他们用 VAE 把《毁灭战士》（VizDoom）的画面压成 64 维潜变量，用循环网络学它的动态，然后完全在这个“梦”里训练一个只有 1088 个参数的控制器去躲火球。智能体在梦里找到了一种走法，能让模型里的怪物一个火球都不发，这是模型的漏洞。作者给梦加了一个“温度” \(\tau\)，调大它让预测更随机、更难钻空子：</p>
 <div class="tablewrap"><table>
   <tr><th>梦的温度 \(\tau\)</th><th>0.10</th><th>0.50</th><th>1.00</th><th>1.15</th><th>1.30</th></tr>
   <tr><td>梦里的得分</td><td>2086</td><td>2060</td><td>1145</td><td>918</td><td>732</td></tr>
   <tr><td>搬到真实游戏里的得分</td><td>193</td><td>196</td><td>868</td><td>1092</td><td>753</td></tr>
 </table></div>
-<p>梦越“好对付”，梦里分数越高，现实里越差。后来的方法因此都在模型里加随机性、保持想象很短、从真实状态出发。MPC 每一步都从真实观测重新想象，对模型误差宽容得多；在想象里训练策略没有这层保护。</p>
+<p>\(\tau\) 从 0.1 调到 1.15，梦里的分数一路下降（2086 → 918），真实游戏里一路上升（193 → 1092）：梦越难钻空子，策略越老实。\(\tau\) 再大到 1.30，梦乱得学不到东西，两边都往下掉（732 / 753）。要的不是越随机越好，而是随机到钻空子不划算。后来的方法因此都在模型里加随机性、保持想象很短、从真实状态出发。MPC 每一步都从真实观测重新想象，对模型误差宽容得多；在想象里训练策略没有这层保护。</p>
 
 
 <details class="deep"><summary>误差怎样累积，挑选怎样把误差变成乐观，最优视野在哪</summary><div class="in">
-<p><b>第 1 步，状态误差的递推。</b>真实动力学 \(\mathbf s_{t+1} = f(\mathbf s_t)\)，模型 \(\hat{\mathbf s}_{t+1} = \hat f(\hat{\mathbf s}_t)\)，两者从同一个真实状态出发。设模型的单步误差不超过 \(\varepsilon\)（\(\|\hat f(\mathbf s) - f(\mathbf s)\|\le\varepsilon\)），真实动力学的放大系数是 \(L\)（\(\|f(\mathbf s) - f(\mathbf s')\|\le L\|\mathbf s - \mathbf s'\|\)）。插入一项 \(f(\hat{\mathbf s}_t)\) 再用三角不等式：</p>
-\[ \begin{aligned} e_{t+1} &= \|\hat f(\hat{\mathbf s}_t) - f(\mathbf s_t)\| \\ &\le \|\hat f(\hat{\mathbf s}_t) - f(\hat{\mathbf s}_t)\| + \|f(\hat{\mathbf s}_t) - f(\mathbf s_t)\| \le \varepsilon + L\,e_t \end{aligned} \]
-<p>从 \(e_0 = 0\) 展开：\(e_t \le \varepsilon(1 + L + \dots + L^{t-1}) = \varepsilon(L^t - 1)/(L - 1)\)，就是公式卡。\(L&lt;1\) 时误差有上限 \(\varepsilon/(1-L)\)；\(L = 1\) 时线性增长 \(\varepsilon t\)；\(L&gt;1\) 时指数增长。想象走远以后，状态会离开训练数据，\(\varepsilon\) 本身也会变大，实际情况比这个上界更糟。</p>
+<p><b>第 1 步，状态误差的递推，两种拆法。</b>真实动力学 \(\mathbf s_{t+1} = f(\mathbf s_t)\)，模型 \(\hat{\mathbf s}_{t+1} = \hat f(\hat{\mathbf s}_t)\)，两者从同一个真实状态出发，误差 \(e_t = \|\hat{\mathbf s}_t - \mathbf s_t\|\)。在 \(\hat f(\hat{\mathbf s}_t)\) 和 \(f(\mathbf s_t)\) 之间插入一项再用三角不等式，有两种插法。</p>
+<p>插入 \(f(\hat{\mathbf s}_t)\)（真实世界从模型的错误状态出发会怎样）：</p>
+\[ \begin{aligned} e_{t+1} &\le \|\hat f(\hat{\mathbf s}_t) - f(\hat{\mathbf s}_t)\| + \|f(\hat{\mathbf s}_t) - f(\mathbf s_t)\| \le \varepsilon' + L_{\text{世界}}\,e_t \end{aligned} \]
+<p>这里 \(L_{\text{世界}}\) 是真实动力学的放大系数（\(\|f(\mathbf s) - f(\mathbf s')\|\le L_{\text{世界}}\|\mathbf s - \mathbf s'\|\)），\(\varepsilon'\) 是模型在<b>它自己走到的</b>状态 \(\hat{\mathbf s}_t\) 上的单步误差，这些状态可能已经离开训练数据。</p>
+<p>插入 \(\hat f(\mathbf s_t)\)（模型从真实状态出发会怎样）：</p>
+\[ \begin{aligned} e_{t+1} &\le \|\hat f(\hat{\mathbf s}_t) - \hat f(\mathbf s_t)\| + \|\hat f(\mathbf s_t) - f(\mathbf s_t)\| \le \hat L\,e_t + \varepsilon \end{aligned} \]
+<p>这里 \(\varepsilon\) 是模型在真实状态上的单步误差（就是测试集上量得到的那个数），\(\hat L\) 是模型自己的放大系数：输入偏了一点，输出偏多少。两个界同时成立。从 \(e_0 = 0\) 展开任意一个：\(e_t \le \varepsilon(1 + L + \dots + L^{t-1}) = \varepsilon(L^t - 1)/(L - 1)\)，就是公式卡。\(L&lt;1\) 时误差有上限 \(\varepsilon/(1-L)\)；\(L = 1\) 时线性增长 \(\varepsilon t\)；\(L&gt;1\) 时指数增长。</p>
+<p>两种 \(L\) 的关系：在训练数据附近，准确的模型和真实动力学几乎是同一个函数，沿着物理上真实的方向 \(\hat L\approx L_{\text{世界}}\)；模型想比世界放大得少，就得在这些方向上预测错。偏离数据的方向（伪影、不可能出现的状态）上，真实世界没有对应的数据，\(\hat L\) 完全由训练方式决定：只用干净上下文训练时约为 1，见过自己瑕疵的模型可以把它压到 1 以下（第 <a class="xref" data-ref="video"></a> 章的玩具里从 1.00 降到 0.57）。想象走远以后，状态离开训练数据，\(\varepsilon'\) 也会变大，实际情况比这个上界更糟。</p>
 <p><b>第 2 步，从状态误差到回报误差。</b>设奖励对状态的敏感程度是 \(\ell_r\)（\(|r(\mathbf s) - r(\mathbf s')|\le\ell_r\|\mathbf s - \mathbf s'\|\)），价值函数在真实状态上的误差是 \(\sigma\)、对状态的敏感程度是 \(\ell_V\)。“想象 \(H\) 步 + 价值补尾巴”的估计和真实价值的差：</p>
 \[ |T_H - V(\mathbf s_0)| \le \underbrace{\sum_{t=0}^{H-1}\gamma^t\,\ell_r\,e_t}_{\text{随 }H\text{ 增大}} + \underbrace{\gamma^H\,(\sigma + \ell_V\,e_H)}_{\text{随 }H\text{ 减小（只要 }\gamma L&lt;1\text{）}} \]
 <p>第一项随 \(H\) 单调增加，第二项里价值函数的误差被 \(\gamma^H\) 越压越小。两者之和在中间某个 \(H^*\) 取最小。</p>
-<p><b>第 3 步，挑选会把误差变成乐观。</b>规划不只是估计一个计划，而是在 \(K\) 个候选里挑最好的。设候选的真实回报 \(Q_k\) 是均值 \(\mu\)、标准差 \(\sigma_Q\) 的正态分布，打分 \(\hat Q_k = Q_k + n_k\)，误差 \(n_k\) 与 \(Q_k\) 独立，标准差为 \(s\)。演示里 \(n_k = \varepsilon\,c(H)\,b_k + \gamma^H\sigma\,\xi_k\)：\(b_k\) 是这个计划的模型偏差方向（整条想象轨迹里不变），\(\xi_k\) 是价值函数的误差，\(c(H) = \sum_{t&lt;H}\gamma^t(L^t-1)/(L-1)\)，所以 \(s^2 = \varepsilon^2c(H)^2 + \gamma^{2H}\sigma^2\)。\((Q,\hat Q)\) 是联合正态，给定打分时真实回报的条件期望是</p>
+<p><b>第 3 步，挑选会把误差变成乐观。</b>规划不只是估计一个计划，而是在 \(M\) 个候选里挑最好的。设候选的真实回报 \(Q_k\) 是均值 \(\mu\)、标准差 \(\sigma_Q\) 的正态分布，打分 \(\hat Q_k = Q_k + n_k\)，误差 \(n_k\) 与 \(Q_k\) 独立，标准差为 \(s\)。演示取 \(\ell_r = 1\)、忽略 \(\ell_V e_H\) 项，误差写成 \(n_k = \varepsilon\,c(H)\,b_k + \gamma^H\sigma\,\xi_k\)：\(b_k\) 是这个计划的模型偏差方向（整条想象轨迹里不变），\(\xi_k\) 是价值函数的误差，二者都是标准正态，\(c(H) = \sum_{t&lt;H}\gamma^t(L^t-1)/(L-1)\)，所以 \(s^2 = \varepsilon^2c(H)^2 + \gamma^{2H}\sigma^2\)。\((Q,\hat Q)\) 是联合正态，给定打分时真实回报的条件期望是</p>
 \[ \mathbb E[Q\mid\hat Q] = \mu + \frac{\sigma_Q^2}{\sigma_Q^2 + s^2}\,(\hat Q - \mu) \]
-<p>\(K\) 个打分里最大的那个平均是 \(\mu + m_K\sqrt{\sigma_Q^2+s^2}\)，\(m_K\) 是 \(K\) 个标准正态的最大值的期望（\(K = 16\) 时约 1.77）。代入：</p>
-\[ \begin{aligned} \text{规划器以为的：}\ &\mu + m_K\sqrt{\sigma_Q^2+s^2} \\ \text{实际拿到的：}\ &\mu + m_K\,\frac{\sigma_Q^2}{\sqrt{\sigma_Q^2+s^2}} \end{aligned} \]
-<p>两者之差 \(m_K\,s^2/\sqrt{\sigma_Q^2+s^2}\) 随误差 \(s\) 和候选数 \(K\) 一起增大：候选越多、打分越不准，自我欺骗越严重。实际拿到的相对于最好计划（\(\mu + m_K\sigma_Q\)）的比例是 \(\sigma_Q/\sqrt{\sigma_Q^2+s^2}\)，只取决于打分误差和候选之间真实差距之比。</p>
+<p>\(M\) 个打分里最大的那个平均是 \(\mu + m_M\sqrt{\sigma_Q^2+s^2}\)，\(m_M\) 是 \(M\) 个标准正态的最大值的期望（\(M = 16\) 时约 1.77）。代入：</p>
+\[ \begin{aligned} \text{规划器以为的：}\ &\mu + m_M\sqrt{\sigma_Q^2+s^2} \\ \text{实际拿到的：}\ &\mu + m_M\,\frac{\sigma_Q^2}{\sqrt{\sigma_Q^2+s^2}} \end{aligned} \]
+<p>两者之差 \(m_M\,s^2/\sqrt{\sigma_Q^2+s^2}\) 随误差 \(s\) 和候选数 \(M\) 一起增大：候选越多、打分越不准，自我欺骗越严重。取 \(\mu = 0\)（演示即如此），实际拿到的相对于最好计划（\(m_M\sigma_Q\)）的比例是 \(\sigma_Q/\sqrt{\sigma_Q^2+s^2}\)，只取决于打分误差和候选之间真实差距之比；\(\mu\ne0\) 时，这是“超出平均水平那部分”的比例。</p>
 <p><b>第 4 步，代入数字。</b>\(\sigma_Q = 10\)，\(\varepsilon = 0.05\)，\(L = 1.1\)，\(\sigma = 8\)，\(\gamma = 0.95\)。\(H = 0\)：\(s = 8\)，比例 \(10/\sqrt{164}\approx 78\%\)。\(H = 10\)：\(c(10)\approx 42.6\)，\(s = \sqrt{2.13^2 + 4.79^2}\approx 5.2\)，比例 89%。\(H = 40\)：\(c(40)\approx 896\)，\(s\approx 45\)，比例 22%，而规划器以为的是 \(\sqrt{100 + 45^2}/10\approx 4.6\) 倍于最好的计划。</p>
-<p><b>第 5 步，最优视野怎样移动。</b>\(H^*\) 让 \(s^2(H)\) 最小。价值函数越差（\(\sigma\) 大），越需要用更长的 \(H\) 去压 \(\gamma^{2H}\sigma^2\)，\(H^*\) 变长；模型越差（\(\varepsilon\) 大）或世界越“混沌”（\(L\) 大），\(\varepsilon^2c(H)^2\) 涨得越快，\(H^*\) 变短。演示里 \(L\) 从 1.1 降到 1.0，\(H^*\) 从 10 步变成 13 步，过了最优点之后也下降得慢得多。</p>
-<p><b>这个推导告诉我们：</b>视野的选择是在“相信模型”和“相信价值函数”之间分配误差，放大系数 \(L\) 决定模型那份误差涨得多快。规划器在很多候选里取最好，会把对称的误差变成系统性的乐观：想得越远，越容易被自己骗。Dreamer 的 15 步、MuZero 的 5 步、MBPO 的几步，都是在这条曲线的左侧找位置；MPC 每步从真实状态重新开始，相当于每一步都把 \(e_0\) 清零。</p>
+<p><b>第 5 步，最优视野怎样移动。</b>\(H^*\) 让 \(s^2(H)\) 最小。价值函数越差（\(\sigma\) 大），越需要用更长的 \(H\) 去压 \(\gamma^{2H}\sigma^2\)，\(H^*\) 变长；模型越差（\(\varepsilon\) 大）或放大越强（\(L\) 大），\(\varepsilon^2c(H)^2\) 涨得越快，\(H^*\) 变短。演示里 \(L\) 从 1.1 降到 1.0，\(H^*\) 从 10 步变成 13 步，过了最优点之后也下降得慢得多。MBPO（Janner 等, 2019-06，“When to Trust Your Model”）是这个权衡的一个实际做法：只从真实经历过的状态出发向前想象几步，每段想象的 \(e_0\) 都是 0，同时得到了基于模型方法的数据效率和无模型方法的最终成绩。</p>
+<p><b>这个推导告诉我们：</b>视野的选择是在“相信模型”和“相信价值函数”之间分配误差，放大系数 \(L\) 决定模型那份误差涨得多快；训练能压低的是模型自己的放大和单步误差，世界本身的放大压不掉。规划器在很多候选里取最好，会把对称的误差变成系统性的乐观：想得越远，越容易被自己骗。这个权衡说明了为什么实际方法都选得很短，具体取几步要看各自的 \(\varepsilon\) 和 \(L\)；MPC 每步从真实状态重新开始，相当于每一步都把 \(e_0\) 清零。</p>
 </div></details>
 
-<h2 id="interactive">可以玩的视频：每一代在修什么</h2>
-<p>从强化学习这条线看，世界模型是练习场；从视频生成这条线看，它是可以操控的视频。要让人能玩，要同时满足三件事：以动作为条件；实时（每秒 24 帧意味着每帧不到 42 毫秒，只能用 1–4 步去噪，依赖第 <a class="xref" data-ref="diffusion"></a> 章的少步蒸馏和第 <a class="xref" data-ref="video"></a> 章的自回归视频技术）；长时间不崩。每一代修的是上一代最明显的短板：</p>
-<div class="tablewrap"><table>
-  <tr><th>系统（时间）</th><th>卡在哪</th><th>改了什么</th><th>代价</th></tr>
-  <tr><td>GameNGen（Google, 2024-08）</td><td>神经网络能不能代替游戏引擎</td><td>Stable Diffusion 1.4 改成以过去 64 帧和按键为条件；数据由一个用 PPO 学玩《毁灭战士》的智能体产生；上下文加噪（最大 0.7）；4 步去噪，单个 TPU 每秒 20 帧</td><td>一个模型只会一款游戏；只记得约 3 秒</td></tr>
-  <tr><td>Genie 2（DeepMind, 2024-12）</td><td>不通用</td><td>从一张图片生成可以用键盘鼠标探索的三维世界；自回归潜空间扩散，用无分类器引导增强动作的可控性</td><td>一致性最多约一分钟，多数 10–20 秒；实时版是蒸馏版，质量更低</td></tr>
-  <tr><td>Genie 3（DeepMind, 2025-08）</td><td>不实时、不清晰</td><td>720p、每秒 24 帧实时；视觉记忆约一分钟；可以用文字触发“世界事件”（下雨、加一个角色）</td><td>只能交互几分钟；动作空间有限；多角色互动、文字渲染弱</td></tr>
-  <tr><td>Matrix-Game 2.0（Skywork, 2025-08）</td><td>闭源，研究者用不上</td><td>约 1200 小时带动作标注的 Unreal Engine 与 GTA5 视频；少步蒸馏加键盘鼠标注入模块；每秒 25 帧，开源</td><td>游戏风格为主；记忆弱</td></tr>
-  <tr><td>Matrix-Game 3.0 / 3.5（2026-04 / 08）</td><td>走远再回来，场景变了</td><td>按相机位置检索记忆；训练时把自己生成的不完美帧重新注入（同 Self Forcing 的思路）；50 亿参数，720p 最高每秒 40 帧；3.5 加显式三维补丁记忆</td><td>一致性仍以分钟计</td></tr>
-</table></div>
-<p>同类的还有 Oasis（Decart 与 Etched, 2024-10）、腾讯的 HY-WorldPlay（2025-12）、Runway 的 GWM-1（2025-12）。2026-01-29，Google 以 Project Genie 的形式把 Genie 3 开放给美国的 Google AI Ultra 订阅用户。GameNGen 预测下一帧的 PSNR 是 29.4，和有损 JPEG 差不多；人类评分者区分 1.6 秒和 3.2 秒的片段是真游戏还是生成的，正确率只有 58% 和 60%。</p>
+<h2 id="interactive">可以玩的视频：动作怎样进入视频模型</h2>
+<p>强化学习线和视频线造出来的东西不一样。Dreamer、MuZero 的模型输出潜状态、奖励和“这一局是否结束”，规划器直接拿来用，但画面很小（Dreamer 的输入画面是 64×64），MuZero 干脆画不出画面。视频线的模型输出高清画面，人能玩，却没有奖励，也不知道一局什么时候结束：拿它训练智能体，要另配一个判定奖励的模型。两条线的接缝之一是 DIAMOND（2024-05）：它仍是强化学习的世界模型，另有模块预测奖励和是否结束，智能体完全在模型里训练，在 Atari 100k 上的人类标准化平均分（智能体比随机策略多出的分数除以人类比随机多出的分数，1 即人类水平）达到 1.46；不同的是，下一帧改用扩散模型生成。它还在《反恐精英》的录像上训练出一个可以玩的神经游戏引擎。</p>
+<p>要让人能玩，要同时满足三件事：以动作为条件；实时（每秒 24 帧意味着每帧不到 42 毫秒）；长时间不崩。Google 的 GameNGen（2024-08）在《毁灭战士》上把这三件事各做了一遍，每一件对着一个具体的失败：</p>
+<ul>
+  <li><b>动作怎样进模型。</b>以图像扩散模型 Stable Diffusion 1.4 为底，把文本条件换成按键：每个按键学一个嵌入向量，原来对文本做的交叉注意力，改成对最近 64 个按键做；过去 64 帧先用 VAE 编码成潜变量，在通道维度上和正在去噪的潜变量拼在一起。训练数据由一个用 PPO 学玩《毁灭战士》的智能体产生，所以每一帧都带着按键。</li>
+  <li><b>一步错，步步错。</b>只在真实上下文上训练的模型，自回归生成几步后画面就开始崩坏，这正是上一节的误差累积。GameNGen 训练时给上下文帧的潜变量加随机强度的高斯噪声（最大 0.7），并把噪声强度分成 10 档、作为一个嵌入告诉模型。模型学会了“上下文不可全信，要自己补细节”，相当于把模型那一侧的放大 \(\hat L\) 压了下去。这就是第 <a class="xref" data-ref="video"></a> 章的<span class="term" data-t="noise-augmentation">上下文加噪</span>。</li>
+  <li><b>太慢。</b>扩散模型通常要几十步去噪；GameNGen 只用 4 步采样，单个 TPU-v5 上每帧约 50 毫秒，每秒 20 帧。少步生成的一般方法见第 <a class="xref" data-ref="image"></a> 章<a href="image.html#fast">「少步生成」</a>。</li>
+</ul>
+<p>效果：预测下一帧的 PSNR 是 29.4 dB（峰值信噪比，越高越接近真实，见第 <a class="xref" data-ref="spatial"></a> 章），相当于质量设置 20–30 的有损 JPEG；人类评分者区分 1.6 秒和 3.2 秒的片段是真游戏还是生成的，正确率只有 58% 和 60%（瞎猜是 50%）。代价也清楚：一个模型只会一款游戏，训练数据要靠自己的智能体玩出来；上下文只有 64 帧，约 3.2 秒。</p>
 <aside class="dispute surprise">
   <h4>意外：一个神经网络就能“运行”一款游戏</h4>
   <dl>
     <dt>原以为</dt><dd>游戏需要显式的规则：碰撞检测、血量、弹药、地图，神经网络只能模仿画面，不可能维持游戏状态。</dd>
     <dt>实际发现</dt><dd>GameNGen 只是一个以“过去的帧 + 按键”为条件的扩散模型，却能在玩家开枪、拾取物品、开门时正确地更新画面上的血量、弹药数和门的状态，持续数分钟。</dd>
-    <dt>为什么</dt><dd>游戏状态都显示在画面上（状态栏、地图），模型通过注意过去的帧就能“读出”状态；训练数据来自强化学习智能体玩了大量局，覆盖了各种状态组合。</dd>
-    <dt>现在怎么看</dt><dd>这说明世界模型可以在没有显式规则的情况下维持相当复杂的状态，但只限于状态能从画面上看出来、且在训练分布中的情况；超出 64 帧上下文的事情、画面外的状态（被遮挡的敌人）仍然会出错。</dd>
+    <dt>为什么</dt><dd>一个解释是：游戏状态大多显示在画面上（状态栏、地图），模型通过注意过去的帧就能“读出”状态；训练数据来自强化学习智能体玩的大量局，覆盖了各种状态组合。论文没有专门检验这个解释。</dd>
+    <dt>现在怎么看</dt><dd>世界模型可以在没有显式规则的情况下维持相当复杂的状态，但只限于状态能从画面上看出来、且在训练分布中的情况；超出 64 帧上下文的事情、画面外的状态（被遮挡的敌人）仍然会出错。</dd>
   </dl>
 </aside>
 
 <h2 id="latent-action">从无标注视频里学出动作：潜动作</h2>
-<p>GameNGen 的训练数据带着按键，因为是它自己的智能体玩出来的。互联网上的视频几乎都没有动作标签：看得到马里奥跳了，看不到玩家按了哪个键。DeepMind 的 Genie（2024-02）从视频本身推断动作。它在约 3 万小时的二维平台游戏视频上训练（从 20 多万小时的公开游戏视频中筛选，160×90 分辨率），共 110 亿参数：视频分词器 2 亿、潜动作模型 3 亿、动力学模型 101 亿。</p>
+<p>GameNGen 的训练数据带着按键，因为是它自己的智能体玩出来的。互联网上的视频几乎都没有动作标签：看得到马里奥跳了，看不到玩家按了哪个键。DeepMind 的 Genie（2024-02，其实比 GameNGen 早半年发表；这里按“有标注 → 无标注”的顺序讲）从视频本身推断动作。它在约 3 万小时的二维平台游戏视频上训练（从 20 多万小时的公开游戏视频中筛选，160×90 分辨率）。</p>
 <p>关键是潜动作模型。给定相邻两帧、猜出中间发生了什么动作的模型叫<dfn data-t="inverse-dynamics">逆动力学模型</dfn>（inverse dynamics model），和世界模型方向相反。Genie 让它从一个只有 8 个码的码本里挑一个，再要求解码器只凭过去的帧和这个码还原下一帧。挑出来的码叫<dfn data-t="latent-action">潜动作</dfn>（latent action）：</p>
 <div class="fx">
 \[ \htmlClass{sym-at}{\tilde{\mathbf a}_t} = \htmlClass{c-clip}{\operatorname{VQ}}\big(\htmlClass{sym-enc}{q_\phi}(\mathbf x_{1:t},\ \htmlClass{c-new}{\mathbf x_{t+1}})\big)\in\{1,\dots,\htmlClass{sym-A}{|\mathcal A|}\},\qquad \mathcal L = \big\|\,\mathbf x_{t+1} - \htmlClass{sym-dec}{d_\psi}(\mathbf x_{1:t},\ \tilde{\mathbf a}_t)\,\big\|^2 \]
@@ -287,44 +289,45 @@
     <dt data-sym="dec">\(d_\psi\)</dt><dd>解码器：只凭过去的帧和潜动作预测下一帧</dd>
     <dt data-sym="A">\(|\mathcal A|\)</dt><dd>码本大小，Genie 取 8</dd>
   </dl>
-  <div class="fx-eg">8 个码 = \(\log_2 8 = 3\) 比特：每一帧，编码器最多只能告诉解码器 3 比特的信息，而一帧 160×90 的画面有 14400 个像素。训练好以后整个潜动作模型被扔掉，用户按键就是直接选一个码，动力学模型据此生成下一帧。Genie 那时每秒只能生成约 1 帧。</div>
+  <div class="fx-eg">8 个码 = \(\log_2 8 = 3\) 比特：每一帧，编码器最多只能告诉解码器 3 比特的信息，而一帧 160×90 的画面有 14400 个像素。训练好以后整个潜动作模型被扔掉，用户按键就是直接选一个码，动力学模型据此生成下一帧。Genie 约 110 亿参数（论文给出的合计是 10.7B）：把画面切成离散 token 的视频分词器 2 亿、潜动作模型 3 亿、动力学模型 101 亿；那时每秒只能生成约 1 帧。</div>
 </div>
-<p>8 个码最后大致对应左移、右移、跳、不动等，在不同游戏里含义一致，而训练时没有人告诉它这些动作。下面的玩具是同一个结构的极小版本：编码器从 \(K\) 个码里挑出最能解释“这一帧到下一帧”的那个，一个很小的卷积解码器只凭这一帧和码预测下一帧，两边交替改进。</p>
+<p>8 个码最后大致对应左移、右移、跳、不动等，在不同游戏里含义一致，而训练时没有人告诉它这些动作。这只在画面变化主要由动作引起时成立，下面的演示会看到它什么时候失效。下面的玩具是同一个结构的极小版本：编码器从 \(K\) 个码里挑出最能解释“这一帧到下一帧”的那个，一个很小的卷积解码器只凭这一帧和码预测下一帧，两边交替改进。</p>
 <div data-demo="world-models-latent-action" class="bleed"></div>
 
 <details class="deep"><summary>潜动作为什么会学成“动作”，以及什么时候不会</summary><div class="in">
 <p><b>第 1 步，码只能装下“过去预测不了的变化”。</b>解码器已经看到了过去的帧，能从过去推出来的东西不需要码来传。码要传的是条件信息 \(I(\tilde{\mathbf a}_t;\ \mathbf x_{t+1}\mid\mathbf x_{\le t})\)，它不超过码本的容量：</p>
-\[ I(\tilde{\mathbf a}_t;\ \mathbf x_{t+1}\mid\mathbf x_{\le t}) \le H(\tilde{\mathbf a}_t) \le \log_2|\mathcal A| \]
+\[ I(\tilde{\mathbf a}_t;\ \mathbf x_{t+1}\mid\mathbf x_{\le t}) \le \mathcal H(\tilde{\mathbf a}_t) \le \log_2|\mathcal A| \]
 <p><b>第 2 步，过去预测不了的变化有两种来源。</b>智能体的动作，和环境里的随机变化（别的角色、闪烁的灯）。码不知道哪种是“可控的”，只按损失办事：哪种变化能让平方误差降得最多，就先记录哪种。</p>
 <p><b>第 3 步，用玩具的数字算一遍。</b>16 格的环上一个 2 格宽的小球，三种动作等概率。完全不知道动作（只有 1 个码）时，解码器只能画出三种可能的平均，每帧的平方误差约 0.9。加一盏 4 格的灯，每帧以 50% 的概率亮，不知道灯时最好的预测是“半亮”，每格误差 0.25，4 格共 1.0。</p>
 <ul>
   <li>2 个码。记录灯：剩下小球的误差约 0.9；记录“左移还是不是左移”：小球误差降到 0.33，但灯的 1.0 还在，共 1.33。灯赢了，两个码都用来记灯，动作信息为 0。</li>
-  <li>3 个码。三个码都给小球：只剩灯的 1.0；用两个码记灯、剩下的区分一部分动作：实际训练得到约 0.6。灯又赢了，“正好 3 个码”反而学不出 3 个动作。</li>
+  <li>3 个码。三个码都给小球：只剩灯的 1.0。另一种分法：一个码表示“灯亮”（不管动作），另两个码在灯灭时区分“左移 / 其他”，误差 \(0.5\times0.89 + \tfrac13\times0.5\approx0.61\)，实际训练也得到约 0.6。灯又赢了，“正好 3 个码”反而学不出 3 个动作。</li>
   <li>6 个码。每个码是“动作 × 灯”的一种组合，误差接近 0。动作能还原，但每个码都和灯绑在一起。</li>
 </ul>
 <p>按信息量算，灯只有 1 比特，小球的动作有 \(\log_2 3\approx 1.58\) 比特；按平方误差算，灯一变就是 4 个格子，小球移动只改变 2 个格子。码跟着误差走，不跟着比特走。</p>
 <p><b>第 4 步，为什么在平台游戏里管用。</b>平台游戏的镜头跟着主角走，主角一动整个画面都平移，动作是画面变化里最大的来源。真实视频不满足这一点：镜头抖动、路人、晃动的树叶都会和动作争夺码。LAOM（Nikulin 等, 2025-02，ICML 2025）在带干扰的控制任务上验证了这一点：有动态背景、镜头抖动时潜动作质量明显下降；量化本身即使没有干扰也有损害；给 2.5% 的数据配上真实动作标签参与训练，下游表现平均提高到 4.2 倍。</p>
 <p><b>这个推导告诉我们：</b>潜动作是“最能解释画面变化的那几比特”，它和“可控的动作”只在画面变化主要由智能体引起时才重合。把潜动作用到机器人和真实视频上，要么挑选干扰少的视频，要么混入少量真实动作标签，要么像 Genie 那样把码本压得很小、只留最大的变化。</p>
 </div></details>
+<p>演示和推导的结论是：码跟着平方误差走，不跟着比特走。潜动作是“最能解释画面变化的那几比特”，只在画面变化主要由智能体引起时才和可控的动作重合；平台游戏的镜头跟着主角走，正好满足这一点，真实视频里的镜头抖动、路人、树叶都会和动作争夺码。所以把潜动作用到真实视频上，要么挑干扰少的视频，要么混入少量真实动作标签。</p>
 <p>潜动作的用处不止让 Genie 能玩。LAPA（2024-10）等工作用潜动作给大量人类操作视频标上“伪动作”，先预训练机器人策略，再用少量真实机器人数据把潜动作映射到电机指令；第 <a class="xref" data-ref="embodied"></a> 章的<span class="term" data-t="wam">世界动作模型</span>走的是相近的路。</p>
 
+<h2 id="realtime">通用、实时、开源：Genie 2、Genie 3 与 Matrix-Game</h2>
+<p>到 2024 年中，GameNGen 能实时但只会一款游戏，Genie 通用但只有二维平台游戏、每秒约 1 帧。之后的系统沿着这两个短板往前走，下表每一行的“卡在哪”对着上一行的“代价”：</p>
+<div class="tablewrap"><table>
+  <tr><th>系统（时间）</th><th>卡在哪</th><th>改了什么</th><th>代价</th></tr>
+  <tr><td>Genie 2（DeepMind, 2024-12）</td><td>Genie 1 只有二维、低清、每秒约 1 帧</td><td>从一张图片生成可以用键盘鼠标探索的三维世界；自回归潜空间扩散，用<span class="term" data-t="cfg">无分类器引导</span>增强动作的可控性</td><td>一致性最多约一分钟，多数 10–20 秒；实时版是蒸馏版，质量更低</td></tr>
+  <tr><td>Genie 3（DeepMind, 2025-08）</td><td>不实时、不清晰</td><td>720p、每秒 24 帧实时；视觉记忆约一分钟；可以用文字触发“世界事件”（下雨、加一个角色）</td><td>只能交互几分钟；动作空间有限；多角色互动、文字渲染弱；不开放</td></tr>
+  <tr><td>Matrix-Game 2.0（Skywork, 2025-08，与 Genie 3 同月）</td><td>论文的说法：已有的交互世界模型靠双向注意力和多步去噪，做不到实时；Genie 3 实时，但不开放</td><td>约 1200 小时带动作标注的 Unreal Engine 与 GTA5 视频；少步蒸馏加键盘鼠标注入模块；每秒 25 帧，开源</td><td>游戏风格为主；记忆弱</td></tr>
+  <tr><td>Matrix-Game 3.0 / 3.5（2026-04 / 08）</td><td>走远再回来，场景变了</td><td>按相机位置检索记忆；训练时把自己生成的不完美帧重新注入（同 Self Forcing 的思路）；50 亿参数，720p 最高每秒 40 帧；3.5 加显式三维补丁记忆</td><td>一致性仍以分钟计</td></tr>
+</table></div>
+<p>同类的还有 Oasis（Decart 与 Etched, 2024-10）、腾讯的 HY-World 1.5（WorldPlay，2025-12）、Runway 的 GWM-1（2025-12）。2026-01-29，Google 以 Project Genie 的形式把 Genie 3 开放给美国的 Google AI Ultra 订阅用户。表里最后一行的问题，“走远再回来，场景变了”，是下一节的主题。</p>
+
 <h2 id="memory">记忆：转过身，房间还在吗</h2>
-<p>转过身再转回来，房间应该和刚才一样。第 <a class="xref" data-ref="video"></a> 章的滑动窗口、帧汇、FramePack 能让长视频不崩，但都会“忘掉”离开过的地方。把全部历史都放进上下文，代价是这样的：</p>
-<div class="fx">
-\[ \htmlClass{sym-Nc}{N_{\text{ctx}}} = \frac{\htmlClass{sym-T}{T}\cdot\text{fps}}{\htmlClass{sym-ft}{f_t}}\cdot \htmlClass{sym-nf}{n_{\text{frame}}} \]
-  <div class="fx-read">要记住过去 \(T\) 秒，上下文里就有 \(T\cdot\text{fps}\) 帧；视频 VAE 在时间上压缩 \(f_t\) 倍，每个<span class="term" data-t="latent-frame">潜帧</span>有 \(n_{\text{frame}}\) 个 token。</div>
-  <dl class="fx-syms">
-    <dt data-sym="Nc">\(N_{\text{ctx}}\)</dt><dd>上下文里的 token 数</dd>
-    <dt data-sym="T">\(T\)</dt><dd>要记住的时长（秒）</dd>
-    <dt data-sym="ft">\(f_t\)</dt><dd>时间压缩倍数，第 <a class="xref" data-ref="video"></a> 章的 3D 因果 VAE 是 4</dd>
-    <dt data-sym="nf">\(n_{\text{frame}}\)</dt><dd>每个潜帧的 token 数，480p 约 1560</dd>
-  </dl>
-  <div class="fx-eg">记住一分钟、每秒 24 帧：\(60\times24/4 = 360\) 个潜帧，\(360\times1560\approx 56\) 万个 token。每生成一块新画面，都要对这 56 万个 token 做注意力，还要在 42 毫秒内完成，做不到。如果只取回和当前视角最相关的 8 帧，上下文只有约 1.2 万个 token。</div>
-</div>
-<p>于是 2025–26 年的主流做法是<dfn data-t="retrieval-memory">检索式记忆</dfn>：把过去的帧（或潜编码）连同拍摄时的相机位置和时间存起来，生成新画面时只取回视野重叠最多的几帧。</p>
+<p>转过身再转回来，房间应该和刚才一样。第 <a class="xref" data-ref="video"></a> 章的滑动窗口、帧汇、FramePack 能让长视频不崩，但都会“忘掉”离开过的地方。把全部历史都放进上下文，代价是这样算的：要记住过去 \(T_{\text{mem}}\) 秒、每秒 24 帧，视频 VAE 在时间上压缩 4 倍（第 <a class="xref" data-ref="video"></a> 章的 3D 因果 VAE），每个<span class="term" data-t="latent-frame">潜帧</span>在 480p 下约 1560 个 token。记住一分钟就是 \(60\times24/4 = 360\) 个潜帧、\(360\times1560\approx 56\) 万个 token；每生成一块新画面都要对这 56 万个 token 做注意力，还要在 42 毫秒内完成，做不到。如果只取回和当前视角最相关的 8 帧，上下文只有约 1.2 万个 token。</p>
+<p>这和语言模型里的处境一样。RSSM 的记忆 \(\mathbf h\) 是压缩记忆：把过去汇总成一个固定大小的向量，便宜，但会遗忘；把全部历史放进上下文对应长上下文，准确但贵；只把相关的部分取回来，对应检索增强。于是 2025–26 年的主流做法是<dfn data-t="retrieval-memory">检索式记忆</dfn>：把过去的帧（或潜编码）连同拍摄时的相机位置和时间存起来，生成新画面时只取回视野重叠最多的几帧。</p>
 <ul>
   <li><b>WorldMem</b>（2025-04）：每个记忆单元是“帧 + 位置与朝向 + 时间戳”，按视野重叠和时间差挑选。在《我的世界》里放下一盏南瓜灯、走远再回来，灯还在。局限是记忆线性增长、检索依赖视野重叠。</li>
-  <li><b>Matrix-Game 3.0</b>（2026-04）按相机位置检索记忆；<b>3.5</b>（2026-08）改为把记忆里的画面块按相机投影对到当前视角的三维补丁检索；<b>HY-WorldPlay</b>（2025-12）动态重组上下文，让很久以前但几何上重要的帧仍取得到。</li>
+  <li><b>Matrix-Game 3.0</b>（2026-04）按相机位置检索记忆；<b>3.5</b>（2026-08）改为把记忆里的画面块按相机投影对到当前视角的三维补丁检索；<b>HY-World 1.5（WorldPlay，2025-12）</b>动态重组上下文，让很久以前但几何上重要的帧仍取得到。</li>
   <li><b>显式三维记忆。</b>把看到的东西重建成点云或<span class="term" data-t="gaussian-splatting">高斯泼溅</span>，渲染出来当作条件。第 <a class="xref" data-ref="spatial"></a> 章的 Marble 是极端：整个世界就是显式三维的，几何天然一致，动态和交互却难表达。</li>
 </ul>
 <p>现状：Genie 2 多数例子保持 10–20 秒，Genie 3 的视觉记忆约一分钟。WorldRoamBench（2026-06）用一千多个 10–60 秒的交互测试动作响应、画面漂移、物理合理性和记忆，结论是没有一个模型在所有维度上都稳定。</p>
@@ -332,13 +335,15 @@
 <h2 id="physical">物理世界：自动驾驶与机器人</h2>
 <p>世界模型对自动驾驶和机器人格外有价值：罕见的危险场景（行人突然冲出、暴雪、奇怪的障碍物）几乎无法安全地大量采集，而世界模型可以按需生成。更重要的是<dfn data-t="closed-loop-sim">闭环仿真</dfn>：被测的驾驶策略在仿真里开车，仿真根据它的动作生成下一刻的传感器数据，策略再做下一个决定。回放录像只能做“开环”测试，车的动作一旦和录像不同，后面的画面就不对了。</p>
 <ul>
-  <li><b>GAIA-1</b>（Wayve, 2023-09）：用 2019–2023 年在伦敦采集的 4700 小时驾驶视频训练；每帧编码成 576 个离散 token，65 亿参数的模型按“视频 + 文字 + 动作（车速和转弯曲率）”预测下一帧的 token，再由 26 亿参数的视频扩散解码器还原画面。</li>
+  <li><b>GAIA-1</b>（Wayve, 2023-09）：用伦敦采集的驾驶视频训练，把每帧编码成离散 token，按“视频 + 文字 + 动作（车速和转弯曲率）”预测下一帧，是最早以动作为条件生成驾驶视频的大模型之一。</li>
   <li><b>Waymo World Model</b>（2026-02）：建在 Genie 3 之上，后训练后同时生成时间上一致的摄像头画面和激光雷达点云；可以用驾驶动作（检验“要是当时刹车了会怎样”）、场景布局和文字（天气、时间）控制，模拟车队从未遇到过的情况（路上的大象、被淹的街道）。Waymo 称，路线偏离原始录像时，高斯泼溅这类重建方法的画面会崩坏，生成式模型仍能保持真实。</li>
   <li><b>NVIDIA Cosmos</b>（2025-01）：开放的“物理 AI”世界基础模型，据 NVIDIA 用 2000 万小时视频训练，有扩散和自回归两个系列（40 亿到 140 亿参数），用于生成机器人和自动驾驶的训练与测试数据。Cosmos 3（2026-06）扩展到语言、图像、视频、声音和动作，把理解、生成、世界仿真和机器人策略合进一个模型。</li>
 </ul>
-<p>这些世界模型给第 <a class="xref" data-ref="embodied"></a> 章的机器人策略提供练习场和评估器。第 <a class="xref" data-ref="video"></a> 章的物理争议在这里变得关键：仿真器的错误可能让一个差策略看起来很好，被测的策略越强，越可能找到仿真器的漏洞，这是“钻模型的空子”换了一个面目。</p>
+<p>机器人这边，世界模型有两种用法。一种是 Dreamer 式的：直接在真实机器人上边收集数据边学一个小世界模型，在想象里练策略。DayDreamer（Wu、Escontrela、Hafner 等, 2022-06）用 DreamerV2 让一台四足机器人在真实世界里从仰面躺着学会翻身、站起、行走，只用了约 1 小时，没有用仿真器；同样的设置下无模型的 SAC 只学会了翻身。另一种是上面这些大模型的用法：给第 <a class="xref" data-ref="embodied"></a> 章的机器人策略当练习场和评估器。和手写的物理引擎（下一章“仿真到现实”用的那种）相比，学出来的模拟器不需要人去建模每个物体，能直接产生像真实摄像头拍到的画面，也能处理布料、液体、人群这些难写方程的东西；代价是没有物理守恒的保证，而且和视频世界模型一样只给画面，不给奖励，要另配判定成功与否的模型。</p>
+<p>第 <a class="xref" data-ref="video"></a> 章的物理争议在这里变得关键：仿真器的错误可能让一个差策略看起来很好，被测的策略越强，越可能找到仿真器的漏洞，这是“钻模型的空子”换了一个面目。</p>
 
 <h2 id="debate">路线之争：预测像素，还是预测表示</h2>
+<p>这一节回到「世界模型是什么」里那条轴：模型要不要还原观测。Dreamer、GameNGen、Genie、Cosmos 都要还原画面（哪怕是在视频分词器的潜空间里预测，最后也要解码回像素）；MuZero 和 JEPA 不还原。MuZero 靠奖励决定留什么，前面讲过；这里讲 JEPA。</p>
 <p>LeCun 长期主张：要理解世界，不应该预测每一个像素。树叶怎样摇动、水面的波纹，这些细节既不可预测也不重要；花大量算力去生成它们是浪费。他提出的 <dfn data-t="jepa">JEPA</dfn>（联合嵌入预测架构）只在抽象的表示空间里做预测：</p>
 <div class="fx">
 \[ \mathcal L_{\text{JEPA}} = \Big\|\ \htmlClass{sym-P}{g_\phi}\big(f_\theta(\mathbf x),\ \mathbf a\big) - \operatorname{sg}\big(\htmlClass{sym-fx}{f_\xi}(\mathbf y)\big)\Big\|,\qquad \xi\leftarrow\text{滑动平均}(\theta) \]
@@ -349,37 +354,45 @@
   </dl>
   <div class="fx-eg">如果只最小化表示之间的差距，最省事的解是把一切都映射成同一个常数向量，损失恒为 0，什么也没学到。停止梯度加上慢速更新的目标编码器（以及正则项）打破了这个平凡解，迫使表示保留可预测的结构。</div>
 </div>
-<p>这种平凡解叫<dfn data-t="representation-collapse">表示塌缩</dfn>（representation collapse）。第 <a class="xref" data-ref="vlm"></a> 章的 CLIP 用<span class="term" data-t="contrastive">对比学习</span>防塌缩（把不配对的样本推开）；JEPA 不用负样本，靠停止梯度和滑动平均。LeJEPA（Balestriero 与 LeCun, 2025-11）直接要求一批表示服从各向同性的正态分布，并证明这在一定意义下是最优的表示分布，从而不再需要这些经验性的技巧。</p>
-<p>Meta 的 V-JEPA 2（2025-06）是这条路线的代表。12 亿参数，编码器是约 10 亿参数的 ViT，先在 100 多万小时的视频和 100 万张图片上自监督训练（遮住一部分，在表示空间里预测被遮住的部分）。然后冻结编码器，只用不到 62 小时、没有任务标注的机器人视频（DROID）训练一个 3 亿参数的动作条件预测器（V-JEPA 2-AC）。规划时给一张目标图片，用 CEM 搜索动作序列，让预测的未来表示和目标表示的 L1 距离最小。在两个实验室的 Franka 机械臂上零样本部署：抓起并放好杯子的成功率 80%，同样设置下 Cosmos 是 0%、通用机器人策略 Octo 是 15%；规划一个动作用 16 秒，Cosmos 要 4 分钟。</p>
-<p>LeCun 在 2025-11 离开 Meta，在巴黎创办 AMI Labs；据报道，它在 2026-03 完成了 10.3 亿美元的种子轮融资，押注 JEPA 路线。</p>
+<p>只比较表示有一个漏洞：把一切输入都映射成同一个常数向量，损失恒为 0，什么也没学到。这种平凡解叫<dfn data-t="representation-collapse">表示塌缩</dfn>（representation collapse）。第 <a class="xref" data-ref="vlm"></a> 章的 CLIP 用<span class="term" data-t="contrastive">对比学习</span>防塌缩（把不配对的样本推开）；JEPA 不用负样本，靠停止梯度和滑动平均。LeJEPA（Balestriero 与 LeCun, 2025-11）直接要求一批表示服从各向同性的正态分布，并证明这在一定意义下是最优的表示分布，从而不再需要这些经验性的技巧。下面的推导说明了这条路线省掉什么、付出什么：像素模型要为预测不了的细节付出容量，表示模型可以把它们丢掉；但丢掉什么由“能不能预测”决定，不由任务决定，预测不了却很要紧的事件（突然冲出的行人）可能只剩一个模糊的“可能有事发生”。</p>
+<p>Meta 的 V-JEPA 2（2025-06）是这条路线的代表。结构是“冻结的编码器 + 小预测器 + 用目标图片规划”：编码器（约 10 亿参数的 ViT）先在 100 多万小时的视频上自监督训练（遮住一部分，在表示空间里预测被遮住的部分）；然后冻结它，只用不到 62 小时、没有任务标注的机器人视频训练一个动作条件预测器（V-JEPA 2-AC）；规划时给一张目标图片，用 CEM 搜索动作序列，让预测的未来表示尽量接近目标图片的表示。在实验室的 Franka 机械臂上零样本部署，抓起并放好杯子的成功率 80%；作者在同一批机器人数据上微调的像素世界模型基线 Cosmos 是 0%，规划一个动作的时间也长约 15 倍（4 分钟对 16 秒）。这是同一实验室的一组对比，不是像素路线和表示路线的定论。</p>
 
 <details class="deep"><summary>在表示空间里预测，省掉了什么，又付出了什么</summary><div class="in">
-<p><b>第 1 步，把未来分成两部分。</b>设未来的观测 \(\mathbf y = (\mathbf c, \mathbf n)\)：\(\mathbf c\) 是能从现在和动作推出来的部分（杯子被推到哪里），\(\mathbf n\) 是推不出来、和现在无关的部分（树叶的纹理、水面的波纹、传感器噪声），它的熵 \(H(\mathbf n)\) 可能很大。</p>
+<p><b>第 1 步，把未来分成两部分。</b>设未来的观测 \(\mathbf y = (\mathbf c, \mathbf n)\)：\(\mathbf c\) 是能从现在和动作推出来的部分（杯子被推到哪里），\(\mathbf n\) 是推不出来、和现在无关的部分（树叶的纹理、水面的波纹、传感器噪声），它的熵 \(\mathcal H(\mathbf n)\) 可能很大。</p>
 <p><b>第 2 步，像素模型必须为 \(\mathbf n\) 付费。</b>生成式的像素模型要学 \(p(\mathbf y\mid\mathbf x,\mathbf a)\)，它的负对数似然有一个下界：</p>
-\[ \mathbb E\big[-\log p_\theta(\mathbf y\mid\mathbf x,\mathbf a)\big] \ge H(\mathbf y\mid\mathbf x,\mathbf a) = H(\mathbf n) \]
+\[ \mathbb E\big[-\log p_\theta(\mathbf y\mid\mathbf x,\mathbf a)\big] \ge \mathcal H(\mathbf y\mid\mathbf x,\mathbf a) = \mathcal H(\mathbf n) \]
 <p>这一部分怎么训练都降不下去；为了采样出逼真的树叶，模型还得用大量容量刻画 \(\mathbf n\) 的分布。改用平方误差，最优预测是条件均值，\(\mathbf n\) 被平均成一片模糊。小球世界的随机灯就是一个最小的 \(\mathbf n\)。</p>
 <p><b>第 3 步，表示模型可以把 \(\mathbf n\) 丢掉。</b>预测目标换成 \(f(\mathbf y)\)。如果编码器学会只保留 \(\mathbf c\)，即 \(f(\mathbf y) = u(\mathbf c)\)，目标就由 \((\mathbf x,\mathbf a)\) 完全决定，预测误差可以降到 0，预测器完全不用管 \(\mathbf n\)。</p>
-<p><b>第 4 步，可丢掉 \(\mathbf n\) 的编码器，也可以丢掉一切。</b>\(f(\mathbf y) = \) 常数时误差同样是 0：这就是表示塌缩。所以必须同时要求表示尽量有信息量，比如要求一批表示的协方差接近单位矩阵（VICReg、LeJEPA），或者用停止梯度和滑动平均（V-JEPA）。两个要求合起来，大致是在最大化 \(I\big(f(\mathbf y);\ \mathbf x,\mathbf a\big)\)：表示里要尽量多地装东西，但只装能从现在和动作预测出来的东西。</p>
+<p><b>第 4 步，可丢掉 \(\mathbf n\) 的编码器，也可以丢掉一切。</b>\(f(\mathbf y) = \) 常数时误差同样是 0：这就是表示塌缩。所以必须同时要求表示尽量有信息量，比如要求一批表示的协方差接近单位矩阵（VICReg 这类方法直接把它写成正则项；LeJEPA），或者用停止梯度和滑动平均（V-JEPA）。两个要求合起来，大致是在最大化 \(I\big(f(\mathbf y);\ \mathbf x,\mathbf a\big)\)：表示里要尽量多地装东西，但只装能从现在和动作预测出来的东西。</p>
 <p><b>第 5 步，代价。</b>什么被当作 \(\mathbf n\) 丢掉，由“能不能预测”决定，不由任务决定：能预测但无关的细节会被保留；预测不了却很要紧的事件（突然冲出的行人）可能只剩一个模糊的“可能有事发生”，没法像像素模型那样采样出几种具体的未来。表示也不能直接给人看，评估和调试要另外训练解码器。</p>
 <p><b>这个推导告诉我们：</b>像素模型把容量花在预测不了的细节上，表示模型把它们交给编码器丢掉，代价是要防塌缩，而且丢掉什么由可预测性决定。三种世界模型对“什么是重要的”有三种回答：Dreamer 由重建决定，MuZero 由奖励决定，JEPA 由可预测性决定。</p>
 </div></details>
 
 <aside class="dispute">
-  <h4>世界模型应该生成像素吗</h4>
+  <h4>世界模型应该还原观测吗</h4>
   <dl>
-    <dt>像素派</dt><dd>生成像素的世界模型（Genie、Cosmos、Waymo World Model）可以直接看、直接用：当游戏、当驾驶仿真器、当训练视觉策略的数据源；像素是最通用的接口，不用预先决定“什么是重要的”。视频模型已经展现出零样本的视觉推理（第 <a class="xref" data-ref="video"></a> 章的帧链）。传感器级的测试（摄像头加激光雷达）也只有像素模型能做。</dd>
-    <dt>表示派</dt><dd>预测像素把绝大部分算力花在无关紧要的细节上，还会“编造”逼真但物理上错误的细节；规划需要的是“推这个杯子会怎样”，而不是“杯子上的反光怎样变化”。V-JEPA 2 只用不到 62 小时的机器人数据，就在新环境中实现了零样本的抓取规划，成功率和速度都远超同样设置下的 Cosmos。</dd>
-    <dt>显式三维派</dt><dd>第 <a class="xref" data-ref="spatial"></a> 章的 Marble 等用显式的三维表示，几何天然一致、可以导出到游戏引擎和仿真器，代价是动态与交互的表达能力较弱。</dd>
-    <dt>现在怎么看</dt><dd>三条路线服务于不同的用途：像素模型适合需要“看”的场景，表示模型适合高效的规划与控制，显式三维适合需要几何精度的场合。2026 年也出现了融合：像素世界模型里加入三维记忆（Matrix-Game 3.5）；Cosmos 3 把理解、生成和动作放进同一个模型。</dd>
+    <dt>还原派</dt><dd>能还原画面的世界模型（Genie、Cosmos、Waymo World Model，也包括 Dreamer）可以直接看、直接用：当游戏、当驾驶仿真器、当训练视觉策略的数据源；像素是最通用的接口，不用预先决定“什么是重要的”。视频模型已经展现出零样本的视觉推理（第 <a class="xref" data-ref="video"></a> 章的帧链）。传感器级的测试（摄像头加激光雷达）也只有还原观测的模型能做。</dd>
+    <dt>不还原派</dt><dd>还原像素把绝大部分算力花在无关紧要的细节上，还会“编造”逼真但物理上错误的细节；规划需要的是“推这个杯子会怎样”，而不是“杯子上的反光怎样变化”。V-JEPA 2 只用不到 62 小时的机器人数据，就在新环境中实现了零样本的抓放规划，在同一组实验里成功率和速度都远超作者微调的 Cosmos 基线。MuZero 则说明，连表示都不必能预测，只要对决策有用就够。</dd>
+    <dt>显式三维派</dt><dd>第 <a class="xref" data-ref="spatial"></a> 章的 Marble 等用显式的三维表示，几何天然一致、可以导出到游戏引擎和仿真器，代价是动态与交互的表达能力较弱。视频世界和显式三维的具体比较见上面「记忆」一节。</dd>
+    <dt>现在怎么看</dt><dd>三条路线服务于不同的用途：还原观测的模型适合需要“看”的场景，不还原的适合高效的规划与控制，显式三维适合需要几何精度的场合。正面对比还很少，V-JEPA 2 对 Cosmos 是目前最直接的一次。2026 年也出现了融合：像素世界模型里加入三维记忆（Matrix-Game 3.5）；Cosmos 3 把理解、生成和动作放进同一个模型。</dd>
+  </dl>
+</aside>
+
+<aside class="dispute">
+  <h4>语言模型里有没有世界模型</h4>
+  <dl>
+    <dt>主张</dt><dd>Othello-GPT（Li 等, 2022-10）：只用黑白棋的合法着法序列训练一个 GPT，事后能从它的内部激活里用<span class="term" data-t="probe">探针</span>（在激活上训练一个小分类器去读出棋盘状态）读出完整的棋盘；人为修改这些表示，它的下一步预测随之改变。Nanda 等（2023）发现按“我方 / 对方”的子来读，棋盘是线性可读的。</dd>
+    <dt>反方</dt><dd>Vafa 等（NeurIPS 2024）：用纽约出租车的逐路口转向序列训练 Transformer，下一个转向几乎 100% 合法；可从它的行为重建出的地图有方向不可能的街道和凭空的高架桥，一要求绕路就失败。预测得准，不等于内部有连贯的世界模型。</dd>
+    <dt>再反驳</dt><dd>2026 年的一篇预印本（World Modeling in Transformers）对一个出租车模型做机制分析，发现内部存着一张相当准确的地图，出错的是在地图上定位的机制；从行为重建地图分不清这两种情况。</dd>
+    <dt>现在怎么看</dt><dd>这里的“世界模型”不是本章说的动作条件预测器，而是“模型内部有没有一张可用的世界地图”。和 MuZero 的教训一致：只看下一步预测准不准，判断不了模型内部有没有可以用来规划的世界。要检验，就要像价值等价那样换问题：绕路、改任务、没见过的状态下还答得对吗。</dd>
   </dl>
 </aside>
 
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
-  <li><b class="m">世界模型就是更好的视频生成模型。</b>关键区别是动作条件和实时性：它要回答“如果我这样做，会发生什么”。MuZero 和 V-JEPA 2 根本不生成画面，也是世界模型。</li>
-  <li><b class="m">画面越逼真，世界模型越好用。</b>视觉逼真不等于物理正确，也不等于对决策有用。MuZero 的模型画不出任何画面，照样能规划；V-JEPA 2 在机器人抓取上远胜像素模型。</li>
-  <li><b class="m">在世界模型里训练好的策略可以直接搬到现实。</b>策略会钻模型的空子：《World Models》里梦越好对付，现实里越差。要靠短视野、真实起点、给模型加随机性、在现实中继续收集数据来压住它。</li>
-  <li><b class="m">世界模型可以无限地运行下去。</b>误差按指数累积，记忆有限；Genie 3 的视觉记忆约一分钟，2026 年的基准里还没有模型在长时间交互中各方面都稳定。</li>
+  <li><b class="m">世界模型就是更好的视频生成模型，画面越逼真越好用。</b>关键区别是动作条件：它要回答“如果我这样做，会发生什么”。逼真也不等于物理正确，更不等于对决策有用：MuZero 和 V-JEPA 2 根本不还原画面，照样能规划。</li>
+  <li><b class="m">世界模型的误差必然按指数发散。</b>累积多快取决于放大系数 \(L\)：\(L&lt;1\) 时误差有上限，\(L = 1\) 时线性增长，只有 \(L&gt;1\) 才指数增长。训练技巧能压低模型自己的放大，压不掉世界本身的放大（碰撞、多物体互动）。</li>
+  <li><b class="m">在世界模型里训练好的策略可以直接搬到现实。</b>策略会钻模型的空子：《World Models》里梦的温度太低时，梦里 2086 分、现实只有 193 分。要靠短视野、真实起点、给模型加随机性、在现实中继续收集数据来压住它。</li>
   <li><b class="m">要学世界模型必须有动作标注。</b>Genie 从无标注视频中学出了潜动作，V-JEPA 2 的大部分训练也不需要动作。但潜动作只在画面变化主要由智能体引起时才对应真实动作。</li>
 </ul>
 
@@ -390,7 +403,7 @@
     <h4>先学模型，再在模型里练习</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>与真实环境交互的代价高，样本效率低。</dd>
-      <dt>怎么解决</dt><dd>Sutton 的 Dyna（1990）用学到的模型生成额外的练习经验；Ha 与 Schmidhuber（2018-03）用 VAE 压缩画面、用循环网络预测潜变量，在“梦”里训练一个约一千个参数的控制器，赛车任务得到 906 分，达到“解决”的标准（900 分）。</dd>
+      <dt>怎么解决</dt><dd>Sutton 的 Dyna（1990）用学到的模型生成额外的练习经验。Ha 与 Schmidhuber 的《World Models》（2018-03）用 VAE 压缩画面、用循环网络预测潜变量，做了两个实验：赛车（CarRacing）里，一个 867 个参数的线性控制器借助这些特征在真实环境中训练，得到 906 分，首次达到 900 分的“解决”标准；《毁灭战士》里，1088 个参数的控制器完全在“梦”里训练，温度 1.15 时搬回真实游戏得 1092 分。</dd>
       <dt>代价</dt><dd>策略会钻模型的空子（梦里的怪物不发火球）；VAE 和动态模型分开训练，潜变量不一定适合预测。</dd>
       <dt>引出</dt><dd>怎样学一个专门为预测和规划设计的潜空间？</dd>
     </dl>
@@ -398,66 +411,54 @@
   </div>
   <div class="hist-node">
     <div class="hist-date">2018–2023</div>
-    <h4>PlaNet → Dreamer：在潜空间里想象</h4>
+    <h4>在潜空间里想象：还原画面与不还原画面，两条并行的线</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>像素预测又贵又糊；分开训练的潜变量不适合长时间预测。</dd>
-      <dt>怎么解决</dt><dd>PlaNet（2018-11）端到端训练 RSSM，在潜空间里做 MPC；Dreamer（2019-12）改为在想象中训练策略；DreamerV2（2020-10）在雅达利上达到人类水平；DreamerV3（2023-01）一组超参数跑通 150 多个任务，从零挖到钻石。</dd>
-      <dt>代价</dt><dd>仍要重建画面，容量被背景细节分走；想象只能走十几步。</dd>
-      <dt>引出</dt><dd>模型真的需要还原画面吗？</dd>
+      <dt>怎么解决</dt><dd>还原画面的一支：PlaNet（2018-11）端到端训练 RSSM，在潜空间里做 MPC；Dreamer（2019-12）改为在想象中训练策略，在 20 个从画面学习的连续控制任务上超过了当时的方法；DreamerV2（2020-10）是第一个在单独训练的世界模型里学习、在 55 个雅达利游戏上达到人类水平的智能体，只用一张 GPU；DreamerV3（2023-01）一组超参数跑通 150 多个任务。同一时期、互相独立的另一支：MuZero（2019-11）不还原画面，只预测奖励、价值和策略；价值等价理论（2020）解释了为什么够用；EfficientZero（2021-10）加回表示一致性损失，提高了数据效率。</dd>
+      <dt>代价</dt><dd>想象只能走十几步；还原画面的一支画面很小，MuZero 的隐藏状态画不出来；两支都依赖明确的奖励和带动作的交互数据。</dd>
+      <dt>引出</dt><dd>这些模型都只在小环境里、用自己收集的带动作数据训练；同一时期的视频生成模型画面逼真，却不能交互。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>扩散模型当世界模型：DIAMOND</summary><div>DIAMOND（2024-05）认为离散潜变量丢掉了要紧的视觉细节，改用扩散模型生成下一帧，在 Atari 100k 上达到人类标准化平均分 1.46，是当时完全在世界模型里训练的智能体中最好的；它还在《反恐精英》的录像上训练出一个可以玩的神经游戏引擎。</div></details>
-  </div>
-  <div class="hist-node">
-    <div class="hist-date">2019–2021</div>
-    <h4>MuZero：只预测奖励、价值和策略</h4>
-    <dl class="hist-why">
-      <dt>卡在哪</dt><dd>重建画面浪费容量，而规划只需要和决策有关的量。</dd>
-      <dt>怎么解决</dt><dd>MuZero（2019-11）只预测奖励、价值和搜索得到的策略，配合 MCTS，不给棋规就达到 AlphaZero 的水平；价值等价理论（2020）解释了为什么够用；EfficientZero（2021-10）加上表示一致性损失，大幅提高了数据效率。</dd>
-      <dt>代价</dt><dd>模型学什么取决于奖励；隐藏状态画不出来，难以迁移；需要明确的奖励。</dd>
-      <dt>引出</dt><dd>没有奖励、没有动作标签的海量视频，能不能用来学通用的世界模型？</dd>
-    </dl>
-    <details class="hist-branch"><summary><span class="bt debate">争论</span>要不要重建：价值等价与自监督</summary><div>MuZero 证明了不重建也能规划，EfficientZero 又加回了“预测下一时刻的表示”，数据少时它很关键。不重建画面、但预测表示，正是 JEPA 的主张。重建、奖励、可预测性三种目标至今仍在不同系统里组合使用。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">争论</span>要不要重建：价值等价与自监督</summary><div>MuZero 说明不重建也能规划，EfficientZero 又加回了“预测下一时刻的表示”，数据少时它很关键。不重建画面、但预测表示，正是 JEPA 的主张。重建、奖励、可预测性三种目标至今仍在不同系统里组合使用。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2023–2024</div>
-    <h4>视频模型成为世界模拟器</h4>
+    <h4>扩散与视频模型进入世界模型</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>强化学习里的世界模型只在小环境里训练；视频生成模型不能交互。</dd>
-      <dt>怎么解决</dt><dd>GAIA-1（2023-09）以动作为条件生成驾驶视频；Genie（2024-02）从无标注视频学出 8 个潜动作；Sora 的报告（2024-02）称视频模型是“世界模拟器”；GameNGen（2024-08）实时运行《毁灭战士》；Genie 2（2024-12）扩展到三维。</dd>
-      <dt>代价</dt><dd>慢（Genie 每秒约 1 帧）、分辨率低、记忆短。</dd>
-      <dt>引出</dt><dd>能否做到实时、高清、更长的一致性？</dd>
+      <dt>卡在哪</dt><dd>强化学习的世界模型画面小、离不开奖励和动作标签；视频生成模型不能按动作交互。</dd>
+      <dt>怎么解决</dt><dd>几项并行的工作从不同方向接近：GAIA-1（2023-09）以动作为条件生成驾驶视频；Sora 的技术报告（2024-02）称视频模型是“世界模拟器”；Genie（2024-02）从无标注视频学出潜动作；DIAMOND（2024-05）用扩散模型做强化学习的世界模型；GameNGen（2024-08）实时运行《毁灭战士》；Genie 2（2024-12）扩展到三维。机制见正文「可以玩的视频」及后两节。</dd>
+      <dt>代价</dt><dd>要么慢、低清（Genie 每秒约 1 帧），要么一个模型只会一款游戏；记忆只有几秒到几十秒。</dd>
+      <dt>引出</dt><dd>能否在通用的场景里做到实时、高清？</dd>
     </dl>
     <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>潜动作走向机器人</summary><div>潜动作被用来给人类操作视频标上伪动作、预训练机器人策略（LAPA, 2024-10）；LAOM（2025-02）指出有干扰时潜动作会记录干扰而不是动作，需要少量真实标签。这条线和第 <a class="xref" data-ref="embodied"></a> 章的世界动作模型汇合。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2025</div>
-    <h4>实时高清与物理 AI</h4>
+    <h4>实时、高清的交互世界</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>交互式世界模型不够实时；机器人和自动驾驶缺乏可扩展的仿真数据。</dd>
-      <dt>怎么解决</dt><dd>Cosmos（1 月）开放世界基础模型；V-JEPA 2（6 月）在表示空间里规划；Genie 3（8 月）720p、每秒 24 帧；Matrix-Game 2.0（8 月）开源；Self Forcing 等训练方法压住了漂移。</dd>
-      <dt>代价</dt><dd>物理准确性存疑；记忆以分钟计；生成成本高。</dd>
+      <dt>卡在哪</dt><dd>通用的交互世界模型不够实时、不够清晰。</dd>
+      <dt>怎么解决</dt><dd>Genie 3（8 月）720p、每秒 24 帧；Matrix-Game 2.0（同月）开源、每秒 25 帧；第 <a class="xref" data-ref="video"></a> 章的 Self Forcing 等训练方法压住了漂移。各系统的取舍见正文「通用、实时、开源」一节。</dd>
+      <dt>代价</dt><dd>记忆以分钟计；物理准确性存疑；生成成本高。</dd>
       <dt>引出</dt><dd>能否记住更久，并走进真实应用？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt debate">路线之争</span>像素、表示与显式三维</summary><div>Genie 与 Cosmos 生成像素，V-JEPA 2 预测表示，World Labs 的 Marble 生成显式三维场景。三者并行发展，见上文争议框。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">路线之争</span>像素、表示与显式三维</summary><div>同一年，NVIDIA 的 Cosmos（1 月）开放了生成像素的物理 AI 世界基础模型，Meta 的 V-JEPA 2（6 月）在表示空间里规划，World Labs 的 Marble 生成显式三维场景。三者并行发展，见「路线之争」的争议框。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2026</div>
     <h4>记忆、产品化与押注</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>离开再回来，场景就变了；“好不好用”缺乏可靠的评测。</dd>
-      <dt>怎么解决</dt><dd>检索式与三维记忆（Matrix-Game 3.0 / 3.5）；Project Genie 开放（1 月）；Waymo World Model 用于驾驶仿真（2 月）；Cosmos 3 全模态（6 月）；WorldRoamBench 等长时交互基准；据报道，AMI Labs 为 JEPA 路线融资 10.3 亿美元（3 月）。</dd>
+      <dt>怎么解决</dt><dd>检索式与三维记忆（Matrix-Game 3.0 / 3.5）；Project Genie 开放（1 月）；Waymo World Model 用于驾驶仿真（2 月）；Cosmos 3 全模态（6 月）；WorldRoamBench 等长时交互基准。LeCun 2025-11 宣布离开 Meta（年底离任），在巴黎创办 AMI Labs 押注 JEPA 路线；据报道，它在 2026-03 完成了 10.3 亿美元的种子轮融资。</dd>
       <dt>代价</dt><dd>没有模型在长时间交互中各方面都稳定；仿真器自身的错误难以量化。</dd>
       <dt>引出</dt><dd>下一步是让机器人在世界模型和真实世界中学会行动（第 <a class="xref" data-ref="embodied"></a> 章）。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>世界模型直接变成策略</summary><div>世界动作模型以预训练的视频模型为骨干，在想象画面的同时解码出动作（NVIDIA DreamZero 等），见第 <a class="xref" data-ref="embodied"></a> 章。Cosmos 3 也把策略放进了同一个模型。“先学世界，再学行动”和“边想象边行动”的界线正在变模糊。</div></details>
+    <details class="hist-branch"><summary><span class="bt alive">仍在发展</span>世界模型直接变成策略</summary><div>世界动作模型以预训练的视频模型为骨干，在想象画面的同时解码出动作（NVIDIA 等的 DreamZero, 2026-02），见第 <a class="xref" data-ref="embodied"></a> 章。Cosmos 3 也把策略放进了同一个模型。“先学世界，再学行动”和“边想象边行动”的界线正在变模糊。</div></details>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. 单步误差 \(\varepsilon = 0.02\)，放大系数 \(L = 1.05\)。想象 20 步和 60 步后，累积误差大约多少？</summary><div class="ans">\(1.05^{20}\approx 2.65\)：\(0.02\times 1.65/0.05\approx 0.66\)。\(1.05^{60}\approx 18.7\)：\(0.02\times 17.7/0.05\approx 7.1\)。60 步时误差是 20 步时的 10 倍以上。</div></details>
-<details class="quiz"><summary>2. 小球世界里，冰面的真实滑落概率是 0.2。智能体在冰面上只走过 5 次。它的计数模型认为“冰面绝对安全”的概率是多少？这时它会选哪个计划，真实期望回报是多少？</summary><div class="ans">5 次都不滑的概率 \(0.8^5\approx 0.33\)。这时 \(\hat p = 0\)，模型里计划 A 的回报是 \(\gamma^3 = 0.729\)，高于计划 B 的 0.590，于是选 A，真实期望回报约 −0.07。补救：多收集冰面上的数据；或者让模型表达不确定性（训练几个模型，看它们是否一致），规划时对不确定的地方扣分。</div></details>
+<details class="quiz"><summary>1. 单步误差 \(\varepsilon = 0.02\)。放大系数 \(L = 1.05\) 和 \(L = 0.95\) 时，想象 20 步和 60 步后的累积误差大约多少？如果世界本身碰撞很多（\(L_{\text{世界}} = 1.05\)），用 Self Forcing 训练能不能把 \(L\) 压到 0.95？</summary><div class="ans">\(L = 1.05\)：\(1.05^{20}\approx 2.65\)，\(0.02\times 1.65/0.05\approx 0.66\)；\(1.05^{60}\approx 18.7\)，\(0.02\times 17.7/0.05\approx 7.1\)，60 步时是 20 步时的 10 倍以上。\(L = 0.95\)：20 步约 0.26，60 步约 0.38，永远不超过 \(0.02/0.05 = 0.4\)。第二问：只能压一部分。Self Forcing 压的是模型自己的放大 \(\hat L\)，在伪影这类“不像真实数据”的方向上可以压到 1 以下；沿着物理上真实的方向，准确的模型必须和世界一样放大 1.05 倍，硬压下去就等于预测错了。</div></details>
+<details class="quiz"><summary>2. 小球世界里，冰面的真实滑落概率是 0.2，折扣 \(\gamma = 0.9\)。模型估计的滑落概率 \(\hat p\) 低于多少时，规划器才会放弃绕路的计划 B、改走计划 A？如果智能体在冰面上走过 10 次，这种情况发生的概率是多少？</summary><div class="ans">计划 A 在模型里的回报是 \(\hat J_A(\hat p) = (1-\hat p)^3\gamma^3 - \hat p - 0.9(1-\hat p)\hat p - 0.81(1-\hat p)^2\hat p\)，计划 B 是 \(\gamma^5\approx 0.590\)。\(\hat J_A(0.1)\approx 0.28\)，仍低于 0.590；解 \(\hat J_A(\hat p) = 0.590\) 得 \(\hat p\approx 0.03\)。走过 10 次时，计数估计只能是 0、0.1、0.2……，低于 0.03 的只有 \(\hat p = 0\)，即 10 次都没滑：概率 \(0.8^{10}\approx 0.11\)（只走 5 次时是 0.33）。这时选 A，真实期望回报约 −0.07。模型低估风险不一定出事，但低估到一定程度，规划器一定会冲进去。</div></details>
 <details class="quiz"><summary>3. Genie 的码本有 8 个码。每一帧，潜动作最多能告诉解码器多少比特？如果一个游戏有 6 个可以任意组合按下的键，8 个码够不够？</summary><div class="ans">\(\log_2 8 = 3\) 比特。6 个键任意组合有 \(2^6 = 64\) 种，要 6 比特，8 个码装不下，只能记住对画面影响最大的 8 种变化。码本太大，码又会去记录和动作无关的变化（演示里的灯）。</div></details>
-<details class="quiz"><summary>4. 为什么 JEPA 需要“停止梯度 + 慢速更新的目标编码器”？如果去掉会怎样？</summary><div class="ans">只最小化预测表示与目标表示的距离时，把所有输入映射成同一个向量就能让损失为 0（表示塌缩）。停止梯度让目标不随预测一起“迁就”，慢速更新让目标保持稳定且有信息量，打破这个平凡解。去掉后表示会塌缩，学不到任何东西。LeJEPA 换成直接约束表示的分布（各向同性正态），也能防塌缩。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
@@ -471,7 +472,7 @@
 
 <div class="nextq">世界模型让机器人有了练习场，也让“如果我这样做会怎样”有了答案。要让机器人真正动起来，还要回答反过来的问题：为了达成目标，现在应该怎么做。这需要把语言模型的理解能力接到电机上：看懂指令和画面，输出关节动作。下一章（第 <a class="xref" data-ref="embodied"></a> 章）从这里接上。</div>
 
-<p class="src">资料：<a href="https://dl.acm.org/doi/10.1145/122344.122377">Dyna（Sutton 1990）</a> · <a href="https://worldmodels.github.io/">World Models（交互版，含温度实验）</a> · <a href="https://arxiv.org/abs/1811.04551">PlaNet</a> · <a href="https://arxiv.org/abs/1912.01603">DreamerV1</a> · <a href="https://arxiv.org/abs/2010.02193">DreamerV2</a> · <a href="https://www.nature.com/articles/s41586-025-08744-2">DreamerV3（Nature 2025）</a> · <a href="https://arxiv.org/abs/1911.08265">MuZero</a> · <a href="https://arxiv.org/abs/2011.03506">价值等价原理</a> · <a href="https://arxiv.org/abs/2106.10316">Proper Value Equivalence</a> · <a href="https://arxiv.org/abs/2111.00210">EfficientZero</a> · <a href="https://arxiv.org/abs/1906.08253">MBPO</a> · <a href="https://arxiv.org/abs/1907.02057">Benchmarking Model-Based RL（规划视野两难）</a> · <a href="https://arxiv.org/abs/2405.12399">DIAMOND</a> · <a href="https://arxiv.org/abs/2309.17080">GAIA-1</a> · <a href="https://arxiv.org/abs/2402.15391">Genie</a> · <a href="https://arxiv.org/abs/2408.14837">GameNGen</a> · <a href="https://oasis-model.github.io/">Oasis</a> · <a href="https://deepmind.google/discover/blog/genie-2-a-large-scale-foundation-world-model/">Genie 2</a> · <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a> · <a href="https://blog.google/innovation-and-ai/models-and-research/google-deepmind/project-genie/">Project Genie</a> · <a href="https://en.wikipedia.org/wiki/Genie_(world_model)">Genie（维基百科）</a> · <a href="https://en.wikipedia.org/wiki/Waymo_World_Model">Waymo World Model（维基百科）</a> · <a href="https://the-decoder.com/waymo-taps-google-deepminds-genie-3-to-simulate-driving-scenarios-its-cars-have-never-seen/">Waymo 与 Genie 3（The Decoder）</a> · <a href="https://arxiv.org/abs/2501.03575">Cosmos</a> · <a href="https://blogs.nvidia.com/blog/cosmos-world-foundation-models">Cosmos 发布（NVIDIA）</a> · <a href="https://arxiv.org/abs/2606.02800">Cosmos 3</a> · <a href="https://arxiv.org/abs/2508.13009">Matrix-Game 2.0</a> · <a href="https://arxiv.org/abs/2604.08995">Matrix-Game 3.0</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://arxiv.org/abs/2512.14614">HY-WorldPlay</a> · <a href="https://runway.com/research/introducing-runway-gwm-1">Runway GWM-1</a> · <a href="https://arxiv.org/abs/2504.12369">WorldMem</a> · <a href="https://arxiv.org/abs/2606.31672">WorldRoamBench</a> · <a href="https://arxiv.org/abs/2502.00379">LAOM（潜动作与干扰）</a> · <a href="https://arxiv.org/abs/2410.11758">LAPA</a> · <a href="https://arxiv.org/abs/2210.13382">Othello-GPT</a> · <a href="https://arxiv.org/abs/2406.03689">Evaluating the World Model Implicit in a Generative Model</a> · <a href="https://arxiv.org/abs/2609.21748">World Modeling in Transformers（2026）</a> · <a href="https://ai.meta.com/blog/v-jepa-2-world-model-benchmarks/">V-JEPA 2（Meta 博客）</a> · <a href="https://arxiv.org/abs/2511.08544">LeJEPA</a> · <a href="https://www.hpcwire.com/aiwire/2026/03/11/yann-lecuns-ami-secures-1b-seed-to-develop-ai-world-models/">AMI Labs 融资（据报道）</a> · <a href="https://www.turingpost.com/p/guide-how-world-models-work-from-dreamer-and-jepa-to-waymo-and-atlas">世界模型指南（Turing Post）</a>。“想象几步最合适”演示是玩具模型：曲线按推导里的误差模型精确计算，散点是一次随机抽样；“潜动作”演示是实际训练的极小模型。</p>
+<p class="src">资料：<a href="https://dl.acm.org/doi/10.1145/122344.122377">Dyna（Sutton 1990）</a> · <a href="https://worldmodels.github.io/">World Models（交互版，含温度实验）</a> · <a href="https://arxiv.org/abs/1811.04551">PlaNet</a> · <a href="https://arxiv.org/abs/1912.01603">DreamerV1</a> · <a href="https://arxiv.org/abs/2010.02193">DreamerV2</a> · <a href="https://www.nature.com/articles/s41586-025-08744-2">DreamerV3（Nature 2025）</a> · <a href="https://arxiv.org/abs/1911.08265">MuZero</a> · <a href="https://arxiv.org/abs/2011.03506">价值等价原理</a> · <a href="https://arxiv.org/abs/2106.10316">Proper Value Equivalence</a> · <a href="https://arxiv.org/abs/2111.00210">EfficientZero</a> · <a href="https://arxiv.org/abs/1906.08253">MBPO</a> · <a href="https://arxiv.org/abs/1907.02057">Benchmarking Model-Based RL（规划视野两难）</a> · <a href="https://arxiv.org/abs/2405.12399">DIAMOND</a> · <a href="https://arxiv.org/abs/2206.14176">DayDreamer</a> · <a href="https://arxiv.org/abs/2309.17080">GAIA-1</a> · <a href="https://arxiv.org/abs/2402.15391">Genie</a> · <a href="https://arxiv.org/abs/2408.14837">GameNGen</a> · <a href="https://oasis-model.github.io/">Oasis</a> · <a href="https://deepmind.google/discover/blog/genie-2-a-large-scale-foundation-world-model/">Genie 2</a> · <a href="https://deepmind.google/discover/blog/genie-3-a-new-frontier-for-world-models/">Genie 3</a> · <a href="https://blog.google/innovation-and-ai/models-and-research/google-deepmind/project-genie/">Project Genie</a> · <a href="https://en.wikipedia.org/wiki/Genie_(world_model)">Genie（维基百科）</a> · <a href="https://en.wikipedia.org/wiki/Waymo_World_Model">Waymo World Model（维基百科）</a> · <a href="https://the-decoder.com/waymo-taps-google-deepminds-genie-3-to-simulate-driving-scenarios-its-cars-have-never-seen/">Waymo 与 Genie 3（The Decoder）</a> · <a href="https://arxiv.org/abs/2501.03575">Cosmos</a> · <a href="https://blogs.nvidia.com/blog/cosmos-world-foundation-models">Cosmos 发布（NVIDIA）</a> · <a href="https://arxiv.org/abs/2606.02800">Cosmos 3</a> · <a href="https://arxiv.org/abs/2508.13009">Matrix-Game 2.0</a> · <a href="https://arxiv.org/abs/2604.08995">Matrix-Game 3.0</a> · <a href="https://arxiv.org/abs/2608.29910">Matrix-Game 3.5</a> · <a href="https://arxiv.org/abs/2512.14614">HY-World 1.5（WorldPlay）</a> · <a href="https://runway.com/research/introducing-runway-gwm-1">Runway GWM-1</a> · <a href="https://arxiv.org/abs/2504.12369">WorldMem</a> · <a href="https://arxiv.org/abs/2606.31672">WorldRoamBench</a> · <a href="https://arxiv.org/abs/2502.00379">LAOM（潜动作与干扰）</a> · <a href="https://arxiv.org/abs/2410.11758">LAPA</a> · <a href="https://arxiv.org/abs/2602.15922">DreamZero（World Action Models are Zero-shot Policies）</a> · <a href="https://arxiv.org/abs/2210.13382">Othello-GPT</a> · <a href="https://arxiv.org/abs/2406.03689">Evaluating the World Model Implicit in a Generative Model</a> · <a href="https://arxiv.org/abs/2609.21748">World Modeling in Transformers（2026）</a> · <a href="https://ai.meta.com/blog/v-jepa-2-world-model-benchmarks/">V-JEPA 2（Meta 博客）</a> · <a href="https://arxiv.org/abs/2511.08544">LeJEPA</a> · <a href="https://www.cnbc.com/2025/11/19/meta-chief-ai-scientist-yann-lecun-is-leaving-the-company-.html">LeCun 宣布离开 Meta（CNBC, 2025-11-19）</a> · <a href="https://www.hpcwire.com/aiwire/2026/03/11/yann-lecuns-ami-secures-1b-seed-to-develop-ai-world-models/">AMI Labs 融资（据报道）</a> · <a href="https://www.turingpost.com/p/guide-how-world-models-work-from-dreamer-and-jepa-to-waymo-and-atlas">世界模型指南（Turing Post）</a>。“想象几步最合适”演示是玩具模型：曲线按推导里的误差模型精确计算，散点是一次随机抽样；“潜动作”演示是实际训练的极小模型。</p>
 
 <footer id="pager"></footer>
 </div></main>

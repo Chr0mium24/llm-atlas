@@ -1,6 +1,6 @@
 /* world-models-horizon — how far to trust an imperfect world model: score = imagined H steps (error grows like L^t) + critic tail (error shrinks like γ^H); pick the best of K plans; winner's curse */
 A.defineDemo('world-models-horizon', function (mount) {
-  const { bd } = A.demo(mount, '想象几步最合适：模型误差 × 视野 → 实际回报', '玩具模型：K 个候选计划，真实回报的标准差为 10；打分 = 想象 H 步（第 t 步误差 ε(Lᵗ−1)/(L−1)）+ 价值函数补尾巴（误差 σ）；γ = 0.95');
+  const { bd } = A.demo(mount, '想象几步最合适：模型误差 × 视野 → 实际回报', '玩具模型：M 个候选计划，真实回报的标准差为 10；打分 = 想象 H 步（第 t 步误差 ε(Lᵗ−1)/(L−1)，L 是每步对已有误差的放大）+ 价值函数补尾巴（误差 σ）；γ = 0.95');
   const G = 0.95, SQ = 10, HMAX = 40;
   // E[max of K standard normals], by numerical integration
   const erf = (x) => { const t = 1 / (1 + 0.3275911 * Math.abs(x)); const y = 1 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * Math.exp(-x * x); return x >= 0 ? y : -y; };
@@ -12,14 +12,14 @@ A.defineDemo('world-models-horizon', function (mount) {
   const epsS = A.slider(ctl, { label: '模型单步误差 ε', min: 0, max: 0.15, step: 0.005, value: 0.05, fmt: (v) => v.toFixed(3), on: draw, width: 170 });
   const LS = A.slider(ctl, { label: '误差放大系数 L', min: 0.9, max: 1.25, step: 0.01, value: 1.1, fmt: (v) => v.toFixed(2) + (v < 1 ? '（误差会衰减）' : v === 1 ? '（只累加）' : ''), on: draw, width: 190 });
   const sgS = A.slider(ctl, { label: '价值函数误差 σ', min: 0, max: 16, step: 0.5, value: 8, fmt: (v) => v.toFixed(1), on: draw, width: 160 });
-  const HS = A.slider(ctl, { label: '想象视野 H（左图）', min: 0, max: HMAX, step: 1, value: 3, fmt: (v) => v + ' 步', on: draw, width: 170 });
-  const Kseg = A.seg(ctl, [{ t: '4', v: 4 }, { t: '16', v: 16 }, { t: '64', v: 64 }], 16, () => { resample(); draw(); }, '候选计划数 K');
+  const HS = A.slider(ctl, { label: '想象视野 H（左图）', min: 0, max: HMAX, step: 1, value: 30, fmt: (v) => v + ' 步', on: draw, width: 170 });
+  const Kseg = A.seg(ctl, [{ t: '4', v: 4 }, { t: '16', v: 16 }, { t: '64', v: 64 }], 16, () => { resample(); draw(); }, '候选计划数 M');
   ctl.append(A.el('button', { onclick: () => { seed++; resample(); draw(); } }, '换一组候选'));
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const grid = A.el('div', { class: 'cols' }); const cvS = A.el('canvas', { class: 'cv' }), cvR = A.el('canvas', { class: 'cv' }); grid.append(cvS, cvR); bd.append(grid);
   const cvN = A.el('canvas', { class: 'cv', style: { marginTop: '14px' } }); bd.append(cvN);
   const legend = A.el('div', { class: 'legend' }); bd.append(legend);
-  bd.append(A.el('p', { class: 'hint' }, '左图是一次具体的挑选：每个点是一个候选计划，横轴是它的真实回报，纵轴是规划器给它的打分。点离对角线越远，打分越不准。规划器选纵轴最高的那个（实心），真正最好的是横轴最右的那个（圆圈）。把 H 从 0 拖到 40：一开始点的上下散布来自价值函数，越往后越整齐；再往后，模型误差按 Lᵗ 放大，点又散开，而且被选中的总是“被高估最多”的那个。右图对所有可能的候选取平均（按推导里的公式精确计算），竖虚线是最优视野。把 L 调到 1.00 或更小，最优视野明显变长；把 σ 调小（价值函数更准），最优视野变短。'));
+  bd.append(A.el('p', { class: 'hint' }, '左图是一次具体的挑选：每个点是一个候选计划，横轴是它的真实回报，纵轴是规划器给它的打分。点离对角线越远，打分越不准。规划器选纵轴最高的那个（实心），真正最好的是横轴最右的那个（圆圈）。默认这组候选、H = 30 时，被选中的不是真正最好的那个。把 H 从 0 拖到 40：一开始点的上下散布来自价值函数，越往后越整齐；再往后，模型误差按 Lᵗ 放大，点又散开，而且被选中的总是“被高估最多”的那个。右图对所有可能的候选取平均（按推导里的公式精确计算），竖虚线是最优视野。把 L 调到 1.00 或更小，最优视野明显变长；把 σ 调小（价值函数更准），最优视野变短。'));
 
   let seed = 7, pts = [];
   function resample() {

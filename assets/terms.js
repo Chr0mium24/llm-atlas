@@ -541,7 +541,7 @@ window.ATLAS_TERMS = {
   'lambda-return': { t: "λ-回报", en: "λ-return", d: "在“一步奖励 + 下一步价值估计”和“更长的实际或想象奖励”之间按 \\(\\lambda\\) 插值的回报目标；\\(\\lambda=0\\) 全信价值网络，\\(\\lambda=1\\) 用完整的 H 步回报。与 GAE 中的 λ 同义。", at: "world-models#rl" },
   mcts: { t: "蒙特卡洛树搜索（MCTS）", en: "Monte Carlo tree search", d: "反复沿“看起来有希望又没探索够”的路径展开搜索树、给新节点估价并回传，最后按根节点各动作的访问次数决定策略。AlphaZero 用真实棋规，MuZero 用学到的模型。", at: "world-models#muzero" },
   'value-equivalence': { t: "价值等价", en: "value equivalence", d: "若用模型做贝尔曼更新得到的结果与真实环境相同，模型就“够用”，不必在每个细节上像真实世界。MuZero 的理论依据（Grimm 等, 2020）。", at: "world-models#muzero" },
-  'compounding-error': { t: "误差累积", en: "compounding error", d: "模型的输出又作为下一步的输入，单步误差 \\(\\varepsilon\\) 被放大系数 \\(L\\) 反复放大：\\(H\\) 步后约 \\(\\varepsilon(L^H-1)/(L-1)\\)。想象视野受限、视频漂移的根源。", at: "world-models#drift" },
+  'compounding-error': { t: "误差累积", en: "compounding error", d: "模型的输出又作为下一步的输入，单步误差 \\(\\varepsilon\\) 被放大系数 \\(L\\)（每步对已有误差的放大，受世界本身和模型自身两方面影响）反复放大：\\(H\\) 步后约 \\(\\varepsilon(L^H-1)/(L-1)\\)。想象视野受限、视频漂移的根源。", at: "world-models#drift" },
   'optimizers-curse': { t: "优化者的诅咒", en: "optimizer's curse", d: "在一组有噪声的估计里挑最大的那个，挑出来的估计平均偏高：选中的往往是被高估最多的候选。打分误差越大、候选越多，越严重。", at: "world-models#drift" },
   'inverse-dynamics': { t: "逆动力学模型", en: "inverse dynamics model", d: "给定相邻两帧（或前后状态），推断中间发生了什么动作的模型；与“给状态和动作预测下一帧”的世界模型方向相反。", at: "world-models#latent-action" },
   'latent-action': { t: "潜动作", en: "latent action", d: "从无标注视频中学出的离散“动作码”：逆动力学编码器从小码本里挑一个码，解码器只凭过去和这个码还原下一帧。Genie 用 8 个码；有干扰时码可能记录干扰而非动作。", at: "world-models#latent-action" },
