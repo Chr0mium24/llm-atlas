@@ -1,6 +1,6 @@
 /* matmul-tiling — C = A·B on an 8×8 grid of blocks: computing a T×T tile of C at once reuses loaded blocks; step through k */
 A.defineDemo('matmul-tiling', function (mount) {
-  const { bd } = A.demo(mount, '分块矩阵乘法：一次算一块，数据复用多少次', 'A、B、C 都切成 8×8 个小块；片上存储一次放得下 C 的一个 T×T 区域');
+  const { bd } = A.demo(mount, '分块矩阵乘法：一次算一块，数据复用多少次', 'A、B、C 都切成 8×8 个小块；玩具设定：片上一次最多放 24 个小块');
   const N = 8;
   let T = 2, k = 0, ti = 0, tj = 0;
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
@@ -39,10 +39,11 @@ A.defineDemo('matmul-tiling', function (mount) {
     const flopsTile = T * T * (k + 1);
     const totalLoads = (N / T) * (N / T) * 2 * T * N;
     const totalFlops = N * N * N;
+    const onChip = T * T + 2 * T, CAP = 24, fits = onChip <= CAP;
     stats.innerHTML = '';
-    [['这一块目前读入的 A、B 小块', String(loadsTile)], ['已完成的“小块乘加”', String(flopsTile)], ['整个 C 需要读入的小块数', totalLoads + '（不复用时 ' + 2 * N * N * N + '）'], ['算术强度（乘加 / 读入）', (totalFlops / totalLoads).toFixed(1) + ' = T / 2']]
-      .forEach(([kk, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
-    hint.innerHTML = `计算 C 的一个 ${T}×${T} 区域：沿 k 方向一步步走，每一步从显存读入 A 的 ${T} 个小块（一列）和 B 的 ${T} 个小块（一行），在片上做 ${T}×${T} = ${T * T} 次小块乘加，结果一直累加在片上，不写回。每个读入的小块被用了 ${T} 次。整个乘法的读入量从 2N³ 降到 2N³/T，<b>算术强度与 T 成正比</b>。T 受片上存储（SRAM、寄存器）容量限制，这就是 GPU 内核要精心选择分块大小的原因；FlashAttention（${A.cref('long-context')}）是同一个思路用在注意力上。`;
+    [['这一块目前读入的 A、B 小块', String(loadsTile)], ['已完成的“小块乘加”', String(flopsTile)], ['整个 C 需要读入的小块数', totalLoads + '（不复用时 ' + 2 * N * N * N + '）'], ['乘加 / 读入', (totalFlops / totalLoads).toFixed(1) + ' = T / 2'], ['片上要放（累加器 T² + 读入 2T）', onChip + ' / ' + CAP + (fits ? ' ✓' : ' ✗ 放不下')]]
+      .forEach(([kk, v], i) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '16px', color: i === 4 ? (fits ? 'var(--good-ink)' : 'var(--bad)') : '' } }, v))));
+    hint.innerHTML = `计算 C 的一个 ${T}×${T} 区域：沿 k 方向一步步走，每一步从显存读入 A 的 ${T} 个小块（一列）和 B 的 ${T} 个小块（一行），在片上做 ${T}×${T} = ${T * T} 次小块乘加，结果一直累加在片上，不写回。每个读入的小块被用了 ${T} 次。整个乘法的读入量从 2N³ 降到 2N³/T，<b>算术强度与 T 成正比</b>：按小块数是每次读入做 T/2 次乘加，按正文的单位是 T/b FLOPs/字节。但 T×T 的累加器要一直留在片上，片上要放的东西随 T² 增长：在这个玩具里 T = 8 复用最高，却放不下，只能取 T = 4。真实 GPU 上同样是容量决定了块多大，这就是内核要精心选择分块大小的原因；FlashAttention（${A.cref('long-context')}）是同一个思路用在注意力上。`;
     view.redraw();
   }
   draw();

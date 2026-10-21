@@ -402,10 +402,10 @@ window.ATLAS_TERMS = {
   nvlink: { t: "NVLink", en: "NVLink", d: "NVIDIA 的 GPU 间专用高速链路，配合 NVLink 交换机组成扩展域。每卡双向带宽：H100 900 GB/s，B200 1.8 TB/s，Rubin 3.6 TB/s。", at: "hardware#interconnect" },
   tf32: { t: "TF32", en: "TensorFloat-32", d: "A100 引入的张量核心格式：8 位指数（与 FP32 同范围）、10 位尾数。FP32 代码不改即可使用张量核心，算力为普通 FP32 的约 8 倍。", at: "hardware#generations" },
   'sparse-24': { t: "2:4 结构化稀疏", en: "2:4 structured sparsity", d: "每 4 个权重中恰好 2 个为零时，张量核心跳过零、算力账面翻倍（A100 起支持）。在大语言模型上很少使用；规格表上的“稀疏”数字是稠密的两倍。", at: "hardware#generations" },
-  'transformer-engine': { t: "Transformer Engine", en: "Transformer Engine", d: "H100 起的 FP8 训练与推理方案：按每个张量最近的最大绝对值自动选择缩放因子，逐层在 FP8 和 16 位之间选择。", at: "hardware#generations" },
+  'transformer-engine': { t: "Transformer Engine", en: "Transformer Engine", d: "H100 起的 FP8 训练与推理方案：按每个张量最近若干步的最大绝对值选缩放因子（延迟缩放）；哪些层用 FP8 由框架决定。", at: "hardware#generations" },
   'tile-programming': { t: "分块级编程", en: "tile-based programming", d: "写“一个线程块对几个小块做什么”，线程映射、共享内存和流水线交给编译器。代表是 Triton（2021），以及 ThunderKittens、TileLang、CUDA Tile 等。", at: "hardware#software" },
   'dl-compiler': { t: "深度学习编译器", en: "deep learning compiler", d: "拿到整个计算图，做算子融合和内存规划，再为目标硬件生成代码，如 XLA（JAX / TPU）、TorchInductor（torch.compile，GPU 上生成 Triton 内核）。", at: "hardware#software" },
-  afd: { t: '注意力与 FFN 分离（AFD）', en: 'attention–FFN disaggregation', d: '推理时把注意力层（吃显存和带宽）和 FFN / 专家层（吃算力）放到不同的卡、甚至不同的芯片上，微批次在两组之间交替流动。', at: 'serving#scale' },
+  afd: { t: '注意力与 FFN 分离（AFD）', en: 'attention–FFN disaggregation', d: '推理时把注意力层（每个用户私有的 KV，吃显存容量和带宽）与 FFN / 专家层（共享权重）放到不同的卡或芯片上；在 GPU 集群里 FFN 一侧通常受算力限制，在小批、低延迟的部署里受读权重的带宽限制。', at: 'serving#scale' },
 
   // ---- image (upgrade 2026-10-20)
   'text-encoder': { t: "文本编码器", en: "text encoder", d: "把提示词变成一串向量（每个 token 一个）的预训练语言网络，通常冻结、每张图只跑一次。从 CLIP（77 个 token）到 T5，再到 2025 年后的多模态大模型，决定了模型能听懂多复杂的提示。", at: "image#img0-text" },

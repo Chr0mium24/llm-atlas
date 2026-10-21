@@ -25,7 +25,7 @@ A.defineDemo('hardware-walk', function (mount) {
     { t: '切块', hl: ['grid'], f: (c) => ({ tex: String.raw`\text{块数} = \Big\lceil \tfrac{${m}}{128}\Big\rceil \times \tfrac{8192}{128} = ${c.tM}\times ${c.tN} = ${c.tiles}`,
       say: m > 1 ? '把输出 Y 切成 128×128 的块，每个线程块负责一块。右边的网格就是 Y 的全部块。' : '解码时 Y 只有 1 行：切出来只有 64 块，而且每块只有 1 行是有用的（128 行里填了 1 行）。' }) },
     { t: '分波', hl: ['grid', 'waves'], f: (c) => ({ tex: String.raw`\Big\lceil \tfrac{${c.tiles}}{132}\Big\rceil = ${c.waves}\ \text{波},\qquad \text{效率} = \frac{${c.tiles}}{${c.waves}\times 132} = ${A.pct(c.eff, 1).replace('%', '\\%')}`,
-      say: m > 1 ? `132 个 SM 每次各算一块，要 ${c.waves} 波；最后一波只有 ${c.last} 块，其余 SM 空着。这就是<b>波次量化</b>，这里损失 ${A.pct(1 - c.eff, 0)}。颜色越深的块越晚算。` : `只有 ${c.tiles} 块，一波就算完，但 132 个 SM 里有 ${NSM - c.tiles} 个没活干。实际的解码内核会沿内积方向再切（split-K），让所有 SM 都参与读 W。` }) },
+      say: m > 1 ? `132 个 SM 每次各算一块，要 ${c.waves} 波；最后一波只有 ${c.last} 块，其余 SM 空着。这就是<b>波次量化</b>，这里损失 ${A.pct(1 - c.eff, 0)}。颜色越强（浅色主题下越深、深色主题下越亮）的块越晚算。` : `只有 ${c.tiles} 块，一波就算完，但 132 个 SM 里有 ${NSM - c.tiles} 个没活干。实际的解码内核会沿内积方向再切（split-K），让所有 SM 都参与读 W。` }) },
     { t: 'TMA 搬运', hl: ['hbm', 'l2', 'smem', 'a-tma'], f: (c) => ({ tex: String.raw`\underbrace{${c.rows}\times 64\times 2}_{X\ \text{的小块}} + \underbrace{64\times 128\times 2}_{W\ \text{的小块}} = ${tx(fmtB(c.stepB))}`,
       say: `沿内积方向（长 8192）分成 128 步、每步 64。每一步，TMA 把 X 的 ${c.rows}×64 和 W 的 64×128 两个小块从显存经 L2 搬进共享内存。一个线程发一条指令就能搬一整块。` }) },
     { t: '流水线', hl: ['smem', 'a-tma'], f: (c) => ({ tex: String.raw`4 \times ${tx(fmtB(c.stepB))} = ${tx(fmtB(4 * c.stepB))}\ \le\ 228\ \text{KB}`,
@@ -36,7 +36,7 @@ A.defineDemo('hardware-walk', function (mount) {
       say: '每一步的乘积都加到同一个 FP32 累加器上。它一直留在寄存器里（256 KB 的寄存器堆里占 ' + A.pct(c.acc / 262144, 0) + '），128 步都不离开芯片：这正是分块复用的来源。' }) },
     { t: '喂得够吗', hl: ['hbm', 'l2', 'a-tma', 'a-hbm'], f: (c) => m > 1
       ? ({ tex: String.raw`\frac{4096}{I_{\text{块}} = ${c.Iblk.toFixed(0)}}\times 132\times 1.83\,\text{GHz} = ${(c.need / 1e12).toFixed(1)}\ \text{TB/s}\ \gg\ 3.35\ \text{TB/s}`,
-          say: `块级强度 64 FLOPs/字节：要让张量核心满负荷，全芯片每秒得送进 ${(c.need / 1e12).toFixed(1)} TB，是 HBM 的 ${(c.need / BW).toFixed(1)} 倍。若每一步都从显存取，一步要约 ${c.stepClkMem.toFixed(0)} 个周期，张量核心只有 ${A.pct(c.clk / c.stepClkMem, 0)} 的时间在算。所以大部分读取必须命中 L2：同时在算同一行块的 SM 读的是同一段 X。合计要从 L2 读 ${fmtB(c.l2)}。` })
+          say: `块级强度 64 FLOPs/字节：要让张量核心满负荷，全芯片每秒得送进 ${(c.need / 1e12).toFixed(1)} TB，是 HBM 的 ${(c.need / BW).toFixed(1)} 倍。若每一步都从显存取，一步要约 ${c.stepClkMem.toFixed(0)} 个周期，张量核心只有 ${A.pct(c.clk / c.stepClkMem, 0)} 的时间在算。同时在算同一行块的 SM 读的是同一段 X，大部分读取可以命中 L2（合计要从 L2 读 ${fmtB(c.l2)}）；可 L2 的带宽也只有 HBM 的 2–3 倍，喂不起 ${(c.need / 1e12).toFixed(1)} TB/s。所以实际的 Hopper 内核用 128×256 的块（强度约 85，需要约 11.6 TB/s），再让簇里两个 SM 共享一次读入（强度 128，约 7.7 TB/s），才落到 L2 能供应的量级。` })
       : ({ tex: String.raw`\frac{3.35\ \text{TB/s}}{64\ \text{个 SM}} \approx ${c.perSMclk.toFixed(1)}\ \text{B/周期}\ \Rightarrow\ \frac{${c.stepB}\ \text{B}}{${c.perSMclk.toFixed(1)}} \approx ${c.stepClkMem.toFixed(0)}\ \text{周期/步}`,
           say: `W 的每个字节只用一次，L2 帮不上忙，只能从 HBM 读。HBM 带宽分给 64 个 SM，每步要等约 ${c.stepClkMem.toFixed(0)} 个周期，而有用的计算只要 ${c.clk} 个周期：张量核心 ${A.pct(c.clk / c.stepClkMem, 1)} 的时间在算，其余都在等数据。` }) },
     { t: '收尾', hl: ['reg', 'a-out', 'hbm'], f: (c) => ({ tex: String.raw`${c.rows}\times 128\times 2\ \text{B} = ${tx(fmtB(c.out))}\ \to\ \text{HBM}`,
@@ -127,7 +127,7 @@ A.defineDemo('hardware-walk', function (mount) {
     label('收尾：写回 ' + fmtB(c.out), (hx + hw + sx) / 2, oy - 9, 'a-out');
     // Y tile map
     const gx = L + Wd * 0.03, gw = Wd - gx - 4;
-    A.text(ctx, '输出 Y 的 ' + c.tiles + ' 块' + (k >= 2 ? '（越深越晚算）' : ''), gx, top + 6, { size: 11, color: on('grid') ? acc : muted, weight: on('grid') ? 600 : 400 });
+    A.text(ctx, '输出 Y 的 ' + c.tiles + ' 块' + (k >= 2 ? '（颜色越强越晚算）' : ''), gx, top + 6, { size: 11, color: on('grid') ? acc : muted, weight: on('grid') ? 600 : 400 });
     const cw = gw / c.tN, ch = Math.min(cw * 1.6, (H - 30) / Math.max(c.tM, 1));
     for (let i = 0; i < c.tM; i++) for (let j = 0; j < c.tN; j++) {
       const idx = i * c.tN + j, wv = Math.floor(idx / NSM);

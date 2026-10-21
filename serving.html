@@ -299,7 +299,7 @@
 <ul>
   <li><b><dfn data-t="wide-ep">宽专家并行</dfn></b>（wide EP）：DeepSeek 式的大型 MoE，解码时把专家分散到几十到上百张卡，每张卡只放少数专家，注意力部分用数据并行，token 经 DeepEP 这类通信库做全对全通信送到专家所在的卡（第 <a class="xref" data-ref="moe"></a> 章：批大时所有专家都要常驻）。DeepSeek 2025-03 公布的部署：预填充用 4 个节点、专家并行 32 路，解码用 18 个节点、144 路，每卡只放 2 个路由专家。开源框架随后跟上：SGLang 在 96 张 H100 上做到每节点每秒 2.23 万输出 token（2025-05），vLLM 报告每张 H200 每秒约 2200 个解码 token（2025-12）。</li>
   <li><b>KV 缓存分层存储</b>：GPU 显存 → CPU 内存 → SSD 与分布式存储，前缀命中时直接取回而不重算，配合 <span class="term" data-t="kv-aware-routing">KV 感知路由</span>。Dynamo（2026-03 发布 1.0）、llm-d、LMCache 都在做这一层；NVIDIA 2026-01 还为 KV 缓存推出了专门的存储平台（CMX），用 BlueField-4 管理以太网连接的闪存。</li>
-  <li><b>注意力与 FFN 分离</b>（<dfn data-t="afd">AFD</dfn>；第 <a class="xref" data-ref="hardware"></a> 章讲它在芯片上的新用法）：P/D 分离按时间切开一个请求，AFD 按层切开一个模型：注意力层吃显存和带宽，放在一组卡上；FFN（专家）层吃算力，放在另一组卡上，微批次在两组之间交替流动。字节的 MegaScale-Infer（2025-04）和阶跃星辰的 Step-3（2025-07）先后采用，后者把模型结构和这种部署一起设计。</li>
+  <li><b>注意力与 FFN 分离</b>（<dfn data-t="afd">AFD</dfn>；第 <a class="xref" data-ref="hardware"></a> 章讲它在芯片上的新用法）：P/D 分离按时间切开一个请求，AFD 按层切开一个模型：注意力层（每个用户私有的 KV）吃显存容量和带宽，放在一组卡上；FFN（专家）层的权重是共享的，放在另一组卡上，在 GPU 集群里通常受算力限制，在小批、低延迟的部署里则受读权重的带宽限制，微批次在两组之间交替流动。字节的 MegaScale-Infer（2025-04）和阶跃星辰的 Step-3（2025-07）先后采用，后者把模型结构和这种部署一起设计。</li>
   <li><b>超节点</b>：GB200 NVL72（72 张 GPU 共享一个 NVLink 域）、华为 CloudMatrix 384 等，把张量并行和专家并行的通信域扩大到整个机柜。Kimi K3 官方建议的部署是不少于 64 张加速卡的超节点。</li>
   <li><b>按阶段专门化的硬件</b>：NVIDIA 2025-09 发布专做长上下文预填充的 Rubin CPX（用 GDDR7 而不是 HBM），2026-03 又发布承担解码的 Groq 3 LPX 机柜；据报道，CPX 随后被移出了路线图。华为昇腾 950 也分成面向预填充和面向解码的两款（第 <a class="xref" data-ref="hardware"></a> 章）。</li>
   <li><b>低精度推理</b>：Blackwell 原生 FP4；Hopper 上用 Marlin、Machete 一类的内核做 4 位权重的反量化（第 <a class="xref" data-ref="quantization"></a> 章）。</li>

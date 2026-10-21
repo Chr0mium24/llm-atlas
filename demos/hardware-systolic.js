@@ -62,17 +62,19 @@ A.defineDemo('hardware-systolic', function (mount) {
     // queue: element X[r][i] enters at cycle r + i; shown (r + i − t) slots left of the array
     for (let i = 0; i < N; i++) {
       const cy = gy + i * c + c / 2;
-      let hidden = 0;
+      let hidden = 0, pending = 0;
+      for (let r = 0; r < M; r++) if (r + i - t >= 1) pending++;
+      const shown = pending > QMAX ? QMAX - 1 : QMAX; // leave the leftmost slot for the "…还有" label
       for (let r = 0; r < M; r++) {
         const d = r + i - t;
         if (d < 1) continue;
-        if (d > QMAX) { hidden++; continue; }
+        if (d > shown) { hidden++; continue; }
         const x = gx - c * 0.25 - d * slot;
         ctx.fillStyle = A.alpha(cols[0], 0.12); ctx.strokeStyle = A.alpha(cols[0], 0.5); ctx.lineWidth = 1;
         ctx.beginPath(); ctx.roundRect(x - slot * 0.42, cy - slot * 0.42, slot * 0.84, slot * 0.84, 4); ctx.fill(); ctx.stroke();
         A.text(ctx, String(S.X[r][i]), x, cy, { size: Math.max(10, slot * 0.42), align: 'center', mono: true, color: cols[0], weight: 600 });
       }
-      if (hidden) A.text(ctx, '…还有 ' + hidden, gx - c * 0.25 - (QMAX + 1) * slot + slot * 0.4, cy, { size: 10.5, color: muted, align: 'center' });
+      if (hidden) A.text(ctx, '…还有 ' + hidden, gx - c * 0.25 - QMAX * slot, cy, { size: 10.5, color: muted, align: 'center' });
     }
     // cells
     for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) {
@@ -133,12 +135,12 @@ A.defineDemo('hardware-systolic', function (mount) {
         : 'token 太少，阵列始终填不满：最多只有 ' + active + ' 个单元同时在忙。';
       const outs = S.out[t].map((o) => `\\(y_{${o.r + 1},${o.j + 1}} = ${o.v}\\)`).join('、');
       msg = `<b>第 ${t + 1} 拍。</b>${active} 个单元在工作。${phase}` + (outs ? `本拍送出 ${outs}。` : '');
-      if (k === T) msg += `<br><b>全部完成：</b>共 ${T} 拍，做了 ${M}×9 = ${M * 9} 次乘加，利用率 \\(= M/(M + 2N - 2) = ${M}/${M + 4}\\) ≈ ${A.pct(M / (M + 4), 0)}。与直接计算的 \\(XW\\) 逐项一致。M 越大，开头填充、结尾排空的那 4 拍占比越小；TPU 的 128×128 阵列在 M = 1 时只有 0.4%。`;
+      if (k === T) msg += `<br><b>全部完成：</b>共 ${T} 拍，做了 ${M}×9 = ${M * 9} 次乘加，利用率 \\(= M/(M + 2N - 2) = ${M}/${M + 4}\\) ≈ ${A.pct(M / (M + 4), 0)}。与直接计算的 \\(XW\\) 逐项一致。M 越大，开头填充、结尾排空的那 4 拍占比越小。这是只算一块权重的账；真实的矩阵乘法要连续流过很多块权重，填充和排空只付一次，瓶颈变成每装一块权重要约 N 拍，利用率约为 min(1, M/N)：128×128 的阵列在 M = 1 时约 0.8%，M ≥ 128 才接近满载。`;
     }
     if (window.katex) katex.render(tex, fx, { displayMode: true, throwOnError: false }); else fx.textContent = tex;
     say.innerHTML = msg; A.renderMath(say);
     stats.innerHTML = '';
-    [['拍', `${Math.max(0, t + 1)} / ${T}`], ['本拍工作的单元', `${active} / 9`], ['累计乘加', `${macs} / ${M * 9}`], ['到目前的利用率', t >= 0 ? A.pct(util, 0) : '—'], ['算完时的利用率', A.pct(M / (M + 2 * N - 2), 0)]]
+    [['拍', `${Math.max(0, t + 1)} / ${T}`], ['本拍工作的单元', `${active} / 9`], ['累计乘加', `${macs} / ${M * 9}`], ['到目前的利用率', t >= 0 ? A.pct(util, 0) : '—'], ['这一块算完时的利用率', A.pct(M / (M + 2 * N - 2), 0)]]
       .forEach(([kk, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
     view.redraw();
   }
