@@ -30,6 +30,8 @@
 
 <h2 id="base">从基座到助手</h2>
 <p><dfn data-t="base-model">基座模型</dfn>（base model）是只经过预训练的模型，目标是续写出最像网上文本的内容。给它“法国的首都是哪里？”，常见的续写是“德国的首都是哪里？”：网上的考题清单就长这样。它知道答案，只是不知道此刻该扮演回答的一方。把它变成有用、诚实、无害的助手，所需的全部步骤统称<dfn data-t="post-training">后训练</dfn>，2026 年通常依次是：监督微调（模仿示范）、偏好优化（学“哪个更好”）、强化学习（第 <a class="xref" data-ref="rl"></a> 章）、蒸馏（第 <a class="xref" data-ref="distillation"></a> 章），中间几步常反复几轮。这一章讲前两步。</p>
+<p>下面的标签页按顺序列出从基座到助手的几个阶段，每一阶段用什么数据、改什么，本章依次展开：</p>
+<div data-demo="training-pipeline"></div>
 
 <h2 id="zero" data-short="后训练从零开始">从零开始：三条示范、一组偏好</h2>
 <p>这一节不碰真实的大模型，用三条示范、一道偏好题，把后面要用的概念按顺序算一遍：回答掩码与 SFT 的损失，Bradley-Terry 模型与奖励模型，KL 约束与它的最优策略，最后是 DPO。</p>
@@ -319,6 +321,8 @@
 <p><b>这个推导告诉我们：</b>DPO 的“等价于 RLHF”依赖于偏好概率严格介于 0 和 1 之间。真实数据里每对只标一次，这个条件在训练集上处处不成立，于是 DPO 会持续地压低差回答，也常常连带压低好回答（似然位移）。提前停止、在好回答上加 SFT 损失、IPO 的有限目标，都是在补这个洞。</p>
 </div></details>
 <p>SimPO 修长度和显存：隐式奖励换成按长度平均的对数概率 \(\frac{\beta}{|y|}\log\pi_\theta(y|x)\)，不再除以参考模型的概率（省一个模型），再要求好回答至少领先间隔 \(\gamma\)。去掉参考模型后，总对数概率会反过来惩罚长回答：好回答 200 个 token 合计 −120、差回答 50 个 token 合计 −40，只看总和好回答“概率更低”，按长度平均后好回答每 token 领先 0.2。RainbowPO（2024-10）把这些方法拆成部件逐个消融，发现真正起作用的主要是长度归一化、参考策略混合、上下文缩放三样。</p>
+<p>下面把 DPO、IPO、SimPO 和更早的 Hinge 损失（SLiC，2023，要求间隔至少为 1，达到就不再推）画在一起。横轴 \(m\) 是好回答与差回答“对数概率比”之差，也就是上面说的隐式奖励差除以 \(\beta\)。看两件事：间隔已经很大时梯度是否消失（DPO 渐近消失，Hinge 直接为 0，IPO 会把过大的间隔往回拉）；SimPO 的间隔 \(\gamma\) 把曲线整体右移。</p>
+<div data-demo="dpo-loss"></div>
 <p><b>数据这一支。</b>离线 DPO 训练一段时间后，当前模型会写的回答早已不在数据里。<dfn data-t="iterative-dpo">在线 / 迭代 DPO</dfn>（online / iterative DPO）每隔一段时间就用当前模型重新采样、重新标注，再做一轮 DPO。Google 的 OAIF（2024-02）每一步让当前模型写两个回答、请 <span class="term" data-t="llm-judge">LLM 评委</span>挑好的，在线版（DPO、IPO、SLiC 平均）对离线版的人类评测胜率约 66%；Llama 3 把“奖励模型 → 拒绝采样 → SFT → DPO”重复了 6 轮。这条路走到头，就是在线强化学习。</p>
 <p><b>标注者这一支。</b>在线需要源源不断的标注，人跟不上。<dfn data-t="rlaif">RLAIF</dfn>（reinforcement learning from AI feedback）用模型代替人做比较，最早来自 Anthropic 的<dfn data-t="constitutional-ai">宪法 AI</dfn>（Constitutional AI, 2022-12）：让模型按一组成文原则批评、修改自己的回答，并按原则比较两个回答来训练偏好模型。Lee 等（2023-09）显示在摘要和对话上 RLAIF 与 RLHF 效果相当。今天绝大多数偏好数据由模型标注（宪法怎么写见第 <a class="xref" data-ref="alignment"></a> 章）。</p>
 
@@ -337,6 +341,8 @@
   </dl>
   <div class="fx-eg">8B 级模型 MLP 的一个投影是 \(14336\times 4096\)，有 5872 万个参数。\(r = 16\) 的 LoRA 只有 \(16\times(4096 + 14336) = 29.5\) 万个，0.50%。训练完可以把 \(BA\) 加回 \(W\)，推理时没有额外开销；也可以为不同任务保存不同的小矩阵，按需切换。</div>
 </div>
+<p>下面的计算器按真实的模型尺寸算可训练参数和显存：拖动秩 \(r\)，看参数量怎样线性增长，以及显存的大头为什么仍是冻结的权重。</p>
+<div data-demo="lora"></div>
 <p>为什么低秩就够？Aghajanyan 等（2020）发现，把微调限制在一个随机的低维子空间里，RoBERTa 只调 200 个参数就在 MRPC 上达到全参数微调 90% 的效果。这个最小维数叫<dfn data-t="intrinsic-dim">内在维度</dfn>（intrinsic dimension），预训练越充分、模型越大，它越低。</p>
 <details class="deep"><summary>为什么低秩够用：最优低秩近似与信息量</summary><div class="in">
 <p><b>第 1 步，最好的秩 r 近似。</b>对任意矩阵 \(\Delta W\) 做<span class="term" data-t="svd">奇异值分解</span>，奇异值从大到小是 \(s_1\ge s_2\ge\dots\)。Eckart–Young 定理说，在所有秩不超过 \(r\) 的矩阵里，离 \(\Delta W\) 最近的就是保留前 \(r\) 个奇异值的截断，误差</p>
@@ -424,6 +430,8 @@
 <details class="quiz"><summary>1. 一条 SFT 样本：提示 40 个 token，基座模型在这些位置上平均每个 −ln p = 2.5 nat；回答 10 个 token，平均 0.8 nat。不加损失掩码时，回答在这条样本的损失里占多少？加掩码后按 token 平均，这条样本和另一条只有 2 个回答 token 的样本，在一批里的权重之比是多少？</summary><div class="ans">不加掩码：提示 \(40\times2.5 = 100\)，回答 \(10\times0.8 = 8\)，回答只占 \(8/108\approx 7.4\%\)，92.6% 的梯度在教模型预测提示。加掩码、按 token 平均：权重正比于计入损失的 token 数，\(10 : 2 = 5 : 1\)；如果按样本平均，则是 \(1:1\)。</div></details>
 <details class="quiz"><summary>2. 奖励模型给两个回答打分 1.2 和 −0.3。按 Bradley-Terry 模型，第一个被认为更好的概率是多少？如果给所有回答都加 10 分，结果会变吗？如果标注者之间的一致率是 80%，按“随机看错”模型，完美的奖励模型在新标注上的准确率上限是多少？</summary><div class="ans">\(\sigma(1.5) = 1/(1 + e^{-1.5})\approx 0.82\)。不会变：概率只依赖分差，奖励模型的分数只有相对意义。一致率 80%：\(\sqrt{2\times0.8-1} = \sqrt{0.6} = 0.775\)，\(\eta = (1-0.775)/2 = 11.3\%\)，上限 \(1-\eta\approx 88.7\%\)；每条比较只顶 \(2\times0.8-1 = 0.6\) 条干净比较。</div></details>
 <details class="quiz"><summary>3. DPO 训练过程中，监控显示好回答的对数概率在下降。这一定说明训练出了问题吗？什么情况下才算“似然位移”？</summary><div class="ans">不一定。DPO 的梯度只要求“好回答与差回答的对数概率比之差”变大，只要差回答降得更多，间隔仍在变大，排序是对的。好回答和差回答的概率一起下降、同时间隔在变大，这就是似然位移：概率被挪给了数据之外的回答。它本身不等于失败，但被挪走的概率可能落在更差的回答上，所以 Llama 3 在好回答上加一项 SFT 损失把它拉住。反过来，如果是差回答的概率在上升、间隔变成负的，那是排序错了，不是似然位移。</div></details>
+
+<details class="quiz"><summary>4. 一个 8B 模型有 32 层，每层的注意力投影和 MLP 合计约 7 个大矩阵，平均尺寸约 \(4096\times 7000\)。在所有这些矩阵上加 \(r = 8\) 的 LoRA，可训练参数约多少？占全模型的比例呢？</summary><div class="ans">每个矩阵 \(r(d_{\text{in}} + d_{\text{out}}) = 8\times(4096 + 7000)\approx 8.9\) 万；\(32\times 7\times 8.9\text{万}\approx 2000\) 万，约占 8B 的 0.25%。Adam 状态和梯度只需为这 2000 万参数保存，显存主要花在冻结的权重和激活值上。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
