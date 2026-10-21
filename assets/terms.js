@@ -74,12 +74,12 @@ window.ATLAS_TERMS = {
   'attn-query': { t: 'query（查询）', en: 'query', d: String.raw`\(\mathbf q = \mathbf x W_Q\)：一个位置“在找什么样的信息”。和每个 key 做点积，得到相关度分数。`, at: 'attention#qkv' },
   'attn-key': { t: 'key（键）', en: 'key', d: String.raw`\(\mathbf k = \mathbf x W_K\)：一个位置“有什么样的信息”，供 query 匹配。`, at: 'attention#qkv' },
   'attn-value': { t: 'value（值）', en: 'value', d: String.raw`\(\mathbf v = \mathbf x W_V\)：一个位置被关注时“交出去的内容”。注意力输出是 value 的加权平均。`, at: 'attention#qkv' },
-  'multi-head': { t: '多头注意力', en: 'multi-head attention', d: String.raw`把 \(d\) 维切成 \(h\) 个 \(d/h\) 维的头，各自独立做注意力，结果拼接后乘 \(W_O\)。参数量和单个 \(d\) 维的头相同。`, at: 'attention#multihead' },
+  'multi-head': { t: '多头注意力', en: 'multi-head attention', d: String.raw`用 \(h\) 套各自的投影，把输入 \(\mathbf x\) 投到 \(h\) 个 \(d_h\) 维（通常 \(d_h=d/h\)）的子空间，各做一次注意力，结果拼接后乘 \(W_O\)。每个头有自己的一次 softmax，所以能同时看不同的地方；总参数量和单个 \(d\) 维的头相同。`, at: 'attention#multihead' },
   'causal-mask': { t: '因果掩码', en: 'causal mask', d: String.raw`softmax 之前把“后面位置”的分数设为 \(-\infty\)，使每个位置只能看到自己和前面的 token。生成模型必须用它。`, at: 'attention#causal' },
   'cross-attention': { t: '交叉注意力', en: 'cross-attention', d: 'query 来自一个序列，key 和 value 来自另一个序列。翻译模型的解码器用它读原句，文生图模型用它读提示词。', at: 'attention#causal' },
-  'induction-head': { t: '归纳头', en: 'induction head', d: '一种两层配合的注意力电路：看到 A 时，找到上文中 A 之后出现过的 B，把它复制为预测。与上下文学习能力的出现同步形成。', at: 'attention#patterns' },
-  icl: { t: '上下文学习', en: 'in-context learning (ICL)', d: '不更新参数，只在提示词里给几个示例，模型就能完成新任务。few-shot 提示依赖这种能力。', at: 'attention#patterns' },
-  'attention-sink': { t: '注意力汇', en: 'attention sink', d: '很多注意力头把大量权重放在第一个 token 上。softmax 的权重和必须为 1，没什么要看时多余的权重要有个去处。', at: 'attention#patterns' },
+  'induction-head': { t: '归纳头', en: 'induction head', d: '一种两层配合的注意力电路：看到 A 时，找到上文中 A 之后出现过的 B，把它复制为预测。与上下文学习能力的出现同步形成。', at: 'attention#induction' },
+  icl: { t: '上下文学习', en: 'in-context learning (ICL)', d: '不更新参数，只在提示词里给几个示例，模型就能完成新任务。few-shot 提示依赖这种能力。', at: 'attention#induction' },
+  'attention-sink': { t: '注意力汇', en: 'attention sink', d: '很多注意力头把大量权重放在第一个 token 上。softmax 的权重和必须为 1，没什么要看时多余的权重要有个去处。', at: 'attention#sink' },
 
   // ---- transformer (transformer.html)
   'decoder-only': { t: '只有解码器', en: 'decoder-only', d: '只用带因果掩码的自注意力、任务统一为“预测下一个 token”的 Transformer。GPT 系列及几乎所有当今大语言模型都是这种结构。', at: 'transformer#why' },
@@ -190,7 +190,7 @@ window.ATLAS_TERMS = {
 
   // ---- long-context (long-context.html)
   'kv-cache': { t: 'KV 缓存', en: 'KV cache', d: String.raw`生成时缓存历史 token 的 K、V，避免重算。每 token 大小 \(2\times L\times h_{kv}\times d_h\times\) 字节数；长上下文推理时常是显存的主要占用。`, at: 'long-context#kv' },
-  gqa: { t: 'GQA', en: 'grouped-query attention', d: '把 Q 头分组，每组共享一组 K/V 头（如 64 个 Q 头配 8 个 KV 头），KV 缓存按比例缩小。2023 年后的默认设计。', at: 'long-context#kv' },
+  gqa: { t: 'GQA', en: 'grouped-query attention', d: '把 Q 头分组，每组共享一组 K/V 头（如 64 个 Q 头配 8 个 KV 头），KV 缓存按比例缩小。2023 年后的默认设计。', at: 'attention#zero-big' },
   mla: { t: 'MLA', en: 'multi-head latent attention', d: '把每个 token 的 K、V 联合压缩为一个低维潜向量（如 512 维）加一个 64 维的 RoPE 向量来缓存，计算时把上投影吸收进 Q 和输出投影。DeepSeek-V2 提出。', at: 'long-context#kv' },
   'flash-attention': { t: 'FlashAttention', en: 'FlashAttention', d: String.raw`把注意力分块在片上 SRAM 中算完、不写出 \(n\times n\) 矩阵的精确实现，借助在线 softmax。显存从 \(O(n^2)\) 降到 \(O(n)\)，速度提升 2–4 倍。`, at: 'long-context#flash' },
   'online-softmax': { t: '在线 softmax', en: 'online softmax', d: String.raw`分块扫描时维护当前最大值 \(m\) 与归一化因子 \(\ell\)，遇到更大值时把已累积的结果乘 \(e^{m - m_{\text{新}}}\) 修正，最终结果与一次性计算完全一致。`, at: 'long-context#flash' },
@@ -616,14 +616,14 @@ window.ATLAS_TERMS = {
   // ---- attention (upgrade 2026-10-20)
   'path-length': { t: "路径长度", en: "path length", d: "两个位置之间，信号（以及反向传播的梯度）要经过的计算步数。RNN 里等于两个位置的距离 \\(O(n)\\)，每一步都要乘一个雅可比矩阵；自注意力里任意两个位置之间只隔一步 \\(O(1)\\)。", at: "attention#before" },
   'attn-score': { t: "注意力分数", en: "attention score (attention logit)", d: "softmax 之前的那个数：\\(s_{ij} = \\mathbf q_i\\cdot\\mathbf k_j/\\sqrt{d_h}\\)。softmax 之后变成注意力权重 \\(a_{ij}\\)。“分数失控”指训练中它越变越大，使 softmax 饱和。", at: "attention#zero-score" },
-  'qk-circuit': { t: "QK 电路", en: "QK circuit", d: "一个注意力头里决定“看哪里”的部分：\\(W_{QK} = W_QW_K^\\top\\)，分数 \\(\\mathbf x_iW_{QK}\\mathbf x_j^\\top\\) 是两个 token 向量的低秩双线性函数，秩不超过 \\(d_h\\)。", at: "attention#qkv" },
-  'ov-circuit': { t: "OV 电路", en: "OV circuit", d: "一个注意力头里决定“搬什么、写到哪”的部分：\\(W_{OV} = W_VW_O\\)。被看到的位置的向量乘上它，加回当前位置。可解释性研究常把一个头拆成 QK 和 OV 两部分分析。", at: "attention#qkv" },
+  'qk-circuit': { t: "QK 电路", en: "QK circuit", d: "一个注意力头里决定“看哪里”的部分：\\(W_{QK} = W_QW_K^\\top\\)，分数 \\(\\mathbf x_iW_{QK}\\mathbf x_j^\\top\\) 是两个 token 向量的低秩双线性函数，秩不超过 \\(d_h\\)。", at: 'attention#zero-big' },
+  'ov-circuit': { t: "OV 电路", en: "OV circuit", d: "一个注意力头里决定“搬什么、写到哪”的部分：\\(W_{OV} = W_VW_O\\)。被看到的位置的向量乘上它，加回当前位置。可解释性研究常把一个头拆成 QK 和 OV 两部分分析。", at: 'attention#zero-big' },
   'softmax-saturation': { t: "softmax 饱和", en: "softmax saturation", d: "分数彼此拉得太开时，softmax 几乎只剩最大的一项（接近独热）。此时雅可比 \\(a_i(\\delta_{ij}-a_j)\\) 接近零，梯度传不回分数。注意力除以 \\(\\sqrt{d_h}\\)、QK-Norm 都是为了避免它。", at: "attention#scale" },
   'qk-clip': { t: "QK-Clip", en: "QK-Clip", d: "Kimi K2（2025）的做法：不改前向计算，每步更新后检查每个头的最大注意力分数，超过阈值 \\(\\tau\\)（K2 取 100）就把这个头的 \\(W_Q, W_K\\) 按比例缩小。与 Muon 合起来叫 MuonClip。", at: "attention#scale" },
-  'prev-token-head': { t: "前一个 token 头", en: "previous-token head", d: "几乎把全部权重放在紧挨着的前一个位置上的注意力头，靠位置编码实现。它把“我前面是谁”写进每个位置，是归纳头的前置零件。", at: "attention#patterns" },
+  'prev-token-head': { t: "前一个 token 头", en: "previous-token head", d: "几乎把全部权重放在紧挨着的前一个位置上的注意力头，靠位置编码实现。它把“我前面是谁”写进每个位置，是归纳头的前置零件。", at: 'attention#induction' },
   'additive-attention': { t: "加性注意力", en: "additive attention (Bahdanau attention)", d: "Bahdanau 等（2014）的打分方式：\\(\\mathbf w^\\top\\tanh(W_1\\mathbf s + W_2\\mathbf h)\\)，用一个小网络比较解码器状态和编码器某个位置的隐藏状态。每对位置都要单独算一次，不能写成一次矩阵乘法，后来被点积打分取代。", at: "attention#evolution" },
   'sparse-attention': { t: "稀疏注意力", en: "sparse attention", d: "每个 query 只看挑出来的一部分位置，而不是全部。早期用固定模式（Sparse Transformer, 2019：局部 + 跨步，\\(O(n\\sqrt n)\\)），2025 年后改成按内容挑选（NSA、DeepSeek 的 DSA）。", at: "attention#evolution" },
-  mqa: { t: "MQA", en: "multi-query attention", d: "多查询注意力（Shazeer, 2019）：所有 query 头共用同一组 K、V，KV 缓存和每步读取量都除以头数 \\(h\\)。质量和训练稳定性有损，后来被折中的 GQA 取代。", at: "attention#evolution" },
+  mqa: { t: "MQA", en: "multi-query attention", d: "多查询注意力（Shazeer, 2019）：所有 query 头共用同一组 K、V，KV 缓存和每步读取量都除以头数 \\(h\\)。质量和训练稳定性有损，后来被折中的 GQA 取代。", at: 'attention#zero-big' },
 
   // ---- transformer (upgrade 2026-10-20)
   'hidden-dim': { t: "隐藏维度", en: "hidden dimension (model width)", d: "每个位置上残差流向量的维数，记作 \\(d\\)。Llama 3 8B 是 4096；注意力、MLP 的输入输出都是 \\(d\\) 维，每层参数约 \\(12d^2\\)。", at: "transformer#zero" },
@@ -636,10 +636,10 @@ window.ATLAS_TERMS = {
   yarn: { t: "YaRN", en: "Yet another RoPE extensioN", d: "2023 年的 RoPE 上下文扩展方法：只压缩低频平面、保留高频平面，并对注意力分数做温度修正，少量长文本微调即可把上下文扩大数倍到数十倍。", at: "transformer#position" },
   nope: { t: "NoPE", en: "no positional encoding", d: "完全不用位置编码的注意力层。带因果掩码时模型能从“能看到几个 token”推出位置；Llama 4、SmolLM3 等每隔几层放一个，Kimi Linear 的全注意力层全部不用。", at: "transformer#position" },
   'qk-norm': { t: "QK-Norm", en: "query-key normalization", d: "点积之前给 q、k 各做一次归一化（按头），\\(s = \\operatorname{Norm}(\\mathbf q)\\cdot\\operatorname{Norm}(\\mathbf k)/\\sqrt{d_h}\\)，把注意力分数锁在有界范围内，防止训练中分数失控。Gemma 3、Qwen3、OLMo 2 等采用。", at: "attention#scale" },
-  'gated-attention': { t: "门控注意力", en: "gated attention", d: "在注意力的加权和上（乘 \\(W_O\\) 之前）逐头逐维乘一个由当前 token 决定的 sigmoid 门：\\(\\mathbf o_i' = \\sigma(\\mathbf x_iW_g)\\odot\\mathbf o_i\\)。Qwen 团队 2025 年提出，去掉了注意力汇和巨量激活，训练更稳；用于 Qwen3-Next。", at: "attention#patterns" },
+  'gated-attention': { t: "门控注意力", en: "gated attention", d: "在注意力的加权和上（乘 \\(W_O\\) 之前）逐头逐维乘一个由当前 token 决定的 sigmoid 门：\\(\\mathbf o_i' = \\sigma(\\mathbf x_iW_g)\\odot\\mathbf o_i\\)。Qwen 团队 2025 年提出，去掉了注意力汇和巨量激活，训练更稳；用于 Qwen3-Next。", at: 'attention#sink' },
   mhc: { t: "mHC", en: "manifold-constrained hyper-connections", d: "流形约束超连接（DeepSeek, 2025-12）：把残差流扩成 n 条并行的流，用被约束为双随机矩阵的可学习矩阵混合，信号放大被限制在约 1.6 倍。用于 DeepSeek V4。", at: "transformer#residual-2026" },
   'attn-res': { t: "Attention Residuals", en: "Attention Residuals (AttnRes)", d: "Kimi 2026 年提出的残差连接：每层用学到的查询向量，对之前各层（或各块）的输出做 softmax 注意力，取代等权相加 \\(\\mathbf x_0 + \\sum_l F_l\\)，缓解 PreNorm 稀释。用于 Kimi K3。", at: "transformer#residual-2026" },
-  'massive-activations': { t: '巨量激活', en: 'massive activations', d: '大模型里极少数比其它大几个数量级（可达十万倍）的激活值，几乎不随输入变化，作用像固定偏置；常与注意力汇同时出现，给量化带来麻烦（Sun 等, 2024）。', at: 'attention#patterns' },
+  'massive-activations': { t: '巨量激活', en: 'massive activations', d: '大模型里极少数比其它大几个数量级（可达十万倍）的激活值，几乎不随输入变化，作用像固定偏置；常与注意力汇同时出现，给量化带来麻烦（Sun 等, 2024）。', at: 'attention#sink' },
 
   // ---- tokens (upgrade 2026-10-20)
   tokenizer: { t: "分词器", en: "tokenizer", d: "把文本切成 token 并换成编号、以及把编号拼回文字的程序。在训练模型之前单独训练好，之后固定不变。", at: "tokens#why" },

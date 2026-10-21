@@ -6,7 +6,7 @@ A.defineDemo('attn-step', function (mount) {
   const WQ = [[0, 2], [1, 0], [2, 0]], WK = [[1, -1], [0, 1], [0, 1]], WV = [[0, 0], [1, 0], [0, 1]];
   const ORDERS = { a: ['小猫', '追', '红', '球'], b: ['红', '球', '追', '小猫'] };
   const dh = 2;
-  let order = 'a', qi = 3, k = 0, causal = false;
+  let order = 'a', qi = 2, k = 0, causal = false; // default「红」: the causal mask visibly changes its row
   const STEPS = [
     { t: '每个词一个向量', tex: String.raw`\mathbf x_i \in \mathbb R^{d},\quad d = 3`, say: `每个词先查表得到一个 3 维向量（${A.cref('tokens')}的嵌入）。这里三个数分别表示“是不是事物”“会不会动”“是不是颜色”，是为了好读而手工设定的；真实模型的维度没有名字。下面三个 3×2 的矩阵就是这个注意力头要学的全部参数。` },
     { t: '乘三个矩阵', tex: String.raw`\mathbf q_i = \mathbf x_i W_Q,\quad \mathbf k_i = \mathbf x_i W_K,\quad \mathbf v_i = \mathbf x_i W_V`, say: '同一个 x 乘三个不同的矩阵，得到三个 2 维向量：query（我在找什么）、key（我能被怎样找到）、value（被选中时交出什么）。x 只含 0 和 1，所以乘法就是“x 的哪几位是 1，就把 W 的哪几行加起来”。' },
@@ -69,7 +69,7 @@ A.defineDemo('attn-step', function (mount) {
     let txt = s.say, extra = '';
     if (k === 4) txt = causal ? `生成模型不能偷看后面的词：第 ${qi + 1} 个词之后的分数设为 −∞，softmax 之后权重恰好为 0。` : '当前没有勾选“因果掩码”：每个词都能看到整句话，这一步什么也不改。勾上它，再从这一步往后看一遍。';
     if (k === 1) extra = `　例如「${T[qi]}」的 x = ${vec(m.X[qi])}，q = ${vec(m.Q[qi])}。`;
-    if (k === 5) { const top = c.a.indexOf(Math.max(...c.a)); extra = `　「${T[qi]}」最大的权重给了「${T[top]}」（${A.pct(c.a[top], 1)}）。`; }
+    if (k === 5) { const mx = Math.max(...c.a), tops = T.filter((_, j) => c.a[j] > mx - 1e-9); extra = `　「${T[qi]}」最大的权重给了${tops.map((t) => '「' + t + '」').join('和')}（${tops.length > 1 ? '各 ' : ''}${A.pct(mx, 1)}）。`; }
     if (k === 6) extra = `　「${T[qi]}」的输出 o = ${vec(c.o, (x) => x.toFixed(2))}。`;
     say.innerHTML = `<b>第 ${k + 1} 步 · ${s.t}。</b>${txt}${extra}`;
     if (k === 0) { stage.innerHTML = `<table style="width:auto"><tr><th>词</th>${FEAT.map((f) => `<th class="num">${f}</th>`).join('')}</tr>${T.map((t, i) => `<tr><td><b>${t}</b></td>${m.X[i].map((x) => `<td class="num mono">${x}</td>`).join('')}</tr>`).join('')}</table><div style="margin-top:8px">${mat(WQ, 'W_Q（3×2）')}${mat(WK, 'W_K')}${mat(WV, 'W_V')}</div>`; return; }

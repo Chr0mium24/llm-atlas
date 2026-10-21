@@ -1,6 +1,6 @@
 /* attn-heads — rule-built attention patterns (previous token, induction, copy, local window, sink, uniform) on any sentence */
 A.defineDemo('attn-heads', function (mount) {
-  const { bd } = A.demo(mount, '注意力模式浏览器：几种典型的头', '悬停某一行，看这个位置在关注谁');
+  const { bd } = A.demo(mount, '注意力模式浏览器：几种典型的头', '按规则画的示意图，不是真实模型的权重；悬停某一行看它在关注谁');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const inp = A.el('input', { type: 'text', style: { width: '100%' } });
   inp.value = '哈利波特走进了霍格沃茨。第二天，哈利波特又走进了霍格沃茨';

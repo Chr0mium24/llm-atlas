@@ -39,8 +39,7 @@ A.defineDemo('attention-saturation', function (mount) {
   function rowStats(s) {
     const p = A.softmax(s);
     let jf = 0; for (let i = 0; i < N; i++) for (let j = 0; j < N; j++) { const v = (i === j ? p[i] : 0) - p[i] * p[j]; jf += v * v; }
-    const H = -A.sum(p.map((x) => (x > 1e-300 ? x * Math.log2(x) : 0)));
-    return { p, g: Math.sqrt(jf) / JU, H, mx: Math.max(...p) };
+    return { p, g: Math.sqrt(jf) / JU, mx: Math.max(...p) };
   }
   const cache = {};
   function stats(e, m, c) {
@@ -48,7 +47,7 @@ A.defineDemo('attention-saturation', function (mount) {
     if (cache[key]) return cache[key];
     const d = Math.pow(2, e), rows = DATA[e].map((tr) => rowStats(scores(tr, d, m, c)));
     const mx = rows.map((r) => r.mx).sort((a, b) => a - b);
-    return (cache[key] = { rows, dead: rows.filter((r) => r.g < 0.1).length / rows.length, H: A.mean(rows.map((r) => r.H)), medMax: mx[mx.length >> 1] });
+    return (cache[key] = { rows, dead: rows.filter((r) => r.g < 0.1).length / rows.length, meanMax: A.mean(rows.map((r) => r.mx)) });
   }
   const cols = A.series();
   const MCOL = { none: cols[1], sqrt: cols[0], qkn: cols[2] }, MNAME = { none: '不缩放', sqrt: '÷√d_h', qkn: 'QK-Norm + ÷√d_h' };
@@ -84,7 +83,7 @@ A.defineDemo('attention-saturation', function (mount) {
   function draw() {
     const e = Math.round(dS.value), d = Math.pow(2, e), c = cS.value, st = stats(e, mode, c);
     legend.innerHTML = '<span>“梯度≈0”：小于均匀分布时的 10%</span>' + ['none', 'sqrt', 'qkn'].map((m) => `<span><i class="line" style="background:${MCOL[m]}"></i>${MNAME[m]}</span>`).join('') +
-      `<span>当前（${MNAME[mode]}，d_h = ${d}）：梯度≈0 的 query <b>${A.pct(st.dead, 0)}</b>，最大权重中位数 <b>${A.pct(st.medMax, 0)}</b>，平均熵 <b>${st.H.toFixed(2)}</b> bit（均匀 = 4）</span>`;
+      `<span>当前（${MNAME[mode]}，d_h = ${d}）：梯度≈0 的 query <b>${A.pct(st.dead, 0)}</b>，最大权重平均 <b>${A.pct(st.meanMax, 0)}</b>（16 个均分时是 6%）</span>`;
     let t;
     if (mode === 'none') t = `不缩放时分数的标准差约为 √d_h${c > 1 ? ' × c²' : ''} = ${(Math.sqrt(d) * c * c).toFixed(1)}。16 个分数拉得这么开，softmax 几乎只剩最大的那一个，梯度传不回去。切到“除以 √d_h”。`;
     else if (mode === 'sqrt') t = c > 1 ? `初始化时除以 √d_h 正好够用；但训练中 q、k 变长到 ${c.toFixed(2)} 倍，分数就放大 ${(c * c).toFixed(1)} 倍，饱和又回来了。这就是 2023 年以后的模型另加 QK-Norm 等保护的原因。` : '除以 √d_h 之后，分数的标准差回到 1，和维度无关：曲线是平的。再把右边的 c 拖大，模拟训练中 q、k 越变越长。';
