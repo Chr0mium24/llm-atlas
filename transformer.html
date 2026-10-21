@@ -12,8 +12,8 @@
 <main><div class="wrap">
 <header>
   <div class="kicker"></div>
-  <h1>Transformer：注意力、MLP、归一化和残差怎样拼成一个块</h1>
-  <p class="lede">从 2019 年的 GPT-2 到 2026 年的 DeepSeek V4、Kimi K3，大模型的主体都是同一种“块”堆几十到上百层。注意力只是块的一半。这一章先用一个 4 维的玩具向量把一个块从头算到尾，再逐个讲清其余的部件：为什么要有残差连接，MLP 在做什么，归一化放在哪里、为什么放在那里，位置信息从哪来，参数和计算量怎样估算。最后按时间顺序看 2017 年至今块里每一次改动在修什么，以及 2026 年连十年没动过的残差连接也开始被改。</p>
+  <h1>Transformer：注意力、MLP、归一化、残差和位置编码怎样拼成一个块</h1>
+  <p class="lede">大模型的主体是同一种“块”堆几十到上百层，注意力只是块的一半。这一章先用一个 4 维的玩具向量把一个块从头算到尾，再讲清残差连接、MLP、归一化和位置编码各自为什么是现在的样子。要回答的问题是：今天的块为什么长这样，而不是 2017 年的样子？</p>
 </header>
 
 <div class="bridge">上一章的注意力让每个位置能从其它位置收集信息，但它留下了三个问题：只有一层不够，层一深就难训练；注意力本质上只是加权平均，缺少逐位置的非线性加工；它对顺序完全不敏感。这一章的部件分别回答这三个问题。</div>
@@ -41,8 +41,7 @@
   </dl>
   <div class="fx-eg">Llama 3 8B：\(L = 32\) 个块，每个位置的向量 \(d = 4096\) 维。一个 token 从嵌入到输出要经过 32 次注意力、32 次 MLP、65 次归一化和 64 次残差相加。</div>
 </div>
-<p>点击下图中的组件查看说明。这是 2023 年以后的“现代标准块”（Llama 风格）：Pre-RMSNorm、RoPE、GQA、SwiGLU。下一节先不问为什么，用一个玩具把这个块完整算一遍；之后各节再逐个解释这些名字。</p>
-<div data-demo="block-diagram"></div>
+<p>这是 2023 年以后的“现代标准块”（Llama 风格）：Pre-RMSNorm、RoPE、SwiGLU，注意力用 <span class="term" data-t="gqa">GQA</span>（分组查询注意力：多个 query 头共用一组 K、V 头，KV 缓存按比例缩小，见第 <a class="xref" data-ref="attention"></a> 章「放回大模型」）。下一节先不问为什么，用一个玩具把这个块完整算一遍；之后各节依次解释残差、MLP、归一化和位置编码。</p>
 
 <h2 id="zero" data-short="从零开始">从零开始：一个向量穿过一个块</h2>
 <p>用一个小到可以手算的例子。<dfn data-t="hidden-dim">隐藏维度</dfn>（hidden dimension，每个位置上向量的维数）取 \(d = 4\)；输入只有三个 token“今天 / 天气 / 很”，我们跟踪最后一个位置“很”，它的向量最终要用来预测下一个 token（“好”“冷”……）。本章把向量写成行向量，矩阵乘在右边：\(\mathbf xW\)。所有数字都是挑过的玩具值，只为好算；真实模型的 \(d\) 有几千，数值由训练得到。</p>
@@ -58,7 +57,7 @@
 <p>\(\mathbf u\) 和 \(\mathbf x\) 方向相同，只是被缩放到“每维典型大小约为 1”。（真实的 RMSNorm 还要逐维乘一组学到的系数，这里取全 1。）关键在于：被缩放的是送进注意力的<b>副本</b> \(\mathbf u\)，\(\mathbf x\) 本身原样保留。为什么这样安排，见<a href="#norm">「归一化」</a>一节。</p>
 
 <h3 id="zero-attn">第 2 步：注意力，从别的位置搬来信息，再加回去</h3>
-<p>第 <a class="xref" data-ref="attention"></a> 章讲过注意力怎样算：“很”的 query 和三个位置的 key 做点积、softmax，得到三个权重；再按权重把各位置交出的内容（value 乘上输出矩阵 \(W_O\) 之后的向量）加起来。这里直接用结果：设权重是“今天”0.2、“天气”0.7、“很”0.1，三个位置交出的内容分别是 \((0, 0, 2, 0)\)、\((0, 2, 0, -1)\)、\((1, 0, 0, 0)\)：</p>
+<p>第 <a class="xref" data-ref="attention"></a> 章讲过注意力怎样算：“很”的 query 和三个位置的 key 做点积、softmax，得到三个权重；再按权重把各位置交出的内容（value 乘上输出矩阵 \(W_O\) 之后的向量）加起来。这里直接用结果（这三个权重是由“很”归一化后的 \(\mathbf u\) 算出的 query，和三个位置各自归一化后算出的 key 做点积、softmax 得到的）：设权重是“今天”0.2、“天气”0.7、“很”0.1，三个位置交出的内容分别是 \((0, 0, 2, 0)\)、\((0, 2, 0, -1)\)、\((1, 0, 0, 0)\)：</p>
 \[ \mathbf a = 0.2\,(0, 0, 2, 0) + 0.7\,(0, 2, 0, -1) + 0.1\,(1, 0, 0, 0) = (0.1,\ 1.4,\ 0.4,\ -0.7) \]
 <p>“天气”的权重最大，它的信息（主要在第 2 维）被搬到了“很”的位置上。然后把 \(\mathbf a\) 加回原来的向量：</p>
 \[ \mathbf h = \mathbf x + \mathbf a = (2,\ 0,\ -1,\ 1) + (0.1,\ 1.4,\ 0.4,\ -0.7) = (2.1,\ 1.4,\ -0.6,\ 0.3) \]
@@ -73,21 +72,9 @@
 </ul>
 <p>最后同样加回去，得到这个块的输出：</p>
 \[ \begin{aligned} \mathbf x' = \mathbf h + \mathbf m &= \underbrace{(2,\ 0,\ -1,\ 1)}_{\text{嵌入}\ \mathbf x} + \underbrace{(0.1,\ 1.4,\ 0.4,\ -0.7)}_{\text{注意力}\ \mathbf a} + \underbrace{(-0.34,\ 0.34,\ -0.27,\ 0.92)}_{\text{MLP}\ \mathbf m} \\ &= (1.76,\ 1.74,\ -0.87,\ 1.22) \end{aligned} \]
-<p>这就是一个块的全部计算。<b>残差流从头到尾只被加了两次，从没被覆盖</b>：输出 \(\mathbf x'\) 恰好是嵌入、注意力、MLP 三份贡献之和。真实模型把这个块重复 \(L\) 次，每个块的输入是上一个块的输出，最后一个块之后再归一化一次，乘输出矩阵得到词表上的 logit。下面的演示把这 9 步逐帧放出来，左图是残差流的组成：</p>
+<p>这就是一个块的全部计算。<b>残差流从头到尾只被加了两次，从没被覆盖</b>：输出 \(\mathbf x'\) 恰好是嵌入、注意力、MLP 三份贡献之和。真实模型把这个块重复 \(L\) 次，每个块的输入是上一个块的输出，最后一个块之后再归一化一次，乘输出矩阵得到词表上的 logit。下面的演示把上面这几步拆成 9 帧，左图是残差流的组成：</p>
 <div data-demo="transformer-walk" class="bleed"></div>
 
-<h3 id="zero-count">数一数：一层有多少参数</h3>
-<p>块里可学习的参数都在矩阵里。注意力有 \(W_Q, W_K, W_V, W_O\) 四个 \(d\times d\) 的矩阵；MLP 有升维的 \(W_1\)（\(d\times d_{\text{ff}}\)）和降维的 \(W_2\)（\(d_{\text{ff}}\times d\)），原版取中间维度 \(d_{\text{ff}} = 4d\)；两个 RMSNorm 各有 \(d\) 个系数，可以忽略。</p>
-<div class="fx">
-\[ \underbrace{4\,\htmlClass{sym-d}{d}^2}_{\text{注意力}} + \underbrace{2\cdot d\cdot \htmlClass{sym-ff}{4d}}_{\text{MLP}} = \htmlClass{c-new}{12\,d^2}\quad\text{（每层）} \]
-  <div class="fx-read">注意力是四个方阵，MLP 是两个“长条”矩阵；MLP 的参数是注意力的两倍。</div>
-  <dl class="fx-syms">
-    <dt data-sym="d">\(d\)</dt><dd>隐藏维度</dd>
-    <dt data-sym="ff">\(d_{\text{ff}} = 4d\)</dt><dd>MLP 的中间维度（升维之后的维数），原版取 \(4d\)</dd>
-  </dl>
-  <div class="fx-eg">玩具 \(d = 4\)：注意力 \(4\times 16 = 64\)；MLP 若按原版取 \(d_{\text{ff}} = 16\)，是 \(2\times 4\times 16 = 128\)；合计 \(192 = 12\times 4^2\)。（上面手算时中间维度只取了 8，为了能把数字列出来。）放大到 \(d = 4096\)：每层 \(12\times 4096^2\approx 2.0\) 亿个参数，32 层约 64 亿。</div>
-</div>
-<p>算一个 token 要多少计算？矩阵乘法里每个参数对每个 token 做一次乘法和一次加法，记 2 次浮点运算，所以前向每个 token 约 \(2\times 64\) 亿 \(\approx 1.3\times 10^{10}\) 次。真实的 Llama 3 8B 有约 80 亿参数（多出来的主要是词表嵌入，以及 GQA、SwiGLU 带来的差别，见下文的计算器），每生成一个 token 约 \(1.5\times 10^{10}\) 次运算（输入嵌入只是查表，不算乘法），写一段 1000 个 token 的回答约 \(1.5\times 10^{13}\) 次。这些估算在<a href="#params">「参数量和计算量」</a>一节展开。</p>
 <p>块“怎么算”已经清楚了。下面几节回答“为什么这样算”：为什么加回去而不是替换，MLP 的键和值存了什么，归一化为什么放在子层之前，以及上面完全没出现的位置信息从哪来。</p>
 
 <h2 id="residual">残差连接：让梯度能穿过一百层</h2>
@@ -110,9 +97,9 @@
     <dt data-sym="x0">\(\mathbf x_0\)</dt><dd>嵌入向量，残差流的起点</dd>
     <dt data-sym="D">\(\Delta_j\)</dt><dd>第 \(j\) 个子层（注意力或 MLP）加进残差流的修改量；一个块两个，\(L\) 个块共 \(2L\) 个</dd>
     <dt data-sym="xo">\(\mathbf x_{\text{out}}\)</dt><dd>最后一个块的输出</dd>
-    <dt data-sym="WU">\(W_U\)</dt><dd>输出矩阵（\(d\times V\)），把向量变成词表上 \(V\) 个 <span class="term" data-t="logit">logit</span></dd>
+    <dt data-sym="WU">\(W_U\)</dt><dd>输出矩阵（\(d\times V\)，是第 <a class="xref" data-ref="tokens"></a> 章里 \(W_U\) 的转置，因为本章用行向量），把向量变成词表上 \(V\) 个 <span class="term" data-t="logit">logit</span></dd>
   </dl>
-  <div class="fx-eg">玩具块：三份贡献分别是 \((2, 0, -1, 1)\)、\((0.1, 1.4, 0.4, -0.7)\)、\((-0.34, 0.34, -0.27, 0.92)\)。归一化只是整体除以一个数（这里 1.45），所以 logit 也能拆成三份之和：嵌入直接贡献多少、注意力贡献多少、MLP 贡献多少。可解释性研究正是这样把一个预测“归功”到具体的层和头上（第 <a class="xref" data-ref="interpretability"></a> 章的 <span class="term" data-t="logit-lens">logit lens</span>）。</div>
+  <div class="fx-eg">玩具块：三份贡献分别是 \((2, 0, -1, 1)\)、\((0.1, 1.4, 0.4, -0.7)\)、\((-0.34, 0.34, -0.27, 0.92)\)。归一化只是整体除以一个数（这里 1.45），所以 logit 也能拆成三份之和：嵌入直接贡献多少、注意力贡献多少、MLP 贡献多少。把 logit 拆成各子层贡献之和，叫直接 logit 归因（direct logit attribution）；同一个线性性也让 <span class="term" data-t="logit-lens">logit lens</span> 成立：把中间某层的部分和直接乘 \(W_U\)，看模型此刻想说哪个词（第 <a class="xref" data-ref="interpretability"></a> 章）。</div>
 </div>
 <details class="deep"><summary>残差流为什么像一条总线</summary><div class="in">
 <p><b>第 1 步，读是线性的。</b>第 \(j\) 个子层要用之前的信息，它读到的是 \(\operatorname{Norm}(\mathbf x_j)\) 再乘自己的矩阵 \(W\)（例如 \(W_Q\) 或 \(W_1\)）。RMSNorm 只是除以一个标量 \(r_j\) 再逐维乘系数（相当于乘一个对角矩阵 \(\operatorname{diag}(\mathbf g)\)），所以：</p>
@@ -121,9 +108,9 @@
 <p><b>第 2 步，写在不同方向上就互不干扰。</b>设第 3 层把某个信息写在方向 \(\mathbf e\) 上（\(\Delta_3 = c\,\mathbf e\)），第 20 层只要让 \(W'\) 的某一列与 \(\mathbf e\) 对齐，就能读出 \(c\)（再乘 \(1/r_{20}\)）。中间 16 层写了什么都不影响这次读取，只要它们写的方向与 \(\mathbf e\) 近似正交。\(d\) 维空间里严格正交的方向只有 \(d\) 个，但两两夹角接近 90° 的方向，数量随 \(d\) 指数增长，远多于 \(d\) 个；这是<span class="term" data-t="superposition">叠加</span>的几何基础（第 <a class="xref" data-ref="interpretability"></a> 章）。</p>
 <p><b>第 3 步，删除要专门做。</b>在这个框架里，没有哪个子层会“顺便”覆盖旧内容。想删掉 \(c\,\mathbf e\)，某一层必须专门写入它的相反数 \(-c\,\mathbf e\)。</p>
 <p><b>对比 Post-Norm</b>（原版的做法，下文详述）：\(\mathbf x_{l+1} = \operatorname{Norm}(\mathbf x_l + F_l)\)，每层之后整个向量被重新缩放。若每层写入的大小与残差流相当，第 3 层写入的内容在向量里的占比每过一层缩小约 \(1/\sqrt 2\)，到第 20 层只剩 \((1/\sqrt2)^{17}\approx 1/360\)。</p>
-<p><b>这个推导告诉我们：</b>Pre-Norm 结构下，残差流是一条“只追加”的总线：任何一层的写入都以原样的大小到达后面所有层和输出层。logit lens 这类工具因此成立；“删掉后面一半的层性能下降不多”的实验也说明，很多层的写入可以单独去掉而不破坏其它层。它还解释了 2026 年 Attention Residuals 的出发点：既然输出是各层写入的<b>等权</b>和 \(\mathbf x_0 + \sum\Delta_j\)，把等权换成学到的权重就是自然的下一步（见<a href="#residual-2026">下文</a>）。代价是所有层共用 \(d\) 维的带宽。</p>
+<p><b>这个推导告诉我们：</b>Pre-Norm 结构下，残差流是一条“只追加”的总线：任何一层的写入都以原样的绝对大小到达后面所有层和输出层；但残差流越来越长，它的相对份额会下降（见「归一化」一节的 PreNorm 稀释）。logit lens 这类工具因此成立；“删掉后面一半的层性能下降不多”的实验也说明，很多层的写入可以单独去掉而不破坏其它层。它还解释了 2026 年 Attention Residuals 的出发点：既然输出是各层写入的<b>等权</b>和 \(\mathbf x_0 + \sum\Delta_j\)，把等权换成学到的权重就是自然的下一步（见<a href="#residual-2026">下文</a>）。代价是所有层共用 \(d\) 维的带宽。</p>
 </div></details>
-<p>不过，残差连接只保证梯度有路可走，不保证大小合适。如果每个分支在初始化时就输出很大的修改，层层相加之后，前向的激活和反向的梯度仍会慢慢变大。GPT-2 的做法是在初始化时把每个残差分支的输出层缩小 \(1/\sqrt{2L}\) 倍。下面的演示用真实的随机矩阵相乘，比较三种结构；切到第二页可以看到 Pre-Norm 结构的一个副作用（下一节解释）：</p>
+<p>不过，残差连接只保证梯度有路可走，不保证大小合适。展开连乘 \(\prod_k(I + J_k)\)，“全部走直通”的那一项恒为 1，所以梯度不会消失；但它还有 \(2^{L-l}\) 条经过分支的路径，每个分支若在初始化时就把梯度放大一点，这些路径加起来随层数<b>指数</b>增长：每层约乘 \(\sqrt{1+\sigma^2}\)（\(\sigma\) 是分支的典型放大倍数）。“有直通路径”和“梯度爆炸”并不矛盾，直通项管下限，不管上限。GPT-2 的做法是在初始化时把每个残差分支的输出层缩小 \(1/\sqrt{2L}\) 倍，让所有分支加起来的扰动有界。下面的演示用真实的随机矩阵相乘比较三种结构，默认看“加残差”：48 层、\(\sigma = 0.9\) 时，第 1 层的梯度约 \(6\times10^5\)；切到“残差 + 分支缩小”，回到 1 附近。</p>
 <div data-demo="residual-depth"></div>
 <details class="deep"><summary>展开连乘：残差网络像很多浅网络的集成</summary><div class="in">
 <p>把 \(\prod_{k}(I + J_k)\) 展开，每一项对应“在每一层选择走直通（\(I\)）还是走分支（\(J_k\)）”：</p>
@@ -133,15 +120,15 @@
 </div></details>
 
 <h2 id="mlp">MLP：逐位置的加工与“键值记忆”</h2>
-<p>注意力的输出只是 value 的加权平均，本质上是线性的混合。每个块的第二个子层是一个两层的全连接网络，叫<dfn data-t="ffn">前馈网络</dfn>（FFN，也常叫 MLP）。它对每个位置独立计算，不看其它位置。原版 Transformer 的写法是：</p>
+<p>注意力给定权重之后，输出只是 value 的线性组合：softmax 决定从哪里取，不对取来的内容做逐维加工。每个块的第二个子层是一个两层的全连接网络，叫<dfn data-t="ffn">前馈网络</dfn>（FFN，也常叫 MLP）。它对每个位置独立计算，不看其它位置。原版 Transformer 的写法是：</p>
 <div class="fx">
 \[ \operatorname{FFN}(\mathbf x) = \htmlClass{sym-phi}{\phi}\big(\mathbf x\,\htmlClass{sym-W1}{W_1}\big)\,\htmlClass{sym-W2}{W_2}\qquad\longrightarrow\qquad \operatorname{SwiGLU}(\mathbf x) = \Big(\operatorname{SiLU}(\mathbf x W_1)\ \htmlClass{c-new}{\odot\ \mathbf x\,\htmlClass{sym-W3}{W_3}}\Big)\,W_2 \]
-  <div class="fx-read">先把 \(d\) 维放大到 \(d_{\text{ff}}\) 维，过一个非线性函数，再压回 \(d\) 维。右边是 2023 年以后的标准：多一个矩阵 \(W_3\)，它的输出和激活结果<span style="color:var(--s4)">逐元素相乘</span>，起“门”的作用。</div>
+  <div class="fx-read">先把 \(d\) 维放大到 \(d_{\text{ff}}\) 维，过一个非线性函数，再压回 \(d\) 维。右边是 2023 年以后的标准：多一个矩阵 \(W_3\)，它的输出和激活结果<span style="color:var(--s4)">逐元素相乘</span>，两支互相门控。</div>
   <dl class="fx-syms">
     <dt data-sym="W1">\(W_1\)</dt><dd>\(d\times d_{\text{ff}}\)，升维；原版 \(d_{\text{ff}} = 4d\)</dd>
-    <dt data-sym="phi">\(\phi\)</dt><dd>激活函数：原版用 ReLU \(\max(0, z)\)，GPT-2 起用更平滑的 GELU</dd>
+    <dt data-sym="phi">\(\phi\)</dt><dd>激活函数：原版用 ReLU \(\max(0, z)\)，GPT-1、BERT（2018）起用更平滑的 GELU</dd>
     <dt data-sym="W2">\(W_2\)</dt><dd>\(d_{\text{ff}}\times d\)，降维回到残差流</dd>
-    <dt data-sym="W3">\(W_3\)</dt><dd>\(d\times d_{\text{ff}}\)，门控分支；有了它，SwiGLU 有三个矩阵，所以 \(d_{\text{ff}}\) 通常取约 \(\tfrac83 d\)，使总参数仍是 \(8d^2\)</dd>
+    <dt data-sym="W3">\(W_3\)</dt><dd>\(d\times d_{\text{ff}}\)，线性分支（代码里叫 up_proj），与 \(\operatorname{SiLU}(\mathbf xW_1)\)（gate_proj）逐元素相乘；有了它，SwiGLU 有三个矩阵，所以 \(d_{\text{ff}}\) 通常取约 \(\tfrac83 d\)，使总参数仍是 \(8d^2\)</dd>
   </dl>
   <div class="fx-eg">\(\operatorname{SiLU}(z) = z\cdot\sigma(z)\)（\(\sigma\) 是 sigmoid）。\(\operatorname{SiLU}(2) = 2\times 0.88 = 1.76\)，\(\operatorname{SiLU}(-2) = -2\times 0.12 = -0.24\)。如果对应的门 \(\mathbf xW_3\) 那一维是 0，不管激活值多大，这一维的输出都是 0；门是 \(-1\)，输出就反号。两个线性投影相乘，让 MLP 能表达“当 A 且 B 时”这类乘法关系。</div>
 </div>
@@ -156,14 +143,10 @@
 <p>这是输入 \(\mathbf x\) 的二次型：一个单元就能表示“特征 A 和特征 B 同时出现”。ReLU 单元 \(\max(0, \mathbf x\cdot\mathbf k_i)\) 是分段线性的，要靠多个单元组合才能近似乘法。</p>
 <p><b>这个推导告诉我们：</b>\(\tfrac83\) 不是调出来的魔数，而是“参数量不变”的直接结果。SwiGLU 用少三分之一的隐藏单元（\(\tfrac83 d\) 对 \(4d\)），换来每个单元的乘法交互；为什么这种交互对语言特别有用，至今没有理论解释。</p>
 </div></details>
-<p>MLP 占了每层约三分之二的参数。它存了什么？「从零开始」里的 \(\mathbf m = 1.30\,\mathbf v_1 + 1.38\,\mathbf v_2 + \cdots\) 已经给出了一个读法：把它看成一张巨大的“键值表”。</p>
-<details class="deep"><summary>MLP 是一张键值记忆表</summary><div class="in">
-<p>把 \(W_1\) 的第 \(i\) 列记作 \(\mathbf k_i\)，\(W_2\) 的第 \(i\) 行记作 \(\mathbf v_i\)。矩阵乘法按中间维度展开：</p>
+<p>MLP 占了每层约三分之二的参数。它存了什么？「从零开始」里的 \(\mathbf m = 1.30\,\mathbf v_1 + 1.38\,\mathbf v_2 + \cdots\) 已经给出了读法。把 \(W_1\) 的第 \(i\) 列看成一个“键” \(\mathbf k_i\)，\(W_2\) 的第 \(i\) 行看成一个“值” \(\mathbf v_i\)，矩阵乘法按中间维度展开：</p>
 \[ \operatorname{FFN}(\mathbf x) = \sum_{i=1}^{d_{\text{ff}}} \phi(\mathbf x\cdot\mathbf k_i)\ \mathbf v_i \]
-<p>对比注意力：\(\mathbf o = \sum_j \operatorname{softmax}_j(\mathbf q\cdot\mathbf k_j)\,\mathbf v_j\)。形式几乎一样：用当前向量去匹配一组“键”，按匹配程度把对应的“值”加起来。区别在于：注意力的键值来自上下文中的其它 token，MLP 的键值是训练时学到、固定在参数里的；MLP 用激活函数而不是 softmax，所以很多键可以同时被激活或同时不激活（玩具里 8 个键激活了 4 个）。</p>
-<p>Geva 等（2021）检查了训练好的模型：低层 MLP 的键常对应浅层模式（例如“以某个词结尾的句子”），高层的键对应语义主题；值向量投到词表上，会提高某些下一个 token 的概率。后来的知识编辑研究（ROME, 2022）发现，改动中间层 MLP 的一个低秩部分，就能把“埃菲尔铁塔在巴黎”改成“在罗马”。</p>
-<p><b>这个推导告诉我们：</b>注意力从上下文里检索，MLP 从参数里检索。模型的“知识”很大程度上存放在 MLP 里，这也是 MoE 把 MLP 拆成很多专家、扩大参数容量的出发点（第 <a class="xref" data-ref="moe"></a> 章）。</p>
-</div></details>
+<p>当前向量和哪些键吻合，就把对应的值按吻合程度加进残差流。这和注意力 \(\mathbf o = \sum_j \operatorname{softmax}_j(\mathbf q\cdot\mathbf k_j)\,\mathbf v_j\) 几乎是同一个形式，区别有两处：注意力的键值来自上下文里的其它 token，MLP 的键值是训练时学到、固定在参数里的；MLP 用逐个元素的激活函数而不是 softmax，很多键可以同时被激活（玩具里 8 个键激活了 4 个），也可以都不激活。一句话：注意力从上下文里检索，MLP 从参数里检索。</p>
+<p>这个读法也回答了“为什么要先放大 4 倍再压回来”：\(d_{\text{ff}}\) 就是记忆条目的个数。放大到 \(4d\)，意味着每层有 \(4d\) 个键值对可用，而计算量仍只随 \(d\cdot d_{\text{ff}}\) 线性增长；4 这个倍数本身是原版论文的经验取值，没有理论推导。Geva 等（2021）检查训练好的模型：低层 MLP 的键常对应浅层文字模式（例如“以某个词结尾的句子”），高层的键对应语义主题；值向量投到词表上，会抬高某些下一个 token 的概率。之后的知识编辑方法 ROME（Meng 等, 2022）先用“因果追踪”定位出存放某条事实的中间层 MLP，再只改那一层的一个秩 1 部分，就能把“埃菲尔铁塔在巴黎”改成“在罗马”。所以常说“知识存在 MLP 里”；MoE 把 MLP 拆成很多专家来扩大参数容量，出发点也在这里（第 <a class="xref" data-ref="moe"></a> 章）。这句话有多准确，见下面的争议框。</p>
 <aside class="dispute">
   <h4>知识真的存放在 MLP 的某个位置吗</h4>
   <dl>
@@ -185,7 +168,7 @@
   </dl>
   <div class="fx-eg">\(\mathbf x = (1, 2, 3, 6)\)。LayerNorm：\(\mu = 3\)，\(\sigma^2 = (4+1+0+9)/4 = 3.5\)，\(\sigma = 1.87\)，结果 \((-1.07,\ -0.53,\ 0,\ 1.60)\)。RMSNorm：均方根 \(\sqrt{(1+4+9+36)/4} = 3.54\)，结果 \((0.28,\ 0.57,\ 0.85,\ 1.70)\)。两者都把向量缩放到“每维约为 1”的尺度。</div>
 </div>
-<p>比用哪种归一化更关键的，是放在残差的哪一侧。原版 Transformer 是 <dfn data-t="post-norm">Post-Norm</dfn>：先相加再归一化；GPT-2 起改为 <dfn data-t="pre-norm">Pre-Norm</dfn>：只对子层的输入归一化，残差路径上不做任何处理：</p>
+<p>比用哪种归一化更关键的，是放在残差的哪一侧。原版 Transformer 是 <dfn data-t="post-norm">Post-Norm</dfn>：先相加再归一化；GPT-2 把 <dfn data-t="pre-norm">Pre-Norm</dfn> 带进了大语言模型（此前翻译模型里已有人使用）：只对子层的输入归一化，残差路径上不做任何处理：</p>
 <div class="fx">
 \[ \begin{aligned} \text{Post-Norm:}\quad \mathbf x_{l+1} &= \htmlClass{c-new}{\htmlClass{sym-N}{\operatorname{Norm}}}\big(\mathbf x_l + \htmlClass{sym-F}{F}(\mathbf x_l)\big)\\ \text{Pre-Norm:}\quad \mathbf x_{l+1} &= \mathbf x_l + F\big(\htmlClass{c-new}{\operatorname{Norm}}(\mathbf x_l)\big) \end{aligned} \]
   <div class="fx-read">区别只在 Norm 套在哪里。Post-Norm 归一化“相加的结果”，残差流每层都被重新缩放；Pre-Norm 只归一化送进子层的副本，残差流本身只做加法。</div>
@@ -195,25 +178,25 @@
   </dl>
   <div class="fx-eg">玩具块的第一个子层（设注意力的结果仍是 \(\mathbf a\)）。Pre-Norm：\(\mathbf h = \mathbf x + \mathbf a = (2.1, 1.4, -0.6, 0.3)\)，里面完整保留着 \(\mathbf x = (2, 0, -1, 1)\)。Post-Norm：\(\mathbf h = \operatorname{Norm}(\mathbf x + \mathbf a) = (1.61, 1.07, -0.46, 0.23)\)，整个向量被除以 1.31，\(\mathbf x\) 不再以原样出现在其中。</div>
 </div>
-<p>Post-Norm 的一个直接后果是训练开头必须做<dfn data-t="lr-warmup">学习率预热</dfn>（warmup）：前几千步把<span class="term" data-t="learning-rate">学习率</span>从接近 0 逐步升到目标值，原版 Transformer 用了 4000 步。不预热，深一些的 Post-Norm 模型一上来就发散。Pre-Norm 可以不预热也训得动（实践中大多仍保留一段较短的预热）。下面的演示用真实的 LayerNorm 前向和反向，比较两种结构在初始化时的梯度：</p>
+<p>Post-Norm 的症状是：不预热就发散。训练开头要做<dfn data-t="lr-warmup">学习率预热</dfn>（warmup），前几千步把<span class="term" data-t="learning-rate">学习率</span>从接近 0 逐步升到目标值，原版 Transformer 用了 4000 步。原因不在“梯度消失”，而在输出附近：初始化时，Post-Norm 靠近输出的几层参数梯度很大，而且不随层数变小；Pre-Norm 的最后一次归一化要除以很长的残差流，把这份梯度压小了约 \(\sqrt L\) 倍（Xiong 等, 2020）。同样的学习率，Post-Norm 这几层一步走得远得多；而 <span class="term" data-t="adam">Adam</span> 在最初几步对梯度尺度的估计还不准，两者叠加就容易发散。预热就是先把步长压小，等优化器的统计量稳定下来。Pre-Norm 因此可以不预热也训得动（实践中大多仍保留一段较短的预热）。</p>
+<p>下面的演示用真实的 LayerNorm 前向和反向，比较两种结构在初始化时的梯度。默认页是每层参数的梯度：24 层时，最后一层 Post-Norm 约 3.1、Pre-Norm 约 1.0，差约 3 倍，把层数拖大差距还会变大。第二页是传到每层的梯度：Post-Norm 只走直通路径的那一份几乎消失（24 层只剩约 \(2\times10^{-3}\)），但总梯度并不消失，因为分支也在传梯度。</p>
 <div data-demo="transformer-prepost" class="bleed"></div>
 <details class="deep"><summary>为什么 Post-Norm 难训练、需要学习率预热</summary><div class="in">
 <p><b>第 1 步，直通路径。</b>Pre-Norm 中，\(\mathbf x_{l+1} = \mathbf x_l + \cdots\)，直通路径的雅可比恰好是 \(I\)，与上一节完全一样。Post-Norm 中，直通路径每层都要穿过一次归一化。初始化时，若 \(\mathbf x_l\) 和 \(F(\mathbf x_l)\) 每维方差都约为 1 且互不相关，它们的和方差约为 2，归一化要除以 \(\sqrt 2\)。于是只走直通路径的梯度每层缩小约 \(1/\sqrt2\)：</p>
 \[ \Big\|\frac{\partial\mathbf x_L}{\partial\mathbf x_l}\Big\|_{\text{只走直通}} \approx \Big(\frac{1}{\sqrt 2}\Big)^{L-l} \]
 <p>24 层就是 \(2^{-12}\approx 1/4096\)（演示第一页的橙色虚线）。</p>
 <p><b>第 2 步，总梯度不一定消失。</b>梯度还可以走分支。Post-Norm 每层完整的雅可比是“归一化的雅可比 × \((I + J_F)\)”。若分支的雅可比也大致保持向量的大小（随机初始化时就是这样），\(I + J_F\) 把梯度放大约 \(\sqrt 2\)，正好抵消归一化的 \(1/\sqrt 2\)：演示里 Post-Norm 的总梯度（实线）几乎不衰减。Liu 等（2020）在真实的 Transformer 上也发现，Post-Norm 的编码器没有梯度消失，只有解码器里接收编码器输出的那些子层有。区别在于：Post-Norm 的梯度<b>全靠分支</b>传递，分支在训练中一旦不再“保持大小”，就没有东西兜底；Pre-Norm 的恒等路径保证每层至少收到输出端的那一份。</p>
-<p><b>第 3 步，输出附近的梯度。</b>Xiong 等（2020）证明了与预热更直接相关的一点：初始化时，Post-Norm 最后几层参数的梯度大小与层数 \(L\) 无关；Pre-Norm 的则约按 \(1/\sqrt L\) 缩小，因为最后一次归一化要除以残差流的长度，而残差流的长度随层数按 \(\sqrt L\) 增长（演示第二页）。同样的学习率下，Post-Norm 输出附近的参数一步走得大好几倍。而 Adam（按每个参数梯度的历史大小自动调整步长的优化器）在训练最初几步对梯度尺度的估计还不准，两者叠加，大学习率就容易发散。预热让最初几千步的步长足够小，等 Adam 的估计稳定下来。</p>
+<p><b>第 3 步，输出附近的梯度。</b>Xiong 等（2020）证明了与预热更直接相关的一点：初始化时，Post-Norm 最后几层参数的梯度大小与层数 \(L\) 无关；Pre-Norm 的则约按 \(1/\sqrt L\) 缩小，因为最后一次归一化要除以残差流的长度，而残差流的长度随层数增长（理想情况下按 \(\sqrt L\)，演示第三页）。同样的学习率下，Post-Norm 输出附近的参数一步走得大好几倍。而 Adam（按每个参数梯度的历史大小自动调整步长的优化器）在训练最初几步对梯度尺度的估计还不准，两者叠加，大学习率就容易发散。预热让最初几千步的步长足够小，等 Adam 的估计稳定下来。</p>
 <p><b>第 4 步，参数改一点，输出变多少。</b>Liu 等（2020）从另一个角度看：Post-Norm 每层都把残差和分支等量地混在一起，输出对每一层的参数都同样敏感；所有参数各扰动一点，输出变化的方差随层数线性累积，是 \(O(L)\)。Pre-Norm 第 \(l\) 层的写入在残差流里只占约 \(1/\sqrt l\)，累积起来只有 \(O(\log L)\)。他们认为这种“放大效应”才是 Post-Norm 不稳定的主因，梯度消失不是。</p>
-<p><b>这个推导告诉我们：</b>Post-Norm 难训练，不是因为“梯度一定消失”，而是因为它没有恒等路径兜底、输出对每一层都同样敏感；Pre-Norm 用一条干净的恒等路径换来了稳定。代价是残差流本身从不被归一化，会随层数变长（residual-depth 演示第二页）。DeepNet（2022）走另一条路：保留 Post-Norm，但把残差乘一个大于 1 的系数 \(\alpha\)，\(\operatorname{Norm}(\alpha\mathbf x + F(\mathbf x))\)，让直通路径占主导，同时缩小分支的初始化，训练出了 1000 层的 Transformer。</p>
+<p><b>这个推导告诉我们：</b>Post-Norm 难训练，不是因为“梯度一定消失”，而是因为它没有恒等路径兜底、输出对每一层都同样敏感；Pre-Norm 用一条干净的恒等路径换来了稳定。代价是残差流本身从不被归一化，会随层数变长（演示第三页）。DeepNet（2022）走另一条路：保留 Post-Norm，但把残差乘一个大于 1 的系数 \(\alpha\)，\(\operatorname{Norm}(\alpha\mathbf x + F(\mathbf x))\)，让直通路径占主导，同时缩小分支的初始化，训练出了 1000 层的 Transformer。</p>
 </div></details>
-<p>Pre-Norm 的代价在 residual-depth 演示的第二页：残差流从不归一化，长度随层数按 \(\sqrt l\) 增长，而每层写入的大小大致固定，越深的层写入的内容在残差流里占比越小、对输出的影响越弱。Kimi 的 Attention Residuals 论文把这个现象叫<dfn data-t="prenorm-dilution">PreNorm 稀释</dfn>（PreNorm dilution）。</p>
+<p>Pre-Norm 也有代价：残差流本身从不归一化。每层的分支看到的是归一化后的输入，写入的大小大致固定；残差流却越加越长。在各层写入方向互不相关的理想情况下，长度按 \(\sqrt l\) 增长（演示第三页，玩具模型），越深的层写入的内容在残差流里占比越小、对输出的影响越弱。Sun 等（2025）认为真实训练中的增长比这更快。Kimi 的 Attention Residuals 论文把这个现象叫<dfn data-t="prenorm-dilution">PreNorm 稀释</dfn>（PreNorm dilution）。</p>
 <aside class="dispute">
-  <h4>Pre-Norm 是不是让深层“白干活”了</h4>
+  <h4>深层贡献小，是冗余还是缺陷</h4>
   <dl>
-    <dt>主张</dt><dd>Pre-Norm 稳定好训，是事实上的标准，没必要再改。</dd>
-    <dt>证据</dt><dd>Pre-Norm 的残差流长度随层数约按 \(\sqrt l\) 增长，每层新写入的内容占比越来越小。Gromov 等（2024）删掉 Llama 2 70B 后部近一半的层，再做少量微调修复，问答类任务的性能下降很小；“深度的诅咒”（Sun 等, 2025）把原因归到 Pre-Norm，并提出按 \(1/\sqrt l\) 缩放归一化输出来缓解。</dd>
-    <dt>反方的做法</dt><dd>OLMo 2（2024）把归一化移到子层的输出上，Gemma 2/3 在子层前后各放一次（“夹心”归一化），都试图兼得稳定性和深层的有效性。Kimi 的 Attention Residuals（2026）干脆改掉残差的求和方式（见下文）。</dd>
-    <dt>现在怎么看</dt><dd>Pre-Norm 仍是主流，但“深层利用不足”已被广泛接受。2025–26 年的多种新结构，都是在不牺牲稳定性的前提下解决这个问题。</dd>
+    <dt>主张</dt><dd>深层是冗余，可以直接剪掉。Gromov 等（2024）删掉 Llama 2 70B 后部近一半的层，再做少量微调修复，问答类任务的性能下降很小；残差网络本来就像很多浅网络的集成，少几层不要紧。</dd>
+    <dt>反方</dt><dd>深层是被结构浪费的。“深度的诅咒”（Sun 等, 2025）把原因归到 Pre-Norm：残差流越来越长，深层写入的份额越来越小，于是学不到东西。他们提出按 \(1/\sqrt l\) 缩放归一化输出；OLMo 2（2024）把归一化移到子层的输出上，Gemma 2/3 在子层前后各放一次（“夹心”归一化）；Kimi 的 Attention Residuals（2026）干脆改掉残差的求和方式（见下文）。</dd>
+    <dt>现在怎么看</dt><dd>Pre-Norm 仍是主流，“深层利用不足”这一现象已被广泛接受，分歧在于该剪还是该修。删层实验只测了部分任务，还不能说明深层本来就没用。</dd>
   </dl>
 </aside>
 
@@ -223,123 +206,14 @@
 <p>设 \(P\) 是一个置换矩阵（每行每列恰有一个 1），\(PX\) 就是把 \(X\) 的行打乱。由于 \(Q = XW_Q\)，打乱后 \(Q\to PQ\)，同理 \(K\to PK\)、\(V\to PV\)。分数矩阵变为 \(PQ(PK)^\top = P\,QK^\top P^\top\)，即行和列按同样方式重排。按行 softmax 与重排可以交换顺序，所以：</p>
 \[ \operatorname{softmax}\big(P\,QK^\top P^\top\big)\,PV = P\,\operatorname{softmax}(QK^\top)\,P^\top P\,V = P\cdot\operatorname{Attention}(Q, K, V) \]
 <p>（\(P^\top P = I\)。）MLP 和归一化逐位置计算，本来就与顺序无关。所以整个块是置换等变的：输出只是同样地被打乱。</p>
-<p><b>这个推导告诉我们：</b>如果不注入位置信息，模型完全无法区分顺序。但注意一个例外：加了因果掩码后，第 \(i\) 个位置恰好能看到 \(i\) 个 token，这本身就泄露了位置信息。这就是下面的“不用位置编码也能工作”这一意外发现的原因。</p>
+<p><b>这个推导告诉我们：</b>如果不注入位置信息，模型完全无法区分顺序。例外是因果掩码：第 \(i\) 个位置恰好能看到 \(i\) 个 token，这本身就泄露了位置（见下面的意外框）。</p>
 </div></details>
-<p>所以需要另外注入<dfn data-t="pos-enc">位置编码</dfn>。历史上有几种做法（它们为什么一代代被替换，见<a href="#modern">「每一代在修什么」</a>）：</p>
+<p>所以需要另外注入<dfn data-t="pos-enc">位置编码</dfn>。最直接的办法是给第 \(m\) 个位置一个向量 \(\mathbf p_m\)，加到嵌入上：</p>
 <ul>
-  <li><b><dfn data-t="sinusoidal-pe">正弦位置编码</dfn></b>（2017）：给第 \(m\) 个位置一个固定向量，各维是不同频率的正弦和余弦，\(\sin(m/10000^{2i/d})\)、\(\cos(m/10000^{2i/d})\)，直接加到嵌入上。</li>
-  <li><b>可学习的位置嵌入</b>（BERT、GPT-2）：每个位置学一个向量。超出训练长度就没有对应的向量，无法外推。</li>
-  <li><b><dfn data-t="relative-pos-bias">相对位置偏置</dfn></b>（T5, 2019；ALiBi, 2021）：不改向量，直接给注意力分数加一个只依赖距离 \(m-n\) 的偏置，ALiBi 的偏置随距离线性变负。</li>
-  <li><b>旋转位置编码 RoPE</b>（苏剑林等, 2021）：今天的标准，下面详细讲。</li>
+  <li><b><dfn data-t="sinusoidal-pe">正弦位置编码</dfn></b>（2017）：\(\mathbf p_m\) 是固定的，各维是不同频率的正弦和余弦，\(\sin(m\,\omega_i)\)、\(\cos(m\,\omega_i)\)，\(\omega_i = 10000^{-2i/d}\)。同一组 \((\sin,\cos)\) 平移 \(k\) 个位置，恰好等于旋转一个固定角度 \(k\omega_i\)，原文据此期望模型能学会按相对位置注意。</li>
+  <li><b>可学习的位置嵌入</b>（BERT、GPT-2/3）：每个位置学一个向量。超出训练长度就没有对应的向量，无法外推。</li>
 </ul>
-<p><dfn data-t="rope">RoPE</dfn> 的想法是：不往向量上加东西，而是按位置<b>旋转</b> query 和 key。把 \(d\) 维向量两两分组，看成 \(d/2\) 个二维平面，第 \(i\) 个平面按位置 \(m\) 旋转角度 \(m\theta_i\)。两个旋转后的向量做点积，结果只取决于它们的角度差，也就是相对位置：</p>
-<div class="fx">
-\[ \big\langle \htmlClass{sym-R}{R_m}\,\mathbf q,\ R_n\,\mathbf k\big\rangle = \big\langle \mathbf q,\ R_{\htmlClass{c-new}{n-m}}\,\mathbf k\big\rangle,\qquad \htmlClass{sym-th}{\theta_i} = \htmlClass{sym-b}{b}^{-2i/d} \]
-  <div class="fx-read">位置 \(m\) 的 query 转了 \(m\theta\)，位置 \(n\) 的 key 转了 \(n\theta\)，点积只看两者之差 <span style="color:var(--s4)">\(n-m\)</span>：绝对位置自然地变成了相对位置。</div>
-  <dl class="fx-syms">
-    <dt data-sym="R">\(R_m\)</dt><dd>按位置 \(m\) 旋转的矩阵：\(d/2\) 个二维旋转拼成的分块对角阵，第 \(i\) 块转 \(m\theta_i\)</dd>
-    <dt data-sym="th">\(\theta_i\)</dt><dd>第 \(i\) 个平面的旋转频率，\(i = 0, 1, \dots, d/2 - 1\)。\(i\) 小的转得快，\(i\) 大的转得慢</dd>
-    <dt data-sym="b">\(b\)</dt><dd>base（频率的底），原版取 10000；越大，最慢的那些平面转得越慢。这里的 \(d\) 指每个头的维数 \(d_h\)</dd>
-  </dl>
-  <div class="fx-eg">一个平面，\(\theta = 0.5\)，\(\mathbf q = \mathbf k = (1, 0)\)。\(m = 5\)：q 转 2.5 弧度，变成 \((\cos 2.5, \sin 2.5)\)；\(n = 3\)：k 转 1.5 弧度。点积 \(= \cos(2.5 - 1.5) = \cos 1 \approx 0.54\)。把两者都后移 10 个位置（\(m = 15, n = 13\)），角度差仍是 1 弧度，点积不变。</div>
-  <div class="fx-step" data-tex="\mathbf q = (\underbrace{q_0, q_1}_{\text{平面 }0},\ \underbrace{q_2, q_3}_{\text{平面 }1},\ \dots)">第 1 步：把 query 和 key 的维度两两分组，每组看成一个二维平面。</div>
-  <div class="fx-step" data-tex="\begin{pmatrix} q_{2i}\\ q_{2i+1}\end{pmatrix} \to \begin{pmatrix}\cos m\theta_i & -\sin m\theta_i\\ \sin m\theta_i & \cos m\theta_i\end{pmatrix}\begin{pmatrix} q_{2i}\\ q_{2i+1}\end{pmatrix}">第 2 步：位置 \(m\) 的 query，第 \(i\) 个平面旋转 \(m\theta_i\)；key 同理旋转 \(n\theta_i\)。value 不旋转。</div>
-  <div class="fx-step" data-tex="\langle R_m\mathbf q, R_n\mathbf k\rangle = \mathbf q^\top R_m^\top R_n\,\mathbf k = \mathbf q^\top \htmlClass{c-new}{R_{n-m}}\,\mathbf k">第 3 步：旋转矩阵满足 \(R_m^\top = R_{-m}\)、\(R_{-m}R_n = R_{n-m}\)，所以点积只依赖 \(n - m\)。</div>
-</div>
-<p>不同平面的频率差别很大：\(d_h = 128\)、\(b = 10000\) 时，最快的平面每 6 个位置转一圈，用来分辨相邻的 token；最慢的平面要约 5 万个位置才转一圈，用来编码远距离。拖动下面的滑块验证“同时平移，点积不变”，并观察 base 对远程衰减的影响：</p>
-<div data-demo="rope"></div>
-<details class="deep"><summary>用复数看 RoPE，以及远程衰减从哪来</summary><div class="in">
-<p>把第 \(i\) 个平面的两个分量看成一个复数 \(q^{(i)} = q_{2i} + \mathrm i\,q_{2i+1}\)。旋转 \(m\theta_i\) 就是乘以 \(e^{\mathrm i m\theta_i}\)。两个二维向量的点积等于 \(\operatorname{Re}[a\bar b]\)，所以：</p>
-\[ \operatorname{Re}\Big[q^{(i)}e^{\mathrm i m\theta_i}\ \overline{k^{(i)}e^{\mathrm i n\theta_i}}\Big] = \operatorname{Re}\Big[q^{(i)}\,\overline{k^{(i)}}\ e^{\mathrm i (m-n)\theta_i}\Big] \]
-<p>\(m\) 和 \(n\) 只以差的形式出现。完整的点积是 \(d/2\) 个平面之和。设 \(\mathbf q = \mathbf k\)（一个 token 和“自己的副本”比较），点积变成 \(\sum_i |q^{(i)}|^2\cos\big((m-n)\theta_i\big)\)。距离为 0 时所有余弦都是 1；距离增大，各平面的角度彼此错开，余弦有正有负、相互抵消，总和趋于 0。这就是 RoPE 的“远程衰减”：内容相同的两个 token，离得越远，匹配分数越低。base 越大，频率整体越低，衰减越慢。</p>
-<p><b>这个推导告诉我们：</b>RoPE 给模型的不只是“相对位置”，还有一个“越远越不相关”的先验。长上下文需要削弱这个衰减，所以要调大 base。</p>
-</div></details>
-<p><b>上下文扩展就是在改 RoPE。</b>如果训练时只见过 8K 个位置，最慢的那些平面在训练中连一圈都没转完；推理时拉到 128K，它们会转到从没见过的角度，模型就乱了。几种修补方法：</p>
-<ul>
-  <li><b><dfn data-t="pos-interp">位置插值</dfn></b>（PI, 2023）：把位置按比例压缩，\(m \to m\cdot n_{\text{train}}/n_{\text{test}}\)（训练长度除以目标长度），让所有角度都落回见过的范围。代价是相邻位置的角度差也被压小，分辨近距离变难。</li>
-  <li><b>NTK-aware 缩放与 <dfn data-t="yarn">YaRN</dfn></b>（2023）：只压缩低频平面、保留高频平面，YaRN 还对注意力分数做温度修正。少量长文本微调即可把上下文扩大数倍到数十倍。</li>
-  <li><b>直接调大 base</b>：Llama 3 用 \(b = 500{,}000\)，2025 年后的长上下文模型常用到数百万，配合分阶段的长文本继续训练（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
-</ul>
-<aside class="dispute surprise">
-  <h4>意外：不用位置编码也能工作</h4>
-  <dl>
-    <dt>原以为</dt><dd>注意力是置换等变的，没有位置编码就分不清顺序，模型无法工作。</dd>
-    <dt>实际发现</dt><dd>Haviv 等（2022）发现，带因果掩码的语言模型去掉位置编码（<dfn data-t="nope">NoPE</dfn>，no positional encoding），效果只略差；Kazemnejad 等（2023）发现它在超出训练长度时外推得更好。原因是因果掩码：第 \(i\) 个位置只能看到 \(i\) 个 token，模型可以借此“数”出自己的位置。</dd>
-    <dt>为什么</dt><dd>位置信息不一定要显式给出，结构本身就隐含了它。只有双向的编码器（如 BERT）才真正离不开位置编码。</dd>
-    <dt>现在怎么看</dt><dd>大规模下完全不用位置编码仍然吃亏，但混合使用成了一种趋势：Llama 4（2025）的部分层不用 RoPE（iRoPE），Cohere Command A 和 SmolLM3 也每隔几层放一个 NoPE 层，用于改善长上下文。Kimi Linear（2025-10）走得更远：全注意力层一律不用位置编码，位置信息交给与之混合的<span class="term" data-t="linear-attention">线性注意力</span>层（它按顺序递推，天然知道先后）；据报道，Kimi K3（2026）沿用了这一做法，扩展到 100 万 token 时不再需要调 RoPE。</dd>
-  </dl>
-</aside>
-
-<h2 id="params">参数量和计算量</h2>
-<p>「从零开始」数出了每层 \(12d^2\)。把它乘上层数，就能估算一个模型有多少参数、算一个 token 要多少计算。计算量用<dfn data-t="flops">FLOPs</dfn>（浮点运算次数）衡量，一次乘法加一次加法记 2 FLOPs。</p>
-<div class="fx">
-\[ \htmlClass{sym-N}{N} \approx 12\,\htmlClass{sym-L}{L}\,\htmlClass{sym-d}{d}^2,\qquad C_{\text{前向}}\approx 2N\ \ \text{FLOPs / token},\qquad C_{\text{训练}}\approx \htmlClass{c-new}{6N}\ \ \text{FLOPs / token} \]
-  <div class="fx-read">每层约 \(12d^2\) 个参数：注意力的 Q、K、V、O 四个 \(d\times d\) 矩阵共 \(4d^2\)，MLP 两个 \(d\times 4d\) 矩阵共 \(8d^2\)（SwiGLU 三个 \(d\times\tfrac83 d\) 矩阵，也是 \(8d^2\)）。每个参数对每个 token 做一次乘加，前向就是 \(2N\)；训练还要反向，总共约 \(6N\)。</div>
-  <dl class="fx-syms">
-    <dt data-sym="N">\(N\)</dt><dd>不含嵌入层的参数量</dd>
-    <dt data-sym="L">\(L\)</dt><dd>层（块）数</dd>
-    <dt data-sym="d">\(d\)</dt><dd>隐藏维度</dd>
-  </dl>
-  <div class="fx-eg">GPT-3：\(L = 96\)，\(d = 12288\)，\(N \approx 12\times 96\times 12288^2 \approx 1.74\times 10^{11}\)，正是 175B。训练 3000 亿 token：\(6\times 1.75\times 10^{11}\times 3\times 10^{11}\approx 3.1\times 10^{23}\) FLOPs，与论文报告一致。</div>
-</div>
-<details class="deep"><summary>每 token 的计算量：2N、6N，以及注意力多出的那一项</summary><div class="in">
-<p><b>第 1 步，前向。</b>看一个线性层 \(\mathbf y = \mathbf x W\)，\(W\) 是 \(d_{\text{in}}\times d_{\text{out}}\)。\(\mathbf y\) 的每个分量要 \(d_{\text{in}}\) 次乘法和 \(d_{\text{in}}\) 次加法，共 \(d_{\text{out}}\) 个分量：\(2d_{\text{in}}d_{\text{out}}\) FLOPs，正好是“每个权重 2 次”。所有矩阵加起来，前向每 token \(2N\)。</p>
-<p><b>第 2 步，反向。</b>反向需要两样东西：</p>
-\[ \frac{\partial\mathcal L}{\partial \mathbf x} = \frac{\partial\mathcal L}{\partial \mathbf y}\,W^\top\quad(\text{传给前一层}),\qquad \frac{\partial\mathcal L}{\partial W} = \mathbf x^\top\frac{\partial\mathcal L}{\partial \mathbf y}\quad(\text{更新这一层}) \]
-<p>两者各是一次同样大小的矩阵乘法，各 \(2d_{\text{in}}d_{\text{out}}\) FLOPs。前向 2 + 反向 4 = 每个参数每个 token 6 FLOPs（<a class="xref" data-ref="nn-basics" data-full="1"></a>有更一般的推导）。</p>
-<p><b>第 3 步，注意力分数不在 \(N\) 里。</b>\(QK^\top\) 和“乘 V”这两步没有参数，但也要算。上下文长度为 \(n\) 时，一个 query 要和 \(n\) 个 key 各做一次 \(d\) 维点积（所有头合起来），再把 \(n\) 个 value 加权求和：每层每 token 约 \(2nd + 2nd = 4nd\) FLOPs。和线性层的 \(24d^2\)（即 \(2\times 12d^2\)）相比：</p>
-\[ \frac{4\,n\,d}{24\,d^2} = \frac{n}{6d} \]
-<p>\(d = 4096\)、\(n = 8192\) 时约为 1/3；\(n = 128\text{K}\) 时约为 5 倍，注意力反而成了大头。（因果掩码下平均每个 token 只看一半上下文，实际比值约减半。）</p>
-<p><b>这个推导告诉我们：</b>只要知道参数量和训练 token 数，就能估算训练成本，这是规模定律（第 <a class="xref" data-ref="scaling"></a> 章）的基础。\(6N\) 忽略了注意力分数这一项，上下文长度远小于 \(6d\) 时误差不大；上下文一长，就要把它加回来，这也是长上下文要专门优化注意力的原因（第 <a class="xref" data-ref="attention"></a> 章最后一节、第 <a class="xref" data-ref="long-context"></a> 章）。</p>
-</div></details>
-<p>下面的计算器按真实配置算出各部分的参数量。注意两点：嵌入层在小模型里占比显著（GPT-2 small 约三成），在大模型里可以忽略；GQA 让 K、V 矩阵变小，注意力的占比低于 \(1/3\)。</p>
-<div data-demo="param-calc"></div>
-
-<h2 id="modern">2017 到 2026：每一代在修什么</h2>
-<p>块里的每个部件都至少换过一次。下表是总览，后面按时间顺序讲每次改动卡在哪、改了公式里的哪一项、代价是什么、又引出了什么。</p>
-<div class="tablewrap"><table>
-  <tr><th>组件</th><th>原版（2017）</th><th>现代标准（2023 起）</th><th>2025–26 的新改动</th><th>为什么换</th></tr>
-  <tr><td>整体结构</td><td>编码器 + 解码器</td><td>只有解码器</td><td>同左</td><td>所有任务统一成预测下一个 token，结构最简单，最适合扩大规模</td></tr>
-  <tr><td>归一化位置</td><td>Post-Norm</td><td>Pre-Norm</td><td>子层前后各一次（Gemma）、子层输出归一化（OLMo 2）</td><td>深层稳定；新改动缓解深层利用不足</td></tr>
-  <tr><td>归一化方式</td><td>LayerNorm</td><td>RMSNorm</td><td>另加 QK-Norm</td><td>更省；QK-Norm 防止注意力分数失控</td></tr>
-  <tr><td>MLP 激活</td><td>ReLU</td><td>SwiGLU</td><td>同左</td><td>同参数量下效果更好</td></tr>
-  <tr><td>位置编码</td><td>正弦，加在输入上</td><td>RoPE，作用于每层的 q、k</td><td>部分层或全部全注意力层不用位置编码；部分维度用 RoPE（MLA）</td><td>相对位置、可扩展到长上下文</td></tr>
-  <tr><td>注意力</td><td>多头（MHA）</td><td>GQA</td><td>MLA、门控注意力、与线性注意力混合、稀疏注意力</td><td>KV cache 太大、长序列太贵、注意力汇（第 <a class="xref" data-ref="long-context"></a> 章）</td></tr>
-  <tr><td>MLP 规模</td><td>稠密</td><td>稠密</td><td>MoE 成为大模型标配</td><td>参数多、计算少（第 <a class="xref" data-ref="moe"></a> 章）</td></tr>
-  <tr><td>偏置项</td><td>有</td><td>去掉</td><td>同左</td><td>几乎不影响效果，去掉更稳定</td></tr>
-  <tr><td>残差连接</td><td>单条残差流</td><td>单条残差流</td><td>多条残差流（mHC）、沿深度的注意力（Attention Residuals）</td><td>深层信息传递和 PreNorm 稀释，见下</td></tr>
-  <tr><td>输出头</td><td>预测下一个 token</td><td>同左</td><td>另加多 token 预测（MTP）</td><td>训练信号更密；推理时可用于投机解码（第 <a class="xref" data-ref="serving"></a> 章）</td></tr>
-</table></div>
-
-<h3 id="gen-2017">2017：原版块的两个隐患</h3>
-<p>原版 Transformer 为翻译而设计：编码器、解码器各 6 层，\(d = 512\)，Post-LayerNorm，ReLU 前馈网络（\(d_{\text{ff}} = 2048 = 4d\)），位置信息用正弦编码加在输入嵌入上：</p>
-<div class="fx">
-\[ \htmlClass{sym-p}{\mathbf p_m}[2i] = \sin\big(m\,\htmlClass{sym-w}{\omega_i}\big),\qquad \mathbf p_m[2i+1] = \cos\big(m\,\omega_i\big),\qquad \omega_i = 10000^{-2i/d} \]
-  <div class="fx-read">第 \(m\) 个位置得到一个固定的 \(d\) 维向量：每两维一组，以各自的频率振荡；把它加到第 \(m\) 个 token 的嵌入上。</div>
-  <dl class="fx-syms">
-    <dt data-sym="p">\(\mathbf p_m\)</dt><dd>位置 \(m\) 的编码向量，与嵌入同为 \(d\) 维</dd>
-    <dt data-sym="w">\(\omega_i\)</dt><dd>第 \(i\) 组的频率；和 RoPE 的 \(\theta_i\) 是同一个公式</dd>
-  </dl>
-  <div class="fx-eg">\(d = 4\)：\(\omega_0 = 1\)，\(\omega_1 = 10000^{-1/2} = 0.01\)。位置 \(m = 3\)：\(\mathbf p_3 = (\sin 3, \cos 3, \sin 0.03, \cos 0.03)\approx(0.14,\ -0.99,\ 0.03,\ 1.00)\)。第一组每 6.3 个位置转一圈，第二组要 628 个位置。</div>
-</div>
-<p>两个隐患在 6 层的规模下还不明显。一是 Post-Norm：原文用 4000 步预热才训得稳，层数再多就难训（上一节）。二是位置是<b>加</b>进去的。同一组的 \((\sin, \cos)\) 平移 \(k\) 个位置，恰好等于旋转一个固定角度 \(k\omega_i\)，原文据此期望模型能学会按相对位置注意；可是位置向量和内容向量相加之后一起进入 \(W_Q, W_K\)，分数里混进了只依赖绝对位置的项（下面的推导）。</p>
-
-<h3 id="gen-prenorm">2019：GPT-2 把归一化挪进分支</h3>
-<p><b>卡在哪：</b>只有解码器的语言模型越做越深（GPT-2 最大 48 层），Post-Norm 难以稳定训练。<b>改了什么：</b>Norm 从“相加之后”移到“子层之前”，\(\mathbf x + F(\operatorname{Norm}(\mathbf x))\)；在最后一个块之后补一次归一化；把每个残差分支输出层的初始化缩小 \(1/\sqrt{2L}\)。同年的 T5 也用 Pre-Norm，而且它的归一化只缩放、不减均值、没有偏置，就是 RMSNorm 的形式。<b>代价：</b>残差流从此不再被归一化，长度随层数增长，深层的写入被稀释（上一节的争议框）。<b>引出：</b>这个代价要到模型很深时才要紧，眼下更急的是位置编码。</p>
-
-<h3 id="gen-relpos">2019–2021：位置从“加在输入上”变成“作用在分数上”</h3>
-<p><b>卡在哪：</b>加法的位置编码让分数里混入绝对位置，可学习的位置向量又不能外推。<b>改了什么：</b>位置只需要影响“看谁”，那就直接改注意力分数。T5（2019）的<span class="term" data-t="relative-pos-bias">相对位置偏置</span>是第一种成功的大规模方案：</p>
-<div class="fx">
-\[ \htmlClass{sym-s}{s_{mn}} = \frac{\mathbf q_m\cdot\mathbf k_n}{\sqrt{d_h}} + \htmlClass{c-new}{\htmlClass{sym-bias}{\operatorname{bias}_h}\big(\htmlClass{sym-bk}{\operatorname{bucket}}(m-n)\big)} \]
-  <div class="fx-read">原来的点积分数，加上一个只看“隔了多远”的数。每个头一张小表，按距离分桶查表。</div>
-  <dl class="fx-syms">
-    <dt data-sym="s">\(s_{mn}\)</dt><dd>位置 \(m\) 对位置 \(n\) 的注意力分数（进 softmax 之前）</dd>
-    <dt data-sym="bk">\(\operatorname{bucket}\)</dt><dd>把距离分成 32 个桶：近处每个距离单独一个桶，远处按对数合并，超过 128 的都归入最后一个桶</dd>
-    <dt data-sym="bias">\(\operatorname{bias}_h\)</dt><dd>第 \(h\) 个头为每个桶学一个标量，所有层共用这张表</dd>
-  </dl>
-  <div class="fx-eg">某个头学到：距离 0 的偏置 +2，距离 1 的 +1，远处 0。两个内容完全相同的 key，紧挨着的那个分数高 1 到 2，softmax 后权重是远处那个的 \(e\approx 2.7\) 到 \(e^2\approx 7.4\) 倍。</div>
-</div>
-<p>ALiBi（2021）更简单：偏置直接取 \(-c_h\,|m-n|\)，不用学，外推性好。<b>代价：</b>偏置只是加在分数上的一个标量，位置与内容不能相互作用；T5 的查表要为每个分数额外加一项，在 ALiBi 论文的实现里明显慢于正弦编码。RoPE（2021）换了思路：不加偏置，把 q、k 按位置旋转，用乘法让分数天然只依赖相对位置（<a href="#position">上文</a>）。它没有额外参数、计算只是逐对旋转，频率事后还能调整，这几点让它在 2023 年后胜出。</p>
+<p>毛病出在注意力分数里。位置向量和内容向量相加之后一起乘 \(W_Q, W_K\)，分数 \((\mathbf x_m+\mathbf p_m)M(\mathbf x_n+\mathbf p_n)^\top\)（\(M = W_QW_K^\top\)）展开成四项：内容-内容、内容-位置、位置-内容、位置-位置。中间两项各只含一个绝对位置，第四项在 \(M\) 是任意学到的矩阵时也不只依赖 \(m-n\)。也就是说，“只看相对位置”只是模型可能学到的一种特例，绝对位置一直混在分数里，模型得自己学会忽略它们。</p>
 <details class="deep"><summary>加法的位置编码会在注意力分数里混入什么</summary><div class="in">
 <p>设第 \(m\) 个位置的输入是内容加位置：\(\mathbf x_m + \mathbf p_m\)。记 \(M = W_QW_K^\top\)（\(d\times d\)），位置 \(m\) 对 \(n\) 的分数（省略 \(1/\sqrt{d_h}\)）展开成四项：</p>
 \[ \begin{aligned} s_{mn} &= (\mathbf x_m + \mathbf p_m)\,M\,(\mathbf x_n + \mathbf p_n)^\top \\ &= \underbrace{\mathbf x_m M\mathbf x_n^\top}_{\text{内容-内容}} + \underbrace{\mathbf x_m M\mathbf p_n^\top}_{\text{内容-位置}} + \underbrace{\mathbf p_m M\mathbf x_n^\top}_{\text{位置-内容}} + \underbrace{\mathbf p_m M\mathbf p_n^\top}_{\text{位置-位置}} \end{aligned} \]
@@ -351,59 +225,110 @@
 <p>内容和相对位置相乘在一起，不含任何绝对位置。</p>
 <p><b>这个推导告诉我们：</b>位置编码的演进，是在一步步清理分数里的绝对位置项：正弦编码指望模型自己学会忽略它们；T5 用加法偏置把它们删掉，但牺牲了位置与内容的交互；RoPE 用旋转同时做到了“只看相对位置”和“与内容相乘”。原版论文已经指出“平移等于旋转”，RoPE 只是把这个旋转从输入挪到了每一层的 q、k 上。</p>
 </div></details>
-
-<h3 id="gen-llama">2020–2023：LLaMA 配方</h3>
-<p><b>卡在哪：</b>到 2022 年，各家模型的块五花八门，Narang 等（2021）在统一的代码库里复现了几十种改进，大多数收益不成立（本节末的争议框）。<b>改了什么：</b>被大规模反复验证过的几项组合成固定配方：Pre-Norm + RMSNorm（省掉减均值和偏置），SwiGLU（\(d_{\text{ff}} = \tfrac83 d\)，参数量不变），RoPE，所有矩阵去掉偏置项。PaLM（2022）用上了其中大部分，LLaMA（2023-02）把这套配方连同权重开源，之后几乎所有开源模型都从它出发；Llama 2（2023-07）的大模型再加上 GQA（第 <a class="xref" data-ref="long-context"></a> 章）。<b>代价：</b>结构趋同，各家的差异转移到数据、训练方法和注意力的变体上。<b>引出：</b>配方定型之后，最先撞墙的是上下文长度。</p>
-
-<h3 id="gen-long">2023–2024：上下文变长，RoPE 的频率不够用</h3>
-<p><b>卡在哪：</b>RoPE 留下了一个参数：频率的底 \(b\)。训练长度 4K 时，\(b = 10000\) 的最慢平面在训练中连一圈都没转完，推到更长就遇到没见过的角度。<b>改了什么：</b><span class="term" data-t="pos-interp">位置插值</span>、NTK 缩放、<span class="term" data-t="yarn">YaRN</span>、大 base 都只改这一项（<a href="#position">上文列表</a>），配合分阶段的长文本训练，把上下文从 4K 推到 128K 乃至 100 万（第 <a class="xref" data-ref="long-context"></a> 章）。<b>代价：</b>每扩一次都要重新调频率、再训一段。<b>引出：</b>2025 年起，一部分模型让一些层甚至全部全注意力层不用位置编码（上文的意外框）；与此同时，规模扩大暴露出另一类问题：数值失控。</p>
-
-<h3 id="gen-stability">2023–2025：管住注意力分数和激活</h3>
-<p><b>卡在哪：</b>模型和学习率再变大，出现了两类数值问题。一是<b>注意力分数失控</b>：Dehghani 等（2023）把 ViT 扩大到 220 亿参数时发现，q·k 的值越训越大，softmax 塌成接近独热的分布，损失随之发散。二是<b>巨量激活</b>：残差流里个别维度在第一个 token 等少数位置上的值比其它激活大上万倍（Sun 等, 2024），它们和<span class="term" data-t="attention-sink">注意力汇</span>同时出现，给训练稳定性和低精度量化都带来麻烦。两者的成因第 <a class="xref" data-ref="attention"></a> 章有推导，这里只看块里改了什么。</p>
-<p><b>改了什么（一）：</b><span class="term" data-t="qk-norm">QK-Norm</span>，在点积之前给每个头的 q 和 k 各做一次 RMSNorm。两个向量的长度都被固定为 \(\sqrt{d_h}\)，分数 \(\operatorname{Norm}(\mathbf q)\cdot\operatorname{Norm}(\mathbf k)/\sqrt{d_h}\) 就不会超过 \(\sqrt{d_h}\)（\(d_h = 128\) 时约 ±11.3，再乘学到的系数），不管 \(W_Q, W_K\) 训练中变得多大（公式卡和数值例子见第 <a class="xref" data-ref="attention"></a> 章「为什么要除以 \(\sqrt{d_h}\)」）。从块的角度看，它是继两次 Pre-Norm 之后的第三处归一化，放在 RoPE 旋转之前。Gemma 3（2025-03）用它替换了 Gemma 2 的分数软截断，Qwen3（2025-04）去掉 QKV 偏置、加上了它，OLMo 2 也在用。代价：每个头多两组 \(d_h\) 个系数，计算可以忽略。</p>
-<p><b>改了什么（二）：</b><span class="term" data-t="gated-attention">门控注意力</span>（Qiu 等, 2025，Qwen 团队）针对第二类问题：在注意力的加权和之后、乘 \(W_O\) 之前，逐头逐维乘一个由当前 token 决定的 sigmoid 门：</p>
+<p>两种修法各删掉了不同的东西。<b><dfn data-t="relative-pos-bias">相对位置偏置</dfn></b>（T5, 2019；ALiBi, 2021）删掉后三项，直接给分数加一个只依赖距离 \(m-n\) 的标量：T5 按距离分桶、每个桶学一个数，ALiBi 的偏置随距离线性变负、不用学。代价是位置与内容不能相互作用。<dfn data-t="rope">RoPE</dfn>（旋转位置编码，苏剑林等, 2021）换成乘法：不往向量上加东西，而是按位置<b>旋转</b> query 和 key。把 \(d_h\) 维向量两两分组，看成 \(d_h/2\) 个二维平面，第 \(i\) 个平面按位置 \(m\) 旋转角度 \(m\theta_i\)。两个旋转后的向量做点积，结果只取决于它们的角度差，也就是相对位置，而且和内容相乘在一起：</p>
 <div class="fx">
-\[ \mathbf o_i' = \Big(\htmlClass{c-new}{\htmlClass{sym-sg}{\sigma}\big(\htmlClass{sym-xg}{\mathbf x_i}\,\htmlClass{sym-Wg}{W_g}\big)\odot}\ \sum_{j\le i} a_{ij}\,\mathbf v_j\Big)\,W_O \]
-  <div class="fx-read">每个头的输出逐维乘一个 0 到 1 之间的数，这个数由当前位置的输入算出。头“没什么要看”的时候可以直接把输出关小，不必再把注意力权重倒进第一个 token。</div>
+\[ \big\langle \htmlClass{sym-R}{R_m}\,\mathbf q,\ R_n\,\mathbf k\big\rangle = \big\langle \mathbf q,\ R_{\htmlClass{c-new}{n-m}}\,\mathbf k\big\rangle,\qquad \htmlClass{sym-th}{\theta_i} = \htmlClass{sym-b}{\Theta}^{-2i/d_h} \]
+  <div class="fx-read">位置 \(m\) 的 query 转了 \(m\theta\)，位置 \(n\) 的 key 转了 \(n\theta\)，点积只看两者之差 <span style="color:var(--s4)">\(n-m\)</span>：绝对位置自然地变成了相对位置。</div>
   <dl class="fx-syms">
-    <dt data-sym="xg">\(\mathbf x_i\)</dt><dd>位置 \(i\) 送进注意力子层的输入（归一化之后）</dd>
-    <dt data-sym="Wg">\(W_g\)</dt><dd>门的投影矩阵，为每个头的每一维算一个门分数</dd>
-    <dt data-sym="sg">\(\sigma\)</dt><dd>sigmoid，把分数压到 0 到 1 之间</dd>
+    <dt data-sym="R">\(R_m\)</dt><dd>按位置 \(m\) 旋转的矩阵：\(d_h/2\) 个二维旋转拼成的分块对角阵，第 \(i\) 块转 \(m\theta_i\)</dd>
+    <dt data-sym="th">\(\theta_i\)</dt><dd>第 \(i\) 个平面的旋转频率，\(i = 0, 1, \dots, d_h/2 - 1\)。\(i\) 小的转得快，\(i\) 大的转得慢</dd>
+    <dt data-sym="b">\(\Theta\)</dt><dd>base（频率的底），原版取 10000；越大，最慢的那些平面转得越慢。\(d_h\) 是每个头的维数</dd>
   </dl>
-  <div class="fx-eg">论文报告：加门之后，各层平均分给第一个 token 的注意力从 46.7% 降到 4.8%，最大激活值从 1053 降到 94；15B 的 MoE 模型（4000 亿 token）困惑度从 6.03 降到 5.76，原本会发散的大学习率也能稳定训练。逐维的门在这个模型上多约 2 亿参数，耗时增加不到 2%。</div>
+  <div class="fx-eg">一个平面，\(\theta = 0.5\)，\(\mathbf q = \mathbf k = (1, 0)\)。\(m = 5\)：q 转 2.5 弧度，变成 \((\cos 2.5, \sin 2.5)\)；\(n = 3\)：k 转 1.5 弧度。点积 \(= \cos(2.5 - 1.5) = \cos 1 \approx 0.54\)。把两者都后移 10 个位置（\(m = 15, n = 13\)），角度差仍是 1 弧度，点积不变。</div>
+  <div class="fx-step" data-tex="\mathbf q = (\underbrace{q_0, q_1}_{\text{平面 }0},\ \underbrace{q_2, q_3}_{\text{平面 }1},\ \dots)">第 1 步：把 query 和 key 的维度两两分组，每组看成一个二维平面。</div>
+  <div class="fx-step" data-tex="\begin{pmatrix} q_{2i}\\ q_{2i+1}\end{pmatrix} \to \begin{pmatrix}\cos m\theta_i & -\sin m\theta_i\\ \sin m\theta_i & \cos m\theta_i\end{pmatrix}\begin{pmatrix} q_{2i}\\ q_{2i+1}\end{pmatrix}">第 2 步：位置 \(m\) 的 query，第 \(i\) 个平面旋转 \(m\theta_i\)；key 同理旋转 \(n\theta_i\)。value 不旋转：它是被搬运的内容，位置只需要影响“看谁”。</div>
+  <div class="fx-step" data-tex="\langle R_m\mathbf q, R_n\mathbf k\rangle = \mathbf q^\top R_m^\top R_n\,\mathbf k = \mathbf q^\top \htmlClass{c-new}{R_{n-m}}\,\mathbf k">第 3 步：旋转矩阵满足 \(R_m^\top = R_{-m}\)、\(R_{-m}R_n = R_{n-m}\)，所以点积只依赖 \(n - m\)。</div>
 </div>
-<p><b>代价：</b>多一个矩阵和少量计算。Qwen3-Next（2025-09）用了它；据报道，Kimi K3 的全注意力层也是带门的版本。<b>引出：</b>块里的每个子层都修过一遍了，剩下没动过的只有把它们串起来的残差连接本身。</p>
-
-<h3 id="residual-2026">2026：连残差连接也开始改</h3>
-<p>从 2015 年的 ResNet 到 2025 年，残差连接一直是最简单的 \(\mathbf x + F(\mathbf x)\)。2026 年的两个前沿模型都改了它：</p>
+<p>不同平面的频率差别很大：\(d_h = 128\)、\(\Theta = 10000\) 时，最快的平面每 6 个位置转一圈，用来分辨相邻的 token；最慢的平面要约 5 万个位置才转一圈，用来编码远距离。拖动下面的滑块验证“同时平移，点积不变”，并观察 base 对远程衰减的影响：</p>
+<div data-demo="rope"></div>
+<details class="deep"><summary>用复数看 RoPE，以及远程衰减从哪来</summary><div class="in">
+<p>把第 \(i\) 个平面的两个分量看成一个复数 \(q^{(i)} = q_{2i} + \mathrm i\,q_{2i+1}\)。旋转 \(m\theta_i\) 就是乘以 \(e^{\mathrm i m\theta_i}\)。两个二维向量的点积等于 \(\operatorname{Re}[a\bar b]\)，所以：</p>
+\[ \operatorname{Re}\Big[q^{(i)}e^{\mathrm i m\theta_i}\ \overline{k^{(i)}e^{\mathrm i n\theta_i}}\Big] = \operatorname{Re}\Big[q^{(i)}\,\overline{k^{(i)}}\ e^{\mathrm i (m-n)\theta_i}\Big] \]
+<p>\(m\) 和 \(n\) 只以差的形式出现。完整的点积是 \(d_h/2\) 个平面之和。设 \(\mathbf q = \mathbf k\)（一个 token 和“自己的副本”比较），点积变成 \(\sum_i |q^{(i)}|^2\cos\big((m-n)\theta_i\big)\)。距离为 0 时所有余弦都是 1；距离增大，各平面的角度彼此错开，余弦有正有负、相互抵消，总和趋于 0。这就是 RoPE 的“远程衰减”：内容相同的两个 token，离得越远，匹配分数越低。base 越大，频率整体越低，衰减越慢。</p>
+<p><b>这个推导告诉我们：</b>RoPE 给模型的不只是“相对位置”，还有一个“越远越不相关”的先验。长上下文需要削弱这个衰减，所以要调大 base。</p>
+</div></details>
+<p><b>上下文扩展就是在改 RoPE。</b>如果训练时只见过 8K 个位置，最慢的那些平面在训练中连一圈都没转完；推理时拉到 128K，它们会转到从没见过的角度，模型就乱了。几种修补方法：</p>
 <ul>
-  <li><b>DeepSeek 的 <dfn data-t="mhc">mHC</dfn></b>（流形约束超连接，manifold-constrained hyper-connections，2025-12 论文，用于 2026-04 发布的 DeepSeek V4）：把单条残差流扩成 \(n\) 条并行的流，每层用可学习的矩阵混合它们（字节跳动 2024 年的“超连接”）。不加约束时，层层相乘的混合矩阵会把信号放大到失控：论文报告 27B 模型中放大倍数达到约 3000 倍，训练在约 1.2 万步时损失突然飙升。mHC 把混合矩阵约束为<b>双随机矩阵</b>（元素非负、每行每列之和都为 1），这种矩阵的谱范数不超过 1，相乘之后仍是双随机矩阵，放大倍数因此被控制在约 1.6 倍；\(n = 4\) 时额外开销约 6.7%。</li>
-  <li><b>Kimi 的 <dfn data-t="attn-res">Attention Residuals</dfn></b>（2026-03 论文，用于 2026-07 发布的 Kimi K3）：普通残差把所有层的输出等权相加，\(\mathbf x_L = \mathbf x_0 + \sum_l F_l\)（上文的“总线”）；它改成每层用一个学到的查询向量，对之前各层的输出做 softmax 注意力，有选择地取用。它针对的正是 <span class="term" data-t="prenorm-dilution">PreNorm 稀释</span>：等权相加让深层的贡献越来越小。论文把残差连接看成“沿深度方向的 RNN”，这个改法就像当年用注意力替代 RNN。实用的分块版本（Block AttnRes）把层分成约 8 块、只对块的汇总做注意力，论文报告它达到基线多用 1.25 倍算力时的损失。后续的独立分析发现，学到的权重主要集中在最近的几层和最初的嵌入上。</li>
+  <li><b><dfn data-t="pos-interp">位置插值</dfn></b>（PI, 2023）：把位置按比例压缩，\(m \to m\cdot n_{\text{train}}/n_{\text{test}}\)（训练长度除以目标长度），让所有角度都落回见过的范围。代价是相邻位置的角度差也被压小，分辨近距离变难。</li>
+  <li><b>NTK-aware 缩放与 <dfn data-t="yarn">YaRN</dfn></b>（2023）：只压缩低频平面、保留高频平面，YaRN 还对注意力分数做温度修正。少量长文本微调即可把上下文扩大数倍到数十倍。</li>
+  <li><b>直接调大 base</b>：Llama 3 用 \(\Theta = 500{,}000\)，2025 年后的长上下文模型常用到数百万，配合分阶段的长文本继续训练（第 <a class="xref" data-ref="long-context"></a> 章）。</li>
 </ul>
+<aside class="dispute surprise">
+  <h4>意外：不用位置编码也能工作</h4>
+  <dl>
+    <dt>原以为</dt><dd>注意力是置换等变的，没有位置编码就分不清顺序，模型无法工作。</dd>
+    <dt>实际发现</dt><dd>Haviv 等（2022）发现，带因果掩码的语言模型去掉位置编码（<dfn data-t="nope">NoPE</dfn>，no positional encoding），效果只略差；Kazemnejad 等（2023）发现它在超出训练长度时外推得更好。原因是因果掩码：第 \(i\) 个位置只能看到 \(i\) 个 token，模型可以借此“数”出自己的位置。</dd>
+    <dt>为什么</dt><dd>位置信息不一定要显式给出，结构本身就隐含了它。只有双向的编码器（如 BERT）才真正离不开位置编码。</dd>
+    <dt>现在怎么看</dt><dd>大规模下完全不用位置编码仍然吃亏，但混合使用成了一种趋势：Llama 4（2025）的部分层不用 RoPE（iRoPE），SmolLM3 等也每隔几层放一个 NoPE 层。Kimi Linear（2025-10）和 Kimi K3（2026-07）走得更远：全注意力（MLA）层一律不用位置编码，位置信息交给与之混合的<span class="term" data-t="linear-attention">线性注意力</span>层（它按顺序递推，天然知道先后）；K3 技术报告称它不做任何位置编码修改就直接外推到 100 万 token。</dd>
+  </dl>
+</aside>
+
+<h2 id="params">参数量和计算量</h2>
+<p>块里可学习的参数都在矩阵里。注意力有 \(W_Q, W_K, W_V, W_O\) 四个 \(d\times d\) 的矩阵；MLP 有升维的 \(W_1\)（\(d\times d_{\text{ff}}\)）和降维的 \(W_2\)（\(d_{\text{ff}}\times d\)），原版取 \(d_{\text{ff}} = 4d\)；归一化各有 \(d\) 个系数，可以忽略。计算量用<dfn data-t="flops">FLOPs</dfn>（浮点运算次数）衡量，一次乘法加一次加法记 2 FLOPs。</p>
+<div class="fx">
+\[ \underbrace{4\,\htmlClass{sym-d}{d}^2}_{\text{注意力}} + \underbrace{2\cdot d\cdot \htmlClass{sym-ff}{4d}}_{\text{MLP}} = \htmlClass{c-new}{12\,d^2}\ \text{（每层）},\qquad \htmlClass{sym-N}{N} \approx 12\,\htmlClass{sym-L}{L}\,d^2,\qquad C_{\text{前向}}\approx 2N,\qquad C_{\text{训练}}\approx 6N\ \ \text{（FLOPs / token）} \]
+  <div class="fx-read">注意力是四个方阵，MLP 是两个“长条”矩阵，MLP 的参数是注意力的两倍（SwiGLU 三个 \(d\times\tfrac83 d\) 矩阵，也是 \(8d^2\)）。每个参数对每个 token 做一次乘加，前向就是 \(2N\)；训练还要反向，总共约 \(6N\)。</div>
+  <dl class="fx-syms">
+    <dt data-sym="d">\(d\)</dt><dd>隐藏维度</dd>
+    <dt data-sym="ff">\(d_{\text{ff}} = 4d\)</dt><dd>MLP 的中间维度，原版取 \(4d\)</dd>
+    <dt data-sym="N">\(N\)</dt><dd>不含嵌入层的参数量</dd>
+    <dt data-sym="L">\(L\)</dt><dd>层（块）数</dd>
+  </dl>
+  <div class="fx-eg">玩具 \(d = 4\)：注意力 \(4\times 16 = 64\)；MLP 若按原版取 \(d_{\text{ff}} = 16\)，是 \(2\times 4\times 16 = 128\)；合计 \(192 = 12\times 4^2\)（手算时中间维度只取了 8，为了能把数字列出来）。GPT-3：\(L = 96\)，\(d = 12288\)，\(N \approx 12\times 96\times 12288^2 \approx 1.74\times 10^{11}\)，正是 175B。训练 3000 亿 token：\(6\times 1.75\times 10^{11}\times 3\times 10^{11}\approx 3.1\times 10^{23}\) FLOPs，与论文报告一致。</div>
+</div>
+<p>真实模型和 \(12Ld^2\) 有几处出入。嵌入层在小模型里占比显著（GPT-2 small 约三成），在大模型里可以忽略；GQA 让 \(W_K, W_V\) 变小，注意力的占比低于 \(1/3\)；Llama 3 8B 的 MLP 还有意比“等参数”多约 30%。合起来，Llama 3 8B 约 80 亿参数，每生成一个 token 前向约 \(1.5\times 10^{10}\) 次运算（输入嵌入只是查表，不算乘法），写一段 1000 个 token 的回答约 \(1.5\times 10^{13}\) 次。另有一项不在 \(N\) 里：注意力分数 \(QK^\top\) 和“乘 V”没有参数，但计算量随上下文长度增长，上下文一长就不能忽略，推导见第 <a class="xref" data-ref="attention" data-hash="cost"></a> 章「代价」一节。</p>
+<details class="deep"><summary>每 token 的计算量为什么是 2N 和 6N</summary><div class="in">
+<p><b>第 1 步，前向。</b>线性层 \(\mathbf y = \mathbf x W\)，\(W\) 是 \(d_{\text{in}}\times d_{\text{out}}\)：\(\mathbf y\) 的每个分量要 \(d_{\text{in}}\) 次乘法和 \(d_{\text{in}}\) 次加法，共 \(2d_{\text{in}}d_{\text{out}}\) FLOPs，正好是“每个权重 2 次”。</p>
+<p><b>第 2 步，反向。</b>要算传给前一层的 \(\partial\mathcal L/\partial\mathbf x = (\partial\mathcal L/\partial\mathbf y)W^\top\) 和更新这一层的 \(\partial\mathcal L/\partial W = \mathbf x^\top\,\partial\mathcal L/\partial\mathbf y\)，各是一次同样大小的矩阵乘法。前向 2 + 反向 4 = 每个参数每个 token 6 FLOPs（<a class="xref" data-ref="nn-basics" data-full="1"></a>有更一般的推导）。</p>
+<p><b>这个推导告诉我们：</b>只要知道参数量和训练 token 数，就能估算训练成本，这是规模定律（第 <a class="xref" data-ref="scaling"></a> 章）的基础。</p>
+</div></details>
+
+<h2 id="modern" data-short="原版与今天">放回时间轴：2017 年的块和今天差在哪</h2>
+<p>到这里，块里每个部件都讲完了。2017 年的原版和今天的 Llama 类模型只差下面几处；最后一列是 2024 年以后少数前沿模型的新做法，未在本章讲的给了章节。</p>
+<div class="tablewrap"><table>
+  <tr><th>组件</th><th>原版（2017）</th><th>现代标准（2023 起）</th><th>2024–26 的新做法</th></tr>
+  <tr><td>归一化位置</td><td>Post-Norm</td><td>Pre-Norm</td><td>子层前后各一次（Gemma 2，2024）、子层输出归一化（OLMo 2，2024）</td></tr>
+  <tr><td>归一化方式</td><td>LayerNorm</td><td>RMSNorm</td><td>另给 q、k 加 QK-Norm（第 <a class="xref" data-ref="attention" data-hash="scale"></a> 章）</td></tr>
+  <tr><td>MLP</td><td>ReLU，稠密</td><td>SwiGLU，稠密</td><td>MoE 成为大模型标配；Kimi K3 给 SwiGLU 的两支加上界（SiTU-GLU）（第 <a class="xref" data-ref="moe"></a> 章）</td></tr>
+  <tr><td>位置编码</td><td>正弦，加在输入上</td><td>RoPE，作用于每层的 q、k</td><td>部分或全部全注意力层不用位置编码（NoPE）</td></tr>
+  <tr><td>注意力</td><td>多头（MHA）</td><td>GQA</td><td><span class="term" data-t="mla">MLA</span>（把 K、V 压成低维潜向量来缓存，只留一小部分维度做 RoPE，第 <a class="xref" data-ref="long-context"></a> 章）、门控注意力、与线性注意力混合</td></tr>
+  <tr><td>偏置项</td><td>有</td><td>去掉</td><td>同左</td></tr>
+  <tr><td>残差连接</td><td>单条残差流</td><td>单条残差流</td><td>多条残差流（mHC）、沿深度的注意力（Attention Residuals），见下一节</td></tr>
+</table></div>
+<p>表里有两项属于注意力内部，这里只说它们在块里的位置。<span class="term" data-t="qk-norm">QK-Norm</span> 在点积之前给每个头的 q、k 各做一次 RMSNorm，锁住分数的大小，是块里继两次 Pre-Norm 之后的第三处归一化（第 <a class="xref" data-ref="attention" data-hash="scale"></a> 章）。<span class="term" data-t="gated-attention">门控注意力</span>（Qwen 团队, 2025）在注意力输出乘 \(W_O\) 之前逐维乘一个 sigmoid 门，用来消除<span class="term" data-t="attention-sink">注意力汇</span>和可达 10 万倍的<span class="term" data-t="massive-activations">巨量激活</span>（第 <a class="xref" data-ref="attention" data-hash="sink"></a> 章）；Qwen3-Next（2025-09）和 Kimi K3 的 MLA 层都用了带门的版本。</p>
+
+<h2 id="residual-2026" data-short="残差也在被改">2026：连残差连接也开始改</h2>
+<p>块里只有一处在前沿模型里十年没动：把子层串起来的 \(\mathbf x + F(\mathbf x)\)。它有两个局限。一是带宽：所有层共用一条 \(d\) 维的残差流，前面写入的东西都挤在同一个空间里，后面的层只能读到等权相加的总和 \(\mathbf x_0 + \sum\Delta_j\)。二是 Pre-Norm 与 Post-Norm 的跷跷板：Pre-Norm 稳定但深层被稀释，Post-Norm 每层占比均衡但梯度没有恒等通路。字节跳动 2024 年的超连接（hyper-connections）想两头兼顾：把残差流扩成 \(n_s\) 条并行的流，每层用可学习的矩阵决定各条流怎样混合、子层从哪条读、写回哪条，让网络自己学“残差有多强”。2026 年的两个前沿模型沿两个方向改了残差：</p>
+<ul>
+  <li><b>DeepSeek 的 <dfn data-t="mhc">mHC</dfn></b>（流形约束超连接，manifold-constrained hyper-connections，2025-12 论文，用于 2026-04 发布的 DeepSeek V4）：在超连接的基础上加约束。不加约束时，层层相乘的混合矩阵会把信号放大到失控：论文报告 27B 模型中放大倍数达到约 3000 倍，训练在约 1.2 万步时损失突然飙升。mHC 把混合矩阵约束为<b>双随机矩阵</b>（元素非负、每行每列之和都为 1），这种矩阵不会放大信号，相乘之后仍是双随机矩阵。实际用 Sinkhorn 迭代只做有限次（论文 20 次），结果是近似双随机，所以实测最大放大约 1.6 倍，而不是严格的 1；\(n_s = 4\) 时额外开销约 6.7%。</li>
+  <li><b>Kimi 的 <dfn data-t="attn-res">Attention Residuals</dfn></b>（2026-03 论文，用于 2026-07 发布的 Kimi K3）：把等权相加 \(\mathbf x_0 + \sum_l F_l\)（「残差连接」一节的“总线”）改成每层用一个学到的查询向量，对之前各层的输出做 softmax 注意力，有选择地取用。它针对的正是 <span class="term" data-t="prenorm-dilution">PreNorm 稀释</span>。论文把残差连接看成“沿深度方向的 RNN”，这个改法就像当年用注意力替代 RNN。实用的分块版本（Block AttnRes）把层分成约 8 块、只对块的汇总做注意力，论文报告它达到基线多用 1.25 倍算力时的损失。一篇独立预印本分析学到的权重，发现早层多取嵌入、中层多取当前块，后层转向中间的块。</li>
+</ul>
+<p>两种改法的共同点：都保留了一条“总和不被放大也不被衰减”的通路，残差连接最初的那条直通路径。</p>
 <details class="deep"><summary>为什么双随机矩阵能保证稳定</summary><div class="in">
-<p>超连接把残差流写成 \(n\times d\) 的矩阵 \(X_l\)，更新为 \(X_{l+1} = H_l X_l + (\text{分支输出})\)，其中 \(H_l\) 是 \(n\times n\) 的混合矩阵。直通路径经过 \(L\) 层后是 \(H_{L-1}\cdots H_1H_0\)。若每个 \(H\) 的最大放大倍数是 1.2，60 层后就是 \(1.2^{60}\approx 5.6\times 10^4\)。</p>
-<p>双随机矩阵 \(H\)（\(H_{ij}\ge 0\)，\(\sum_j H_{ij} = \sum_i H_{ij} = 1\)）有两个性质：(1) 谱范数 \(\|H\|_2\le 1\)，它只能“混合”各条流，不能放大；(2) 两个双随机矩阵的乘积仍是双随机矩阵，所以任意多层的连乘也满足 (1)。\(n = 1\) 时它退化为标量 1，正是普通残差。mHC 用 Sinkhorn-Knopp 迭代（交替地把行和、列和归一化为 1）把任意正矩阵投影成近似双随机矩阵。</p>
-<p><b>这个推导告诉我们：</b>残差连接的本质要求是“直通路径不放大也不衰减”。普通残差用恒等矩阵满足它，mHC 在更大的一族矩阵里满足它，从而获得了更灵活的跨层信息流。</p>
+<p>超连接把残差流写成 \(n_s\times d\) 的矩阵 \(X_l\)，更新为 \(X_{l+1} = H_l X_l + (\text{分支输出})\)，其中 \(H_l\) 是 \(n_s\times n_s\) 的混合矩阵。直通路径经过 \(L\) 层后是 \(H_{L-1}\cdots H_1H_0\)。若每个 \(H\) 的最大放大倍数是 1.2，60 层后就是 \(1.2^{60}\approx 5.6\times 10^4\)。</p>
+<p>双随机矩阵 \(H\)（\(H_{ij}\ge 0\)，\(\sum_j H_{ij} = \sum_i H_{ij} = 1\)）有三个性质：(1) 谱范数 \(\|H\|_2\le 1\)，它只能“混合”各条流，不能放大；(2) 两个双随机矩阵的乘积仍是双随机矩阵，所以任意多层的连乘也满足 (1)；(3) 每列和为 1，即 \(\mathbf 1^\top H = \mathbf 1^\top\)，所以 \(\mathbf 1^\top X_{l+1} = \mathbf 1^\top X_l + \mathbf 1^\top(\text{分支输出})\)：各条流之和这一分量原样传下去，正是普通残差的恒等路径。其它分量（各条流之间的差异）只会被混合或缩小，例如 \(H = \tfrac12\mathbf 1\mathbf 1^\top\)（\(n_s = 2\)）就把差异 \((1,-1)\) 抹成 0。\(n_s = 1\) 时 \(H\) 退化为标量 1，正是普通残差。mHC 用 Sinkhorn-Knopp 迭代（交替地把行和、列和归一化为 1）把任意正矩阵投影成近似双随机矩阵。</p>
+<p><b>这个推导告诉我们：</b>双随机约束保证的是“不放大”，以及“各条流之和不放大也不衰减”；单条流之间的差异可以衰减。普通残差用恒等矩阵满足这一点，mHC 在更大的一族矩阵里满足它，从而获得更灵活的跨层信息流。</p>
 </div></details>
 <aside class="dispute">
   <h4>架构改动到底有多重要</h4>
   <dl>
     <dt>一种看法</dt><dd>规模和数据才是关键，架构细节影响很小。Narang 等（2021）在统一的代码库里测试了几十种 Transformer 改进，发现绝大多数无法稳定复现论文中的收益。</dd>
-    <dt>另一种看法</dt><dd>少数改动确实留了下来，并且在规模化后一直有效：Pre-Norm、SwiGLU、RoPE、GQA、MoE。2025–26 年的新结构仍在报告可观的收益：Block AttnRes 报告约 1.25 倍的等效算力；Kimi K3 技术报告称，混合线性注意力与 Attention Residuals 等改进合计带来约 2.5 倍的规模效率提升（相对 K2）。</dd>
+    <dt>另一种看法</dt><dd>少数改动确实留了下来，并且在规模化后一直有效：Pre-Norm、SwiGLU、RoPE、GQA、MoE。2025–26 年的新结构仍在报告收益：Block AttnRes 报告约 1.25 倍的等效算力。Kimi K3 技术报告称，KDA、AttnRes、Stable LatentMoE 等结构改动加上数据与训练配方的改进，合计让规模效率比 K2 提高约 2.5 倍，但这个数无法单独归因给架构。</dd>
     <dt>现在怎么看</dt><dd>大部分改动不值得做，但被大规模验证过的少数改动收益可观且会累积。判断一项改动要看它是否在多个规模、多个团队的实现中都成立，而不是一篇论文的单次结果。</dd>
   </dl>
 </aside>
 
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
-  <li><b class="m">现在的大模型是“编码器 + 解码器”的 Transformer。</b>GPT 系列、Llama、Qwen、DeepSeek、Kimi 都只有解码器。编码器-解码器结构主要留在翻译、语音识别等输入输出分明的任务里。</li>
   <li><b class="m">Transformer 的参数主要在注意力里。</b>MLP 约占每层参数的三分之二；用 GQA 后注意力占比更低。MoE 模型里 MLP（专家）占绝大部分。</li>
   <li><b class="m">每一层都把向量“改写”成新的表示。</b>Pre-Norm 结构下，每层只往残差流里<b>加</b>一个修改量，嵌入和前面各层写入的内容一直原样留在里面（「从零开始」的 \(\mathbf x' = \mathbf x + \mathbf a + \mathbf m\)）。“覆盖”只能靠专门写入相反数来实现。</li>
-  <li><b class="m">位置编码加在输入嵌入上。</b>那是 2017 年的做法。RoPE 在每一层的注意力内部旋转 q 和 k，value 和残差流里都没有位置编码。</li>
+  <li><b class="m">位置编码加在输入嵌入上。</b>那是 2017–2022 年的主流做法（GPT-2/3、OPT 都把可学习的位置向量加在输入上）。RoPE 在每一层的注意力内部旋转 q 和 k，value 和残差流里都没有位置编码。</li>
   <li><b class="m">用了 RoPE，模型就能处理任意长度。</b>超出训练长度后，低频平面会转到没见过的角度。需要调大 base 或插值，并在长文本上继续训练。</li>
 </ul>
 
 <h2 id="history">演进史</h2>
+<p>块的演进是两条互不依赖的线：残差与归一化管“能不能堆深”，位置编码管“知不知道顺序”。块内其它部件（ReLU 换 SwiGLU、去掉偏置、GQA）见上面的对照表。两条线在 2023 年的 LLaMA 配方里汇合：Pre-RMSNorm + SwiGLU + RoPE + 去偏置，经 PaLM（2022）、LLaMA（2023-02）大规模验证后，成为几乎所有开源模型的起点。</p>
+<h3 id="hist-res">线一：残差与归一化</h3>
 <div class="hist">
   <div class="hist-node">
     <div class="hist-date">2015–2016</div>
@@ -411,72 +336,114 @@
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>网络加深到几十层后，连训练集上的误差都变高：不是过拟合，是优化不动。BatchNorm 按批次统计均值方差，序列长度不一、逐个生成时都不好用。</dd>
       <dt>怎么解决</dt><dd>ResNet 让每层只学一个修改量、加回输入，梯度有了直通路径；LayerNorm 对每个位置的向量单独标准化，与批次无关。</dd>
-      <dt>代价</dt><dd>激活值随层数累加；归一化放在残差的哪一侧，后来证明影响很大。</dd>
-      <dt>引出</dt><dd>能不能完全不用循环，只用“注意力 + 前馈 + 残差 + 归一化”搭出序列模型？</dd>
+      <dt>代价</dt><dd>分支的贡献层层累加；归一化放在残差的哪一侧，后来证明影响很大。</dd>
+      <dt>引出</dt><dd>原版 Transformer 把两者都用上了。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt dead">被简化取代</span>Highway Networks（2015）</summary><div>同年稍早，用一个学到的门在“直通”和“变换”之间加权。ResNet 证明不需要门、直接相加就够了，而且更好训练。十年后，mHC 和 Attention Residuals 又以受约束的方式把“可学习的跨层混合”带了回来。</div></details>
+    <details class="hist-branch"><summary><span class="bt dead">被简化取代</span>Highway Networks（2015）</summary><div>同年稍早，用一个学到的门在“直通”和“变换”之间加权。ResNet 证明不需要门、直接相加就够了，而且更好训练。十年后，超连接、mHC 和 Attention Residuals 又以受约束的方式把“可学习的跨层混合”带了回来。</div></details>
   </div>
   <div class="hist-node">
     <div class="hist-date">2017-06</div>
-    <h4>原版 Transformer</h4>
+    <h4>原版 Transformer：Post-Norm</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>RNN 不能并行，远距离依赖难学（第 <a class="xref" data-ref="attention"></a> 章）。</dd>
-      <dt>怎么解决</dt><dd>注意力 + ReLU 前馈网络 + Post-LayerNorm + 正弦位置编码，编码器-解码器结构。</dd>
-      <dt>代价</dt><dd>Post-Norm 需要精心的学习率预热，深层难训；加法的位置编码把绝对位置混进分数，也难以外推。</dd>
+      <dt>怎么解决</dt><dd>注意力 + ReLU 前馈网络，每个子层之后“相加再归一化”，编码器、解码器各 6 层。</dd>
+      <dt>代价</dt><dd>要 4000 步学习率预热才训得稳，层数再多就难训。</dd>
       <dt>引出</dt><dd>怎样把它堆得更深、训得更稳？</dd>
     </dl>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2019–2020</div>
+    <div class="hist-date">2018–2020</div>
     <h4>Pre-Norm 成为默认</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>模型加深后 Post-Norm 经常发散。</dd>
-      <dt>怎么解决</dt><dd>GPT-2、T5 把归一化移到子层之前，并缩小残差分支的初始化；Xiong 等（2020）从理论上解释了为什么 Pre-Norm 可以不用预热。同期提出 RMSNorm。</dd>
+      <dt>怎么解决</dt><dd>翻译模型里先有人把归一化移到子层之前；GPT-2（2019，最大 48 层）把它带进语言模型，并把残差分支的初始化缩小 \(1/\sqrt{2L}\)；T5 同年用了只缩放、不减均值的归一化，即 RMSNorm 的形式。Xiong 等（2020）从理论上解释了为什么 Pre-Norm 可以不用预热。</dd>
       <dt>代价</dt><dd>残差流不再被归一化，深层的贡献被稀释。</dd>
-      <dt>引出</dt><dd>块内其它部件还能怎么改进？</dd>
+      <dt>引出</dt><dd>深层到底有没有被用上？</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt debate">另一条路</span>DeepNet（2022）与回归的 Post-Norm</summary><div>DeepNet 保留 Post-Norm，把残差放大、分支初始化缩小，训练出 1000 层的模型。2024–25 年 OLMo 2、Gemma 等又把一部分归一化放回子层输出，说明“Pre 还是 Post”并没有最终答案。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">另一条路</span>DeepNet（2022）：保留 Post-Norm</summary><div>把残差乘一个大于 1 的系数、分支初始化缩小，让直通路径占主导，训练出 1000 层的模型。</div></details>
+    <details class="hist-branch"><summary><span class="bt alive">部分保留</span>并行块（GPT-J 2021、PaLM 2022）</summary><div>把注意力和 MLP 并排计算、一起加回残差，PaLM 报告大规模下训练快约 15%，质量损失很小。多数后来的模型仍用串联结构。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2020–2023</div>
-    <h4>“LLaMA 配方”定型：RMSNorm + SwiGLU + RoPE</h4>
+    <div class="hist-date">2024–2025</div>
+    <h4>稀释被量化，归一化开始打补丁</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>各家用的组件五花八门，许多改进无法复现。</dd>
-      <dt>怎么解决</dt><dd>SwiGLU（2020）、RoPE（2021）经 PaLM（2022）、LLaMA（2023）大规模验证，与 Pre-RMSNorm、去掉偏置一起成为几乎所有开源模型的默认结构。</dd>
-      <dt>代价</dt><dd>结构趋同，差异转移到数据、训练方法和注意力变体上。</dd>
-      <dt>引出</dt><dd>上下文怎样从 4K 扩到 128K 以上？</dd>
-    </dl>
-    <details class="hist-branch"><summary><span class="bt dead">基本退出</span>可学习位置嵌入、T5 相对偏置、ALiBi</summary><div>可学习位置嵌入无法外推；T5 的分桶相对偏置计算不便；ALiBi（2021）外推性好，被 BLOOM、MPT 采用，但在长上下文扩展上不如 RoPE 灵活，2023 年后新模型基本都选了 RoPE。</div></details>
-    <details class="hist-branch"><summary><span class="bt alive">部分保留</span>并行块（GPT-J 2021、PaLM 2022）</summary><div>把注意力和 MLP 并排计算、一起加回残差，而不是先后串联，训练快约 15%。大模型上质量损失很小，但多数后来的模型仍用串联结构，少数（如 Cohere 的部分模型）保留了并行块。</div></details>
-  </div>
-  <div class="hist-node">
-    <div class="hist-date">2023–2025</div>
-    <h4>长上下文与数值稳定性的修补</h4>
-    <dl class="hist-why">
-      <dt>卡在哪</dt><dd>RoPE 超出训练长度就失效；规模变大后注意力分数和个别激活值失控。</dd>
-      <dt>怎么解决</dt><dd>位置插值、NTK、YaRN 和大 base 扩展上下文；QK-Norm 锁住分数的大小；门控注意力去掉注意力汇和巨量激活；夹心归一化稳定训练；DeepSeek-V3 加入多 token 预测（MTP）。</dd>
-      <dt>代价</dt><dd>块越来越复杂，各种修补相互作用，难以单独归因。</dd>
-      <dt>引出</dt><dd>能不能从根本上改结构，而不只是打补丁？</dd>
+      <dt>卡在哪</dt><dd>Gromov 等（2024）删掉后部近一半的层性能下降很小；Sun 等（2025）把原因归到 Pre-Norm 的残差流增长。</dd>
+      <dt>怎么解决</dt><dd>Gemma 2（2024-06）在子层前后各放一次归一化，OLMo 2（2024-11）把归一化移到子层输出上；Sun 等提出按 \(1/\sqrt l\) 缩放归一化输出。</dd>
+      <dt>代价</dt><dd>只是在归一化的位置上折中，残差的等权求和没变。</dd>
+      <dt>引出</dt><dd>能不能改残差连接本身？</dd>
     </dl>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2025–2026</div>
-    <h4>重新审视深度方向</h4>
+    <div class="hist-date">2024-09 – 2026</div>
+    <h4>改残差本身：超连接、mHC、Attention Residuals</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>Pre-Norm 让深层贡献被稀释；单条残差流限制了跨层信息传递。</dd>
-      <dt>怎么解决</dt><dd>部分或全部全注意力层去掉位置编码（Llama 4、Kimi Linear 等）；mHC 多残差流（DeepSeek V4）；Attention Residuals 沿深度做注意力（Kimi K3）；注意力层与线性注意力层混合（第 <a class="xref" data-ref="long-context"></a> 章）。</dd>
+      <dt>卡在哪</dt><dd>单条残差流是 \(d\) 维的带宽瓶颈，等权求和让深层被稀释。</dd>
+      <dt>怎么解决</dt><dd>超连接（2024-09）把残差流扩成多条；mHC（2025-12，DeepSeek V4）用双随机约束管住放大；Attention Residuals（2026-03，Kimi K3）沿深度做注意力。</dd>
       <dt>代价</dt><dd>额外的显存和通信开销，需要专门的内核和并行策略配合。</dd>
-      <dt>引出</dt><dd>块已经搭好，模型怎样用它一个 token 一个 token 地生成文本？</dd>
+      <dt>引出</dt><dd>仍在发展，见上一节。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt debate">重新兴起</span>循环使用同一组层（looped Transformer）</summary><div>Universal Transformer（2018）和 ALBERT（2019）让多层共享参数，当时没有成为主流。2025 年它以“循环深度”的形式回归：让同一组层反复计算多次，用推理时的额外计算换取更好的推理能力（如 Huginn、Ouro，以及在 ARC 上表现突出的小型递归模型）。能否在大模型上取代“多算几步思维链”，仍有争论（第 <a class="xref" data-ref="reasoning"></a> 章）。</div></details>
+    <details class="hist-branch"><summary><span class="bt debate">重新兴起</span>循环使用同一组层（looped Transformer）</summary><div>Universal Transformer（2018）和 ALBERT（2019）让多层共享参数，当时没有成为主流。2025 年它以“循环深度”的形式回归：让同一组层反复计算多次，用推理时的额外计算换取更好的推理能力（如 Huginn、Ouro，以及在 ARC 上表现突出的小型递归模型 HRM、TRM）。能否在大模型上取代“多算几步思维链”，仍有争论（第 <a class="xref" data-ref="reasoning"></a> 章）。</div></details>
+  </div>
+</div>
+<h3 id="hist-pos">线二：位置编码</h3>
+<div class="hist">
+  <div class="hist-node">
+    <div class="hist-date">2017-06</div>
+    <h4>正弦编码，加在输入上</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>注意力是置换等变的，不知道顺序。</dd>
+      <dt>怎么解决</dt><dd>每个位置一个固定的正弦向量，加到嵌入上；GPT、BERT 改用可学习的位置向量。</dd>
+      <dt>代价</dt><dd>绝对位置混进注意力分数；可学习的位置向量不能外推。</dd>
+      <dt>引出</dt><dd>位置能不能只以“相对距离”进入分数？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2019–2021</div>
+    <h4>相对位置偏置：T5、ALiBi</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>同上。</dd>
+      <dt>怎么解决</dt><dd>直接给分数加一个只依赖距离的标量：T5 分桶查表，ALiBi 随距离线性变负。</dd>
+      <dt>代价</dt><dd>位置与内容不能相互作用；T5 的查表在实现上偏慢。</dd>
+      <dt>引出</dt><dd>能不能既只看相对位置、又和内容相乘？</dd>
+    </dl>
+    <details class="hist-branch"><summary><span class="bt dead">基本退出</span>T5 偏置、ALiBi、可学习位置嵌入</summary><div>Transformer-XL（2019-01）、XLNet（2019-06）更早用过相对位置的写法。ALiBi 外推性好，被 BLOOM、MPT 采用，但在长上下文扩展上不如 RoPE 灵活，2023 年后新模型基本都选了 RoPE。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2021-04</div>
+    <h4>RoPE：用旋转编码位置</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>同上。</dd>
+      <dt>怎么解决</dt><dd>按位置旋转 q、k，分数只依赖相对位置且与内容相乘；没有额外参数。PaLM、LLaMA 之后成为标准。</dd>
+      <dt>代价</dt><dd>训练长度之外，低频平面转到没见过的角度。</dd>
+      <dt>引出</dt><dd>上下文怎样扩到训练长度之外？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2023–2024</div>
+    <h4>改频率扩上下文：插值、NTK、YaRN、大 base</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>训练 4K 的模型推到更长就乱。</dd>
+      <dt>怎么解决</dt><dd>位置插值、NTK 缩放、YaRN 都只改 RoPE 的频率；Llama 3 把 base 调到 50 万，配合分阶段的长文本训练（第 <a class="xref" data-ref="long-context"></a> 章）。</dd>
+      <dt>代价</dt><dd>每扩一次都要重新调频率、再训一段。</dd>
+      <dt>引出</dt><dd>能不能干脆少用显式的位置编码？</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2022–2026</div>
+    <h4>NoPE 与混合</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>Haviv 等（2022）、Kazemnejad 等（2023）发现因果掩码本身就泄露位置，去掉位置编码只略差、外推更好。</dd>
+      <dt>怎么解决</dt><dd>Llama 4（2025）、SmolLM3 让部分层不用 RoPE；Kimi Linear（2025-10）、Kimi K3（2026-07）的全注意力层一律不用，位置交给线性注意力层。</dd>
+      <dt>代价</dt><dd>纯 NoPE 在大规模下仍吃亏，必须和带顺序的层混合。</dd>
+      <dt>引出</dt><dd>仍在发展。</dd>
+    </dl>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. Llama 3 8B：\(d = 4096\)，32 层，32 个 Q 头、8 个 KV 头（每头 128 维），SwiGLU 中间维度 14336，词表 128256，输入输出嵌入不共享。估算总参数量。</summary><div class="ans">每层注意力：\(W_Q\) 与 \(W_O\) 各 \(4096^2\approx 16.8\)M；\(W_K, W_V\) 各 \(4096\times 1024\approx 4.2\)M；合计约 41.9M。每层 MLP：\(3\times 4096\times 14336\approx 176.2\)M。每层约 218M，32 层约 6.98B。嵌入和输出层：\(2\times 128256\times 4096\approx 1.05\)B。总计约 8.03B。</div></details>
+<details class="quiz"><summary>1. Llama 3 8B：\(d = 4096\)，32 层，32 个 Q 头、8 个 KV 头（每头 128 维），SwiGLU 中间维度 14336，词表 128256，输入输出嵌入不共享。估算总参数量。</summary><div class="ans">每层注意力：\(W_Q\) 与 \(W_O\) 各 \(4096^2\approx 16.8\)M；8 个 KV 头共 \(8\times128 = 1024\) 维，\(W_K, W_V\) 各 \(4096\times 1024\approx 4.2\)M；合计约 41.9M。每层 MLP：\(3\times 4096\times 14336\approx 176.2\)M。每层约 218M，32 层约 6.98B。嵌入和输出层：\(2\times 128256\times 4096\approx 1.05\)B。总计约 8.03B。</div></details>
 <details class="quiz"><summary>2. RoPE 为什么只旋转 query 和 key，不旋转 value？</summary><div class="ans">位置只需要影响“看谁”，也就是注意力分数 \(\mathbf q\cdot\mathbf k\)；旋转 q、k 正好让分数只依赖相对位置。value 是被搬运的内容，如果也按位置旋转，输出里就混入了绝对位置，不同位置搬来的内容方向各异，后续层更难使用，也失去了“只依赖相对位置”的性质。</div></details>
-<details class="quiz"><summary>3. 一个 7B 的稠密模型在 2 万亿 token 上训练，大约需要多少 FLOPs？如果一块 GPU 实际能跑 400 TFLOPS，需要多少 GPU·天？</summary><div class="ans">\(6\times 7\times 10^9\times 2\times 10^{12} = 8.4\times 10^{22}\) FLOPs。单卡每天 \(4\times 10^{14}\times 86400\approx 3.5\times 10^{19}\) FLOPs，约需 \(8.4\times 10^{22}/3.5\times 10^{19}\approx 2400\) GPU·天，例如 256 块 GPU 跑约 9 天。</div></details>
-<details class="quiz"><summary>4. 动手算：用 SwiGLU 的“参数量不变”规则，估算 Llama 2 13B（\(d = 5120\)）的 MLP 中间维度（向上取到 256 的倍数），并比较它每层 MLP 的参数量与原版 \(4d\) 的两矩阵 MLP。</summary><div class="ans">\(\tfrac83\times 5120\approx 13653\)，\(13653/256\approx 53.3\)，向上取整到 54，\(54\times 256 = 13824\)，与 Llama 2 13B 的实际配置一致。SwiGLU：\(3\times 5120\times 13824\approx 2.12\) 亿；原版：\(2\times 5120\times 20480\approx 2.10\) 亿。取整只多了约 1%。</div></details>
+<details class="quiz"><summary>3. 把「从零开始」的玩具块从 Pre-Norm 换成 Post-Norm，嵌入向量 \(\mathbf x_0 = (2, 0, -1, 1)\) 还会原样留在这个块的输出里吗？堆 48 层之后呢？</summary><div class="ans">不会。Post-Norm 每个子层之后都对整个向量归一化：第一个子层就把 \(\mathbf x + \mathbf a\) 整体除以 1.31，\(\mathbf x\) 只以缩小后的形式存在。若每层写入与残差流大小相当，嵌入的占比每个子层约缩小 \(1/\sqrt 2\)，48 层（96 个子层）后约 \(2^{-48}\)，几乎被冲掉。Pre-Norm 下残差流只做加法，\(\mathbf x_0\) 原样留到最后，输出层读到的是 \(\mathbf x_0 + \sum\Delta_j\)；它的绝对大小不变，只是相对份额随残差流变长而下降。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
@@ -490,7 +457,7 @@
 
 <div class="nextq">现在有了完整的模型：输入一串 token，输出下一个 token 的概率分布。但一个概率分布还不是一段文字。模型怎样用它一个一个地生成 token？训练时为什么用交叉熵？温度、top-p 这些采样参数改变的是什么？下一章（第 <a class="xref" data-ref="generation"></a> 章）。</div>
 
-<p class="src">资料：<a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a> · <a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf">GPT-2</a> · <a href="https://arxiv.org/abs/1910.10683">T5</a> · <a href="https://arxiv.org/abs/2108.12409">ALiBi</a> · <a href="https://arxiv.org/abs/2302.13971">LLaMA</a> · <a href="https://arxiv.org/abs/1607.06450">LayerNorm</a> · <a href="https://arxiv.org/abs/1910.07467">RMSNorm</a> · <a href="https://arxiv.org/abs/2002.05202">GLU Variants Improve Transformer</a> · <a href="https://arxiv.org/abs/1605.06431">Veit 等 2016（残差网络如浅网络集成）</a> · <a href="https://arxiv.org/abs/2004.08249">Liu 等 2020（Understanding the Difficulty of Training Transformers）</a> · <a href="https://arxiv.org/abs/2202.05262">ROME</a> · <a href="https://arxiv.org/abs/2301.04213">Does Localization Inform Editing?</a> · <a href="https://arxiv.org/abs/2203.16634">Haviv 等 2022（NoPE）</a> · <a href="https://arxiv.org/abs/2305.19466">Kazemnejad 等 2023</a> · <a href="https://arxiv.org/abs/2306.15595">Position Interpolation</a> · <a href="https://arxiv.org/abs/2309.00071">YaRN</a> · <a href="https://arxiv.org/abs/2403.17887">Gromov 等 2024（深层冗余）</a> · <a href="https://arxiv.org/abs/2502.05795">The Curse of Depth in LLMs</a> · <a href="https://arxiv.org/abs/2501.00656">OLMo 2</a> · <a href="https://arxiv.org/abs/2102.11972">Narang 等 2021</a> · <a href="https://arxiv.org/abs/2302.05442">ViT-22B（QK 归一化）</a> · <a href="https://arxiv.org/abs/2309.14322">Wortsman 等 2023（小规模复现训练不稳定）</a> · <a href="https://arxiv.org/abs/2402.17762">Massive Activations in LLMs</a> · <a href="https://arxiv.org/abs/2503.19786">Gemma 3 技术报告</a> · <a href="https://arxiv.org/abs/2505.09388">Qwen3 技术报告</a> · <a href="https://arxiv.org/abs/2505.06708">Gated Attention for LLMs</a> · <a href="https://arxiv.org/abs/2409.19606">Hyper-Connections</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://github.com/MoonshotAI/Attention-Residuals">Attention Residuals 代码</a> · <a href="https://arxiv.org/abs/2510.26692">Kimi Linear</a> · <a href="https://arxiv.org/abs/2607.24653">Kimi K3 技术报告</a> · <a href="https://sebastianraschka.com/blog/2026/kimi-k3-architecture-notes.html">Raschka：Kimi K3 架构笔记（NoPE、门控 MLA）</a> · <a href="https://arxiv.org/abs/2606.22325">All Routes Lead to Collapse（AttnRes 分析）</a>。</p>
+<p class="src">资料：<a href="https://arxiv.org/abs/1706.03762">Attention Is All You Need</a> · <a href="https://cdn.openai.com/better-language-models/language_models_are_unsupervised_multitask_learners.pdf">GPT-2</a> · <a href="https://arxiv.org/abs/1910.10683">T5</a> · <a href="https://arxiv.org/abs/2108.12409">ALiBi</a> · <a href="https://arxiv.org/abs/2302.13971">LLaMA</a> · <a href="https://arxiv.org/abs/1607.06450">LayerNorm</a> · <a href="https://arxiv.org/abs/1910.07467">RMSNorm</a> · <a href="https://arxiv.org/abs/2002.05202">GLU Variants Improve Transformer</a> · <a href="https://arxiv.org/abs/1605.06431">Veit 等 2016（残差网络如浅网络集成）</a> · <a href="https://arxiv.org/abs/2004.08249">Liu 等 2020（Understanding the Difficulty of Training Transformers）</a> · <a href="https://arxiv.org/abs/2202.05262">ROME</a> · <a href="https://arxiv.org/abs/2301.04213">Does Localization Inform Editing?</a> · <a href="https://arxiv.org/abs/2203.16634">Haviv 等 2022（NoPE）</a> · <a href="https://arxiv.org/abs/2305.19466">Kazemnejad 等 2023</a> · <a href="https://arxiv.org/abs/2306.15595">Position Interpolation</a> · <a href="https://arxiv.org/abs/2309.00071">YaRN</a> · <a href="https://arxiv.org/abs/2403.17887">Gromov 等 2024（深层冗余）</a> · <a href="https://arxiv.org/abs/2502.05795">The Curse of Depth in LLMs</a> · <a href="https://arxiv.org/abs/2501.00656">OLMo 2</a> · <a href="https://arxiv.org/abs/2102.11972">Narang 等 2021</a> · <a href="https://arxiv.org/abs/2302.05442">ViT-22B（QK 归一化）</a> · <a href="https://arxiv.org/abs/2309.14322">Wortsman 等 2023（小规模复现训练不稳定）</a> · <a href="https://arxiv.org/abs/2402.17762">Massive Activations in LLMs</a> · <a href="https://arxiv.org/abs/2503.19786">Gemma 3 技术报告</a> · <a href="https://arxiv.org/abs/2505.09388">Qwen3 技术报告</a> · <a href="https://arxiv.org/abs/2505.06708">Gated Attention for LLMs</a> · <a href="https://arxiv.org/abs/2409.19606">Hyper-Connections</a> · <a href="https://arxiv.org/abs/2606.19348">DeepSeek-V4 技术报告</a> · <a href="https://github.com/MoonshotAI/Attention-Residuals">Attention Residuals 代码</a> · <a href="https://arxiv.org/abs/2510.26692">Kimi Linear</a> · <a href="https://arxiv.org/abs/2607.24653">Kimi K3 技术报告</a> · <a href="https://sebastianraschka.com/blog/2026/kimi-k3-architecture-notes.html">Raschka：Kimi K3 架构笔记（NoPE、门控 MLA）</a> · <a href="https://arxiv.org/abs/2606.22325">All Routes Lead to Collapse（AttnRes 分析）</a> · <a href="https://cdn.openai.com/research-covers/language-unsupervised/language_understanding_paper.pdf">GPT-1</a> · <a href="https://arxiv.org/abs/2204.02311">PaLM</a> · <a href="https://arxiv.org/abs/2407.21783">Llama 3</a> · <a href="https://ai.meta.com/blog/llama-4-multimodal-intelligence/">Llama 4（iRoPE）</a> · <a href="https://huggingface.co/blog/smollm3">SmolLM3</a> · <a href="https://huggingface.co/Qwen/Qwen3-Next-80B-A3B-Instruct">Qwen3-Next</a> · <a href="https://arxiv.org/abs/2502.05171">Huginn（循环深度）</a> · <a href="https://arxiv.org/abs/2510.25741">Ouro</a> · <a href="https://arxiv.org/abs/2510.04871">TRM（小型递归模型）</a> · <a href="https://arxiv.org/abs/2202.08791">DeepNet</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

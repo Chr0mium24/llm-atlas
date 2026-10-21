@@ -1,6 +1,6 @@
 /* rope — interactive demo (moved from ch03-transformer.html) */
 A.defineDemo('rope', function (mount) {
-  const { bd } = A.demo(mount, 'RoPE：旋转之后，点积只看相对距离', '头维度 d = 64，共 32 个旋转平面');
+  const { bd } = A.demo(mount, 'RoPE：旋转之后，点积只看相对距离', '头维度 d_h = 64，共 32 个旋转平面');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const D = 64;
   const mS = A.slider(ctl, { label: 'q 的位置 m', min: 0, max: 64, step: 1, value: 10, fmt: (v) => v, on: draw, width: 170 });
@@ -48,7 +48,7 @@ A.defineDemo('rope', function (mount) {
   });
   const v2 = A.canvas(cv2, { aspect: 0.85 }, (ctx, W, H) => {
     const box = { x: 44, y: 22, w: W - 60, h: H - 64 };
-    const ax = A.axes(ctx, box, { xmin: 1, xmax: 1e6, xlog: true, ymin: -0.2, ymax: 1, xfmt: (v) => A.human(v, 0), yfmt: (v) => v.toFixed(1), xlabel: '相对距离 |m−n|', ylabel: '平均 cos(Δ·θᵢ)', ylabelOffset: 40, xgrid: true });
+    const ax = A.axes(ctx, box, { xmin: 1, xmax: 1e6, xlog: true, ymin: -0.4, ymax: 1, xfmt: (v) => A.human(v, 0), yfmt: (v) => v.toFixed(1), xlabel: '相对距离 |m−n|', ylabel: '平均 cos(Δ·θᵢ)', ylabelOffset: 40, xgrid: true });
     const curve = (base, color, w) => {
       ctx.strokeStyle = color; ctx.lineWidth = w; ctx.beginPath();
       for (let p = 0; p <= 400; p++) {

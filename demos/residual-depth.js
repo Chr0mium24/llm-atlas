@@ -6,9 +6,8 @@ A.defineDemo('residual-depth', function (mount) {
   const MATS = Array.from({ length: LMAX }, () => Array.from({ length: D * D }, () => A.gauss(r) / Math.sqrt(D)));
   const G0 = (() => { const g = Array.from({ length: D }, () => A.gauss(r)); const n = Math.hypot(...g); return g.map((x) => x / n); })();
   const BR = Array.from({ length: LMAX }, () => { const v = Array.from({ length: 64 }, () => A.gauss(r)); const n = Math.hypot(...v); return v.map((x) => x / n); });
-  let view = 'grad', mode = 'res-scaled';
+  let view = 'grad', mode = 'res';  // the Pre-Norm dilution page now lives in transformer-prepost; view stays 'grad'
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
-  A.seg(ctl, [{ v: 'grad', t: '梯度能传多远' }, { v: 'prenorm', t: 'Pre-Norm 的副作用' }], view, (v) => { view = v; sync(); }, '看什么');
   const modeWrap = A.el('div'); ctl.append(modeWrap);
   A.seg(modeWrap, [{ v: 'plain', t: '直接堆叠' }, { v: 'res', t: '加残差' }, { v: 'res-scaled', t: '残差 + 分支缩小' }], mode, (v) => { mode = v; draw(); }, '结构');
   const LS = A.slider(ctl, { label: '层数 L', min: 4, max: LMAX, step: 1, value: 48, fmt: (v) => v, on: () => draw(), width: 170 });
@@ -54,7 +53,7 @@ A.defineDemo('residual-depth', function (mount) {
         const g = grads(m, L, sig), on = m === mode;
         ctx.strokeStyle = on ? cols[MODES[m].c] : A.alpha(cols[MODES[m].c], 0.3); ctx.lineWidth = on ? 3 : 1.5;
         ctx.beginPath(); g.forEach((v, l) => (l ? ctx.lineTo(ax.X(l), yc(v)) : ctx.moveTo(ax.X(l), yc(v)))); ctx.stroke();
-        A.text(ctx, MODES[m].n, ax.X(0) + 6, yc(g[0]) + (m === 'plain' ? 12 : -10), { size: 12, color: on ? cols[MODES[m].c] : A.css('--muted'), weight: on ? 700 : 400 });
+        A.text(ctx, MODES[m].n + (g[0] > 1e8 ? '（超出 10⁸，已截断）' : g[0] < 1e-8 ? '（低于 10⁻⁸，已截断）' : ''), ax.X(0) + 6, yc(g[0]) + (m === 'plain' ? 12 : -10), { size: 12, color: on ? cols[MODES[m].c] : A.css('--muted'), weight: on ? 700 : 400 });
       });
       A.text(ctx, '← 梯度从最后一层往回传', box.x + box.w - 4, box.y + 6, { size: 12, align: 'right', color: A.css('--muted') });
     } else {
@@ -77,7 +76,7 @@ A.defineDemo('residual-depth', function (mount) {
         const g = grads(m, L, sig);
         stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, MODES[m].n + '：第 1 层的梯度'), A.el('div', { class: 'v', style: { color: m === mode ? cols[MODES[m].c] : '' } }, A.sci(g[0]))));
       });
-      hint.innerHTML = `每一层把梯度乘上一个随机矩阵（典型放大倍数 σ）。<b>直接堆叠</b>：${L} 层连乘的量级约为 σ<sup>${L}</sup> = ${A.sci(Math.pow(sig, L))}，σ 稍小于 1 梯度就消失，稍大于 1 就爆炸。<b>加残差</b>：每层的雅可比变成 I + J，恒等项保证梯度至少有一条直通的路；但分支本身没有缩小时，每层都在“1”的基础上再加一份，梯度仍会慢慢变大。<b>残差 + 分支缩小</b>：把每个分支的输出乘 1/√(2L)（GPT-2 初始化的做法），所有层加起来的扰动有界，梯度稳定在 1 附近，与层数几乎无关。`;
+      hint.innerHTML = `每一层把梯度乘上一个随机矩阵（典型放大倍数 σ）。<b>直接堆叠</b>：${L} 层连乘的量级约为 σ<sup>${L}</sup> = ${A.sci(Math.pow(sig, L))}，σ 稍小于 1 梯度就消失，稍大于 1 就爆炸。<b>加残差</b>：每层的雅可比变成 I + J，恒等项保证梯度至少有一条直通的路；但分支本身没有缩小时，每层把梯度乘上约 √(1+σ²)，${L} 层后约为 (1+σ²)<sup>${L}/2</sup> = ${A.sci(Math.pow(1 + sig * sig, L / 2))}：直通项保证梯度不消失，却挡不住所有分支路径加起来的指数增长。<b>残差 + 分支缩小</b>：把每个分支的输出乘 1/√(2L)（GPT-2 初始化的做法），所有层加起来的扰动有界，梯度稳定在 1 附近，与层数几乎无关。`;
     } else {
       const { rel, nrm } = prenorm(L, CS.value);
       [['第 1 层的占比', A.pct(rel[0], 0)], [`第 ${L} 层的占比`, A.pct(rel[L - 1], 0)], ['残差流长度增长', '×' + (nrm[L - 1] / nrm[0]).toFixed(1)]].forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, v))));

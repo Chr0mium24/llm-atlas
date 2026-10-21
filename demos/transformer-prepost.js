@@ -1,7 +1,7 @@
 /* transformer-prepost — Pre-Norm vs Post-Norm at initialization: how the gradient travels through depth (total vs identity-path-only) and how large each layer's parameter gradient is; real LayerNorm forward/backward on a toy residual MLP stack */
 A.defineDemo('transformer-prepost', function (mount) {
-  const { bd } = A.demo(mount, 'Pre-Norm 与 Post-Norm：梯度怎样穿过很多层', '玩具：d = 32，每个子层是随机初始化的两层 ReLU 网络（不含注意力），归一化用真实的 LayerNorm；曲线都是逐层反向传播算出来的，16 个随机输入取平均');
-  const D = 32, LMAX = 96, NB = 16;
+  const { bd } = A.demo(mount, 'Pre-Norm 与 Post-Norm：梯度怎样穿过很多层', '玩具：d = 32，每个子层是随机初始化的两层 ReLU 网络（不含注意力），归一化用真实的 LayerNorm；曲线都是逐层反向传播算出来的，64 个随机输入取平均');
+  const D = 32, LMAX = 96, NB = 64;
   const r = A.rng(11);
   const W1 = [], W2 = [];
   for (let l = 0; l < LMAX; l++) {
@@ -53,10 +53,21 @@ A.defineDemo('transformer-prepost', function (mount) {
     const pg = G1.map((M1, l) => { let s = 0; for (const v of M1) s += v * v; for (const v of G2[l]) s += v * v; return Math.sqrt(s) / NB; });
     return (memo[key] = { ag, dir, pg });
   }
-  let view = 'act';
+  // Pre-Norm dilution: x_{l+1} = x_l + c·u_l with |x_0| = 1 and random unit directions u_l; share = c / |x_{l+1}| (length after the add, same definition as Post-Norm's c/√(1+c²))
+  const r2 = A.rng(7), DD = 64;
+  const unit = () => { const v = Array.from({ length: DD }, () => A.gauss(r2)); const n = Math.hypot(...v); return v.map((x) => x / n); };
+  const U0 = unit(), BR = Array.from({ length: LMAX }, unit);
+  function dilution(L, c) {
+    const x = U0.slice(), rel = [], nrm = [1];
+    for (let l = 0; l < L; l++) { for (let i = 0; i < DD; i++) x[i] += c * BR[l][i]; const n = Math.hypot(...x); rel.push(c / n); nrm.push(n); }
+    return { rel, nrm };
+  }
+  let view = 'param';
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
-  A.seg(ctl, [{ v: 'act', t: '传到每层的梯度' }, { v: 'param', t: '每层参数的梯度' }], view, (v) => { view = v; draw(); }, '看什么');
+  A.seg(ctl, [{ v: 'param', t: '每层参数的梯度' }, { v: 'act', t: '传到每层的梯度' }, { v: 'dil', t: 'Pre-Norm 的稀释' }], view, (v) => { view = v; sync(); }, '看什么');
   const LS = A.slider(ctl, { label: '层数 L', min: 4, max: LMAX, step: 1, value: 24, fmt: (v) => v, on: A.debounce(() => draw(), 40), width: 200 });
+  const CS = A.slider(ctl, { label: '每层写入的大小 c', min: 0.2, max: 2, step: 0.05, value: 1, fmt: (v) => v.toFixed(2), on: () => draw(), width: 190 });
+  function sync() { CS.el.style.display = view === 'dil' ? '' : 'none'; draw(); }
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   const legend = A.el('div', { class: 'legend' }); bd.append(legend);
@@ -66,8 +77,18 @@ A.defineDemo('transformer-prepost', function (mount) {
   let hover = null;
   const view_ = A.canvas(cv, { aspect: 0.46 }, (ctx, W, H) => {
     const L = Math.round(LS.value), cols = A.series();
-    const po = run('post', L), pr = run('pre', L);
     const box = { x: 58, y: 26, w: W - 76, h: H - 66 };
+    if (view === 'dil') {
+      const c = CS.value, { rel } = dilution(L, c), post = c / Math.sqrt(1 + c * c);
+      const ax = A.axes(ctx, box, { xmin: 0, xmax: L, ymin: 0, ymax: 1, yfmt: (v) => v.toFixed(1), xlabel: '层号 l', ylabel: '这一层写入的量 ÷ 写入后残差流的长度', ylabelOffset: 50 });
+      const bw = Math.max(1, box.w / L - 1.5);
+      rel.forEach((v, l) => A.bar(ctx, ax.X(l + 0.5) - bw / 2, ax.Y(v), bw, ax.Y(0) - ax.Y(v), A.alpha(cols[0], 0.75), 2));
+      ctx.save(); ctx.strokeStyle = cols[1]; ctx.lineWidth = 2.5; ctx.beginPath(); ctx.moveTo(box.x, ax.Y(post)); ctx.lineTo(box.x + box.w, ax.Y(post)); ctx.stroke(); ctx.restore();
+      A.text(ctx, 'Post-Norm：每层之后重新归一化，占比不变', box.x + box.w - 4, ax.Y(post) - 10, { size: 12, align: 'right', color: cols[1], weight: 600 });
+      A.text(ctx, 'Pre-Norm 柱：占比 ≈ c / √(1 + l·c²)', box.x + box.w - 4, box.y + 8, { size: 12, align: 'right', color: cols[0], weight: 600 });
+      return;
+    }
+    const po = run('post', L), pr = run('pre', L);
     if (view === 'act') {
       const lo = Math.min(...po.dir, ...pr.ag), ymin = A.clamp(Math.pow(10, Math.floor(Math.log10(lo))), 1e-8, 1e-1);
       const ax = A.axes(ctx, box, { xmin: 0, xmax: L, ymin, ymax: 1e2, ylog: true, yfmt: (v) => (v === 1 ? '1' : sup(Math.round(Math.log10(v)))), xlabel: '层号（0 = 输入端，' + L + ' = 输出端）', ylabel: '梯度大小 |∂ℒ/∂xₗ|', ylabelOffset: 50 });
@@ -103,23 +124,30 @@ A.defineDemo('transformer-prepost', function (mount) {
   cv.addEventListener('mouseleave', () => { hover = null; view_.redraw(); });
   function draw() {
     const L = Math.round(LS.value), cols = A.series();
-    const po = run('post', L), pr = run('pre', L);
     stats.innerHTML = '';
     const st = (k, v, c) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: c ? { color: c } : null }, v)));
+    if (view === 'dil') {
+      const { rel, nrm } = dilution(L, CS.value);
+      st('第 1 层的占比', A.pct(rel[0], 0), cols[0]); st(`第 ${L} 层的占比`, A.pct(rel[L - 1], 0), cols[0]); st('残差流长度', '×' + nrm[L].toFixed(1));
+      legend.innerHTML = `<span><i class="line" style="background:${cols[0]}"></i>Pre-Norm（柱）</span><span><i class="line" style="background:${cols[1]}"></i>Post-Norm</span>`;
+      hint.innerHTML = '玩具模型：残差流起点长度为 1，每层沿一个随机方向写入大小为 c 的向量（Pre-Norm 的分支看到的是归一化后的输入，输出大小大致固定）。残差流本身从不归一化，在写入方向互不相关的理想情况下，长度按 √(1 + l·c²) 增长，于是越深的层写入的内容占比越小。Post-Norm 每层之后重新归一化，占比保持 c/√(1 + c²)，但它没有恒等的直通路径。真实模型里残差流可能增长得更快（Sun 等, 2025）。';
+      view_.redraw(); return;
+    }
+    const po = run('post', L), pr = run('pre', L);
     if (view === 'act') {
       st('Post-Norm：输入端的总梯度', fmt(po.ag[0]), cols[1]);
       st('Post-Norm：只走直通路径', fmt(po.dir[0]), cols[1]);
       st('Pre-Norm：输入端的总梯度', fmt(pr.ag[0]), cols[0]);
       legend.innerHTML = `<span><i class="line" style="background:${cols[1]}"></i>Post-Norm 总梯度</span><span><i class="line" style="background:repeating-linear-gradient(90deg,${cols[1]} 0 6px,transparent 6px 10px)"></i>Post-Norm 只走直通路径</span><span><i class="line" style="background:${cols[0]}"></i>Pre-Norm 总梯度</span><span><i class="line" style="background:repeating-linear-gradient(90deg,${cols[0]} 0 6px,transparent 6px 10px)"></i>Pre-Norm 只走直通路径（恒等，不衰减）</span>`;
-      hint.innerHTML = `虚线只保留“直通”那一条路：Post-Norm 每层都要穿过一次归一化，${L} 层后只剩 ${fmt(po.dir[0])}，与“输出端梯度 × (1/√2)<sup>${L}</sup>”= ${fmt(po.ag[L] * Math.pow(0.5, L / 2))} 同一量级；Pre-Norm 的直通路径是恒等映射，原样到达输入端。可是 Post-Norm 的<b>总</b>梯度（实线）并没有消失：分支也在传梯度，随机初始化时每层分支的放大正好抵消归一化的缩小。区别在于 Post-Norm 的梯度全靠分支传递，没有兜底；Pre-Norm 至少有输出端那一份。`;
+      hint.innerHTML = `虚线只保留“直通”那一条路：Post-Norm 每层都要穿过一次归一化，${L} 层后只剩 ${fmt(po.dir[0])}，与“输出端梯度 × (1/√2)<sup>${L}</sup>”= ${fmt(po.ag[L] * Math.pow(0.5, L / 2))} 大致相符（层数多时实际每层缩小得略多一些）；Pre-Norm 的直通路径是恒等映射，原样到达输入端。可是 Post-Norm 的<b>总</b>梯度（实线）并没有消失：分支也在传梯度，随机初始化时每层分支的放大正好抵消归一化的缩小。所以预热的原因要看“每层参数的梯度”那一页。`;
     } else {
       st('最后一层：Post-Norm', po.pg[L - 1].toFixed(2), cols[1]);
       st('最后一层：Pre-Norm', pr.pg[L - 1].toFixed(2), cols[0]);
       st('Post ÷ Pre（最后一层）', '×' + (po.pg[L - 1] / pr.pg[L - 1]).toFixed(1));
       legend.innerHTML = `<span><i class="line" style="background:${cols[1]}"></i>Post-Norm</span><span><i class="line" style="background:${cols[0]}"></i>Pre-Norm</span>`;
-      hint.innerHTML = '把层数从 12 拖到 96 看最后一层：Post-Norm 的参数梯度大小基本不随 L 变化，Pre-Norm 的随 L 变大而变小（约按 1/√L），因为最后的归一化要除以残差流的长度，而它随层数按 √L 增长。这正是 Xiong 等（2020）证明的结论：同样的学习率下，Post-Norm 输出附近的参数一步走得大好几倍，训练初期容易发散，所以需要学习率预热。Pre-Norm 越靠近输入的层梯度越大，也是残差流变长的结果（每层的写入占比按 1/√l 缩小）。';
+      hint.innerHTML = '把层数从 12 拖到 96 看最后一层：Post-Norm 的参数梯度大小基本不随 L 变化，Pre-Norm 的随 L 变大而变小（约按 1/√L），因为最后的归一化要除以残差流的长度，而它随层数按 √L 增长。这正是 Xiong 等（2020）证明的结论：同样的学习率下，Post-Norm 输出附近的参数一步走得大好几倍，训练初期容易发散，所以需要学习率预热。Pre-Norm 越靠近输入的层梯度越大，也是残差流变长的结果（见“Pre-Norm 的稀释”那一页）。';
     }
     view_.redraw();
   }
-  draw();
+  sync();
 });
