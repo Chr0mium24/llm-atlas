@@ -179,7 +179,7 @@ window.ATLAS_TERMS = {
 
   // ---- coding (coding.html)
   fim: { t: '中间填空（FIM）', en: 'fill-in-the-middle', d: '训练时把文档重排为“前缀、后缀、中间”并用特殊 token 标记，模型从左到右预测中间段时已看过前后文。编辑器补全依赖它。', at: 'coding#train' },
-  'swe-bench': { t: 'SWE-bench', en: 'SWE-bench', d: '用真实 GitHub 仓库的 issue 出题：给出 issue 和修复前的仓库，以 PR 中的测试（FAIL_TO_PASS 与 PASS_TO_PASS）判分。Verified 为人工筛选的 500 题，Pro 更难、更难污染。', at: 'coding#eval' },
+  'swe-bench': { t: 'SWE-bench', en: 'SWE-bench', d: '用真实 GitHub 仓库的 issue 出题：给出 issue 和修复前的仓库，以 PR 中的测试（FAIL_TO_PASS 与 PASS_TO_PASS）判分。Verified 为人工筛选的 500 题，Pro 更难、更难污染。', at: 'coding#rl-env' },
   'vibe-coding': { t: 'vibe coding', en: 'vibe coding', d: '用自然语言描述需求、接受 AI 的全部修改而不读代码的编程方式（Karpathy, 2025-02）。适合原型，不适合需长期维护的软件。', at: 'coding#forms' },
 
   // ---- moe (moe.html)
@@ -488,8 +488,8 @@ window.ATLAS_TERMS = {
   regression: { t: "回归", en: "regression", d: "一次修改把原来能用的功能弄坏了。防回归的测试对应 SWE-bench 的 PASS_TO_PASS 测试。", at: "coding#c0-edit" },
   'false-pass': { t: "误放率", en: "false-pass rate", d: "一个错误的补丁仍然通过全部测试的概率，记作 \\(\\varphi\\)。它决定了“通过测试”有多可信，也决定了 RL 会不会学会针对测试取巧。", at: "coding#c0-why" },
   verifier: { t: "验证器", en: "verifier", d: "能自动判断一个输出对不对的程序：单元测试、编译器、类型检查、证明检查器。测试是不完美的验证器：一般不冤枉正确的补丁，但会放过一部分错误的。", at: "coding#c0-why" },
-  'verifier-precision': { t: "精确率（验证器的）", en: "verifier precision", d: "通过验证的输出里真正正确的比例，\\(\\pi = p/\\big(p + (1-p)\\varphi\\big)\\)。它是“改了再跑”和“多采样再筛选”成功率的天花板。", at: "coding#c0-why" },
-  'repo-level': { t: "仓库级上下文", en: "repository-level context", d: "按依赖关系把同一仓库的多个文件拼成长序列来训练或推理，让模型学会跨文件的引用。", at: "coding#train" },
+  'verifier-precision': { t: "精确率（验证器的）", en: "verifier precision", d: "通过验证的输出里真正正确的比例，\\(\\eta = p/\\big(p + (1-p)\\varphi\\big)\\)。它是“改了再跑”和“多采样再筛选”成功率的天花板。", at: "coding#c0-why" },
+  'repo-level': { t: "仓库级上下文", en: "repository-level context", d: "把同一仓库的多个文件拼成长序列来训练或推理（DeepSeek-Coder 按依赖关系排序，StarCoder 2 按仓库分组），让模型学会跨文件的引用。", at: "coding#train" },
   'swe-env': { t: "软件工程 RL 环境", en: "software engineering RL environment", d: "一道题 = 装好依赖的容器镜像（修复前的仓库）+ 任务描述 + 判分测试；智能体在其中跑完一条轨迹，测试全部通过得 1 分。来源有人工整理、注入 bug、从提交历史挖掘。", at: "coding#rl-env" },
   'special-casing': { t: "对测试写特例", en: "special-casing", d: "在代码里专门针对测试用例的输入返回期望值（“如果输入正好是这个，就返回那个”），让测试通过而问题并没有修好。钻奖励空子在代码里最常见的形式。", at: "coding#verify" },
   'hidden-tests': { t: "隐藏测试", en: "hidden tests / held-out tests", d: "判分时额外运行、智能体看不到的测试。能压低偷懒补丁的误放率，但挡不住修改测试文件这类“改掉判分者”的做法。", at: "coding#verify" },
@@ -682,4 +682,7 @@ window.ATLAS_TERMS = {
   'constitutional-ai': { t: "宪法 AI", en: "Constitutional AI", d: "Anthropic（2022-12）：模型按一组成文原则批评、修改自己的回答做 SFT，再按原则比较回答、用 AI 标注做强化学习。RLAIF 的起点。", at: "sft#variants" },
   'intrinsic-dim': { t: "内在维度", en: "intrinsic dimension", d: "把微调限制在一个随机低维子空间里、仍能达到全参数微调 90% 效果所需的最小维数。RoBERTa 在 MRPC 上约 200；模型越大越低。", at: "sft#lora" },
   'linear-mode-connectivity': { t: "线性模式连通性", en: "linear mode connectivity", d: "两个模型之间沿直线插值权重，损失不会先升高再降低。从同一个预训练点出发的微调模型通常满足它，这是权重合并能成立的前提。", at: "sft#merge" },
+
+  // ---- coding (upgrade 2026-10-20)
+  'pull-request': { t: "拉取请求（PR）", en: "pull request", d: "把一个补丁提交给项目维护者审查、合并的请求。开源项目的修改大多以 PR 的形式进入仓库；SWE-bench 的题目就取自已合并的 PR。", at: "coding#c0-edit" },
 };
