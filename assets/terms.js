@@ -28,7 +28,7 @@ window.ATLAS_TERMS = {
   pmi: { t: '点互信息（PMI）', en: 'pointwise mutual information', d: String.raw`\(\mathrm{PMI}(w,c) = \log\frac{p(w,c)}{p(w)\,p(c)}\)：两个词一起出现的频率，比各自独立时偶然相遇的频率高多少倍（取对数）。`, at: 'tokens#meaning' },
   logit: { t: 'logit', en: 'logit', d: String.raw`模型对每个候选 token 给出的未归一化分数 \(z_i\)。经过 softmax 才变成概率；所有 logit 同加一个常数，概率不变。`, at: 'tokens#output' },
   softmax: { t: 'softmax', en: 'softmax', d: String.raw`把一组任意实数分数 \(z_1,\dots,z_n\) 变成和为 1 的概率：\(p_i = e^{z_i} / \sum_j e^{z_j}\)。分数越高，概率越大；所有分数同加一个常数，结果不变。`, at: 'tokens#output' },
-  'tied-embeddings': { t: '共享嵌入', en: 'tied embeddings', d: String.raw`让输出矩阵直接复用输入的嵌入矩阵（\(W = E\)），省下 \(Vd\) 个参数。小模型常用，大模型通常不共享。`, at: 'tokens#output' },
+  'tied-embeddings': { t: '共享嵌入', en: 'tied embeddings', d: String.raw`让输出矩阵直接复用输入的嵌入矩阵（\(W_U = E\)），省下 \(Vd\) 个参数。小模型常用，大模型通常不共享。`, at: 'tokens#output' },
 
   // ---- reinforcement learning (rl.html)
   agent: { t: '智能体（RL）', en: 'agent', d: '做决定的一方。在语言模型的 RL 里，智能体就是模型本身。', at: 'rl#rl0-game' },
@@ -648,10 +648,10 @@ window.ATLAS_TERMS = {
   'byte-fallback': { t: "字节回退", en: "byte fallback", d: "以字符和子词为主的词表外加 256 个字节 token；遇到词表里没有的字符，就退回它的 UTF-8 字节，因此不会出现 [UNK]（LLaMA、Gemma 等）。", at: "tokens#bytes" },
   'em-algorithm': { t: "EM 算法", en: "expectation–maximization", d: "数据里有看不见的部分时估计参数的方法：E 步按当前参数算出隐藏部分的后验，M 步用期望次数重新估参数；每一轮似然不下降。Unigram 分词用它估计 token 概率。", at: "tokens#unigram" },
   'token-premium': { t: "分词溢价", en: "tokenization premium", d: "同一段内容在某种语言下切出的 token 数，除以英文版的 token 数。等于字符数之比乘以 fertility 之比，取决于分词器的训练数据，而不是语言本身。", at: "tokens#lang" },
-  'glitch-token': { t: "故障 token", en: "glitch token", d: "词表里有、但模型训练时几乎没见过的 token（如 “SolidGoldMagikarp”）。它的嵌入几乎没被更新，模型遇到它会胡言乱语或拒绝复述。", at: "tokens#special" },
+  'glitch-token': { t: "故障 token", en: "glitch token", d: "词表里有、但模型训练时几乎没见过的 token（如 “SolidGoldMagikarp”）。它的嵌入几乎没被更新，模型遇到它会胡言乱语或拒绝复述。", at: 'tokens#embed' },
   word2vec: { t: "word2vec", en: "word2vec", d: "2013 年的词向量方法：训练一个小网络用每个词预测它周围的词（skip-gram），把词压成几百维的稠密向量；意思相近的词向量相近。", at: "tokens#meaning" },
   'neg-sampling': { t: "负采样", en: "negative sampling", d: "用“真邻居判为是、随机抽的 \\(k\\) 个假邻居判为否”的二分类代替对整个词表的 softmax；最优解满足点积 = PMI − \\(\\log k\\)。", at: "tokens#meaning" },
-  'lm-head': { t: "输出矩阵（LM head）", en: "LM head / unembedding", d: "模型最后一层的 \\(V\\times d\\) 矩阵 \\(W\\)，把最终向量变成词表里每个 token 的分数（logit）。每个 token 的计算量约 \\(2Vd\\)；共享嵌入时 \\(W = E\\)。", at: "tokens#output" },
+  'lm-head': { t: "输出矩阵（LM head）", en: "LM head / unembedding", d: "模型最后一层的 \\(V\\times d\\) 矩阵 \\(W_U\\)，把最终向量变成词表里每个 token 的分数（logit）。每个 token 的计算量约 \\(2Vd\\)；共享嵌入时 \\(W = E\\)。", at: "tokens#output" },
   superword: { t: "超词", en: "superword token", d: "跨越多个词（含空格）的 token，如 “by the way”。SuperBPE 在训练后期放开“不能跨空格”的预分词规则来学习它们。", at: "tokens#frontier" },
   'ngram-embedding': { t: "n-gram 嵌入", en: "n-gram embedding", d: "给相邻几个 token 的组合也配一个向量，用哈希映射到一张大表里，与单个 token 的嵌入相加。只放大输入端，几乎不增加算力（Over-Tokenized Transformer、Engram）。", at: "tokens#frontier" },
   'entropy-patching': { t: "按熵分组", en: "entropy patching", d: "字节级模型的分组方法：用一个小语言模型估计下一个字节的熵，超过阈值就开一个新组；好猜处组长、难猜处组短（BLT）。", at: "tokens#frontier" },

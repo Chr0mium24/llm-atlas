@@ -1,6 +1,8 @@
 /* tokens-vocab — the vocabulary-size ledger: (A) a byte-level BPE trained in the browser on a built-in Chinese–English parallel text, token counts vs V and vs the tokenizer's data mix; (B) real model configs: how much shorter sequences must get before a bigger vocabulary pays for itself */
 A.defineDemo('tokens-vocab', function (mount) {
-  const { bd } = A.demo(mount, '词表大小的账：序列短了多少，参数和算力多了多少', 'A：浏览器里现场训练的玩具分词器；B：真实模型配置的算术');
+  // data-part="a" shows only part A, "b" only part B; no attribute shows both
+  const part = (mount.dataset.part || '').toLowerCase(), showA = part !== 'b', showB = part !== 'a';
+  const { bd } = A.demo(mount, part === 'a' ? '同一段内容，中文和英文各要多少 token' : part === 'b' ? '换成大词表，序列至少要短多少才不亏' : '词表大小的账：序列短了多少，参数和算力多了多少', part === 'a' ? '浏览器里现场训练的玩具分词器' : part === 'b' ? '真实模型配置的算术' : 'A：浏览器里现场训练的玩具分词器；B：真实模型配置的算术');
   // 28 parallel sentence pairs (same content in Chinese and English)
   const PAIRS = [
     ["大模型在读一段文字之前，要先把它切成一串 token。", "Before a large model reads a piece of text, it first cuts the text into a sequence of tokens."],
@@ -67,7 +69,8 @@ A.defineDemo('tokens-vocab', function (mount) {
   }
 
   // ---------- part A ----------
-  bd.append(A.el('div', { style: { fontWeight: 650, margin: '2px 0 6px' } }, 'A · 同一段内容，中文和英文各要多少 token'));
+  if (showA) {
+  if (!part) bd.append(A.el('div', { style: { fontWeight: 650, margin: '2px 0 6px' } }, 'A · 同一段内容，中文和英文各要多少 token'));
   const ctlA = A.el('div', { class: 'controls' }); bd.append(ctlA);
   let wZh = 0.2, res = train(wZh);
   const sMix = A.slider(ctlA, { label: '分词器训练语料里中文的比重', min: 0.1, max: 0.9, step: 0.1, value: wZh, fmt: (v) => Math.round(v * 100) + '%', on: A.debounce((v) => { wZh = v; res = train(wZh); sV.input.max = res.zh.length - 1; if (sV.value > res.zh.length - 1) sV.value = res.zh.length - 1; drawA(); }, 120), width: 240 });
@@ -99,9 +102,12 @@ A.defineDemo('tokens-vocab', function (mount) {
       .forEach(([kk, v]) => stA.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '17px' }, html: v }))));
     viewA.redraw();
   }
+  drawA();
+  }
 
   // ---------- part B ----------
-  bd.append(A.el('div', { style: { fontWeight: 650, margin: '18px 0 6px' } }, 'B · 真实规模：换成大词表，序列至少要短多少才不亏'));
+  if (showB) {
+  if (!part) bd.append(A.el('div', { style: { fontWeight: 650, margin: '18px 0 6px' } }, 'B · 真实规模：换成大词表，序列至少要短多少才不亏'));
   const MODELS = [
     { k: '1b', t: 'Llama 3.2 1B', d: 2048, nb: 0.973e9, tied: true },
     { k: '8b', t: 'Llama 3 8B', d: 4096, nb: 6.98e9, tied: false },
@@ -118,9 +124,10 @@ A.defineDemo('tokens-vocab', function (mount) {
   const breakEven = (m, V) => 1 - (m.nb + V0 * m.d) / (m.nb + V * m.d);
   const viewB = A.canvas(cvB, { get aspect() { return cvB.clientWidth < 600 ? 0.72 : 0.42; } }, (ctx, W, H) => {
     const box = { x: 54, y: 28, w: W - 70, h: H - 62 };
-    const ax = A.axes(ctx, box, { xlog: true, xmin: 16000, xmax: 512000, ymin: -0.1, ymax: 0.4, xticks: [16000, 32000, 64000, 128000, 256000, 512000], xfmt: (v) => Math.round(v / 1000) + 'K', yticks: [-0.1, 0, 0.1, 0.2, 0.3, 0.4], yfmt: (v) => Math.round(v * 100) + '%', xlabel: '词表大小 V（对数刻度）', ylabel: '序列至少要短多少才不亏', ylabelOffset: 46 });
+    const ax = A.axes(ctx, box, { xlog: true, xmin: 16000, xmax: 512000, ymin: -0.1, ymax: 0.5, xticks: [16000, 32000, 64000, 128000, 256000, 512000], xfmt: (v) => Math.round(v / 1000) + 'K', yticks: [-0.1, 0, 0.1, 0.2, 0.3, 0.4, 0.5], yfmt: (v) => Math.round(v * 100) + '%', xlabel: '词表大小 V（对数刻度）', ylabel: '序列至少要短多少才不亏', ylabelOffset: 46 });
     const c = A.series();
     ctx.strokeStyle = A.css('--axis'); ctx.beginPath(); ctx.moveTo(box.x, ax.Y(0)); ctx.lineTo(box.x + box.w, ax.Y(0)); ctx.stroke();
+    ctx.save(); ctx.beginPath(); ctx.rect(box.x, box.y - 14, box.w, box.h + 14); ctx.clip();
     MODELS.forEach((m, i) => {
       const on = m.k === mk;
       ctx.strokeStyle = on ? c[i] : A.alpha(c[i], 0.45); ctx.lineWidth = on ? 2.6 : 1.6; ctx.beginPath();
@@ -128,10 +135,11 @@ A.defineDemo('tokens-vocab', function (mount) {
       ctx.stroke();
       A.text(ctx, m.t, ax.X(512000) - 4, ax.Y(breakEven(m, 512000)) - 9, { size: 11.5, color: c[i], weight: on ? 700 : 500, align: 'right' });
     });
+    ctx.restore();
     // Llama 2 -> Llama 3 data point
     const px = ax.X(128256), py = ax.Y(0.15);
     ctx.fillStyle = A.css('--ink'); ctx.beginPath(); ctx.arc(px, py, 4.5, 0, 7); ctx.fill();
-    A.text(ctx, W < 600 ? 'Llama 2→3 少约 15%' : 'Llama 2 → 3：约少 15%（据 Meta）', px - 8, py - 12, { size: W < 600 ? 10.5 : 11.5, color: A.css('--ink-2'), align: 'right' });
+    A.text(ctx, W < 600 ? 'Llama 2→3 最多少 15%' : 'Llama 2 → 3：最多少 15%（据 Meta）', px - 8, py - 12, { size: W < 600 ? 10.5 : 11.5, color: A.css('--ink-2'), align: 'right' });
     const m = MODELS.find((x) => x.k === mk), V = sVB.value, y = breakEven(m, V);
     ctx.strokeStyle = A.css('--ink-2'); ctx.lineWidth = 1; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(ax.X(V), box.y); ctx.lineTo(ax.X(V), box.y + box.h); ctx.stroke(); ctx.setLineDash([]);
     ctx.fillStyle = c[MODELS.indexOf(m)]; ctx.beginPath(); ctx.arc(ax.X(V), ax.Y(y), 5, 0, 7); ctx.fill();
@@ -144,5 +152,6 @@ A.defineDemo('tokens-vocab', function (mount) {
       .forEach(([kk, v]) => stB.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '17px' }, html: v }))));
     viewB.redraw();
   }
-  drawA(); drawB();
+  drawB();
+  }
 });
