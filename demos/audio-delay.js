@@ -5,7 +5,7 @@ A.defineDemo('audio-delay', function (mount) {
   const PATS = {
     flat: { t: '展平', tex: String.raw`p(\mathbf Q)=\prod_{t}\prod_{k} p\big(q_{t,k}\mid q_{<t,\cdot},\ q_{t,<k}\big)`, note: '一帧一帧地写，每帧从第 1 级写到第 4 级。完全符合链式法则，没有任何近似，代价是步数等于编号总数。' },
     par: { t: '并行', tex: String.raw`p(\mathbf Q)\approx\prod_{t}\prod_{k} p\big(q_{t,k}\mid q_{<t,\cdot}\big)`, note: '每一步同时写出一帧的 4 级。步数最少，但同一帧的 4 级互相看不见：第 2 级不知道第 1 级选了哪个码字，可它量化的恰恰是第 1 级留下的残差。' },
-    delay: { t: '延迟', tex: String.raw`P_s=\{(s-k+1,\ k)\},\qquad S=T+K-1`, note: '第 k 级整体往后推 k−1 步。每一步同时写“第 1 级的第 s 帧、第 2 级的第 s−1 帧……”，写第 k 级时，同一帧更粗的级都已经写好了。' },
+    delay: { t: '延迟', tex: String.raw`P_s=\{(s-k+1,\ k)\},\qquad S=T+N_q-1`, note: '第 k 级整体往后推 k−1 步。每一步同时写“第 1 级的第 s 帧、第 2 级的第 s−1 帧……”，写第 k 级时，同一帧更粗的级都已经写好了。' },
     valle: { t: '先粗后细（VALL-E）', tex: String.raw`\prod_{t} p\big(q_{t,1}\mid q_{<t,1}\big)\times\prod_{k\ge 2} p\big(\mathbf q_{:,k}\mid \mathbf q_{:,<k}\big)`, note: '先自回归地逐帧写完第 1 级（决定内容和节奏），再一步写出整行第 2 级、一步整行第 3 级……非自回归的每一行，能看见所有帧更粗的级，但同一行的各帧互相看不见。' },
     depth: { t: '深度 Transformer（Moshi）', tex: String.raw`\mathbf z_t=\text{大}(q_{<t,\cdot}),\qquad q_{t,k}\sim\text{小}\big(\mathbf z_t,\ q_{t,<k}\big)`, note: '顺序和展平一样，没有近似；区别在谁来走：大模型每帧只走 1 步，给出上下文向量；帧内的 4 级由一个小得多的模型逐个生成。' },
   };
