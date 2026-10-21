@@ -218,6 +218,16 @@
 <p><b>这个推导告诉我们：</b>RL 不需要奖励可导，只需要能对完整回答打一个分；每条回答提供的信息只有一个数（优势），这也是 RL 样本效率低、需要大量采样的根本原因（第 <a class="xref" data-ref="distillation"></a> 章会把它和蒸馏做对比）。</p>
 </div></details>
 
+<p>同一个式子还能反过来读：SFT 本身也可以写成一种策略梯度，区别只在样本从哪来、奖励怎么给。</p>
+<details class="deep"><summary>SFT 也是一种策略梯度，只是奖励很怪</summary><div class="in">
+<p><b>第 1 步，把 SFT 的梯度改写成期望。</b>（SFT 见第 <a class="xref" data-ref="sft"></a> 章。）只看一个提示 \(x\) 和它的示范回答 \(y^\ast\)。SFT 的梯度是 \(\nabla_\theta\log\pi_\theta(y^\ast|x)\)。把它写成“对模型自己的采样取期望”，只需要乘一个、除一个 \(\pi_\theta\)：</p>
+\[ \nabla_\theta\log\pi_\theta(y^\ast) = \sum_y \pi_\theta(y)\cdot\frac{\mathbb 1[y = y^\ast]}{\pi_\theta(y^\ast)}\cdot\nabla_\theta\log\pi_\theta(y) = \mathbb E_{y\sim\pi_\theta}\Big[\underbrace{\frac{\mathbb 1[y=y^\ast]}{\pi_\theta(y^\ast)}}_{\text{隐含的奖励}}\,\nabla_\theta\log\pi_\theta(y)\Big] \]
+<p><b>第 2 步，和强化学习对照。</b>上面推出的强化学习梯度是 \(\mathbb E_{y\sim\pi_\theta}[R(y)\,\nabla_\theta\log\pi_\theta(y)]\)：让模型自己写，按奖励加权，把写出的回答变得更可能。两式形状相同。所以 SFT 等价于一种强化学习，它的奖励是：写出和示范一模一样的回答得 \(1/\pi_\theta(y^\ast)\) 分，否则 0 分。</p>
+<p><b>第 3 步，这个奖励的毛病。</b>示范在模型看来越不可能，奖励越大。第 <a class="xref" data-ref="sft"></a> 章的玩具里，“〈结束〉”的概率 10%，隐含奖励 10；“。”的概率 60%，隐含奖励 1.7。SFT 把最大的力气用在模型最意想不到的 token 上，而且只认一种写法：模型自己写出的另一种正确回答得 0 分。</p>
+<p><b>第 4 步，一种修法。</b>Wu 等（2025-08，ICLR 2026）的 DFT 把每个 token 的损失乘上它自己的概率、且不对这个系数求导：\(-\sum_t \operatorname{sg}\big(\pi_\theta(y^\ast_t)\big)\log\pi_\theta(y^\ast_t)\)（\(\operatorname{sg}\) 表示停止梯度）。隐含奖励从 \(1/\pi\) 变回常数 1，作者报告数学推理等任务上的泛化好于标准 SFT；代价是模型本来不会的 token 学得更慢。</p>
+<p><b>这个推导告诉我们：</b>SFT 和 RL 的区别不在损失的形式，而在样本从哪来（示范者，还是模型自己）和奖励怎么给（“和示范一字不差”且按 \(1/\pi\) 放大，还是按结果好坏）。前者让 SFT 离模型自己的分布越走越远，这正是本章末尾“SFT 记忆、RL 泛化？”之争的核心。</p>
+</div></details>
+
 <h2 id="ppo">PPO：重复利用样本，但每次别走太远</h2>
 <p>生成回答很贵。一个推理模型的回答动辄几千上万 token，采样往往要占 RL 总算力的一半左右。所以大家希望一批样本能用来更新好几步。问题是更新一步之后，模型已经不是采样时的那个模型 \(\pi_{\text{old}}\) 了，这批样本变成了<span class="term" data-t="off-policy">离策略</span>的数据。修正办法是上一节讲过的<span class="term" data-t="importance-sampling">重要性采样</span>：给每个 token 乘一个<dfn data-t="ratio">重要性比率</dfn></p>
 <div class="fx">
@@ -361,6 +371,21 @@
 </ul>
 <p>系统层面，主流做法是<b>异步 RL</b>：推理集群持续生成轨迹，训练集群持续消费，两边不互相等待。代价是训练用的样本来自几步之前的模型，<span class="term" data-t="off-policy">离策略</span>程度变大，所以上面的重要性采样修正变得更加重要。MiMo-V2.6-Pro（1.02T 总参数、42B 激活）是一个有完整数字的例子：全异步 GRPO，每步 1568 道题 × 16 条采样；算力分配是采样 43.8%、训练 43.5%、评分 12.7%；一次 RL 约 260 万美元（Flash 版约 90 万美元）；DeepSWE 从 58.4 提到 72.6。</p>
 
+<p>RL 的规模化也有自己的“规模定律”，但曲线形状和预训练（第 <a class="xref" data-ref="scaling"></a> 章）不一样。Meta 的 Khatri 等（2025-10）用超过 40 万 GPU 小时系统测量后发现，通过率随 RL 算力的变化更像一条有上限的 S 形曲线：</p>
+<div class="fx">
+\[ R(\htmlClass{sym-Crl}{C_{\text{RL}}}) = \htmlClass{sym-R0}{R_0} + \frac{\htmlClass{sym-Rmax}{R_{\max}} - R_0}{1 + \big(\htmlClass{sym-Cmid}{C_{\text{mid}}}/C_{\text{RL}}\big)^{\htmlClass{sym-gam}{\gamma}}} \]
+  <div class="fx-read">通过率从起点 \(R_0\) 出发，随 RL 算力沿 S 形曲线上升，趋向上限 \(R_{\max}\)；\(C_{\text{mid}}\) 是走完一半提升所需的算力，\(\gamma\) 决定曲线有多陡。</div>
+  <dl class="fx-syms">
+    <dt data-sym="Crl">\(C_{\text{RL}}\)</dt><dd>投入 RL 的算力（GPU 小时）</dd>
+    <dt data-sym="R0">\(R_0\)</dt><dd>RL 开始前的通过率</dd>
+    <dt data-sym="Rmax">\(R_{\max}\)</dt><dd>算力无限时的上限（渐近线）</dd>
+    <dt data-sym="Cmid">\(C_{\text{mid}}\)</dt><dd>提升走完一半时的算力</dd>
+    <dt data-sym="gam">\(\gamma\)</dt><dd>陡峭程度：越大，越快走完提升</dd>
+  </dl>
+  <div class="fx-eg">他们的配方（ScaleRL）在 8B 模型上拟合出的上限约 \(R_{\max} = 0.61\)，用前 5 万 GPU 小时的数据拟合，外推到 10 万 GPU 小时，与实测吻合。不同配方的上限不同；损失怎样平均、优势怎样归一化、课程这些细节主要改变 \(\gamma\) 和 \(C_{\text{mid}}\)（走多快），几乎不移动上限；更大的模型上限更高。小规模实验因此多了一个用途：分辨一个改动是在“提速”还是在“抬天花板”。</div>
+</div>
+
+
 <h2 id="mismatch">训练与推理不一致</h2>
 <p>为了快，采样用推理引擎（vLLM、SGLang），算梯度用训练引擎（Megatron、FSDP）。同一组权重，两边算出来的概率并不相同：BF16 的舍入误差随着层数和 token 数逐步累积，两边的矩阵乘法内核累加顺序不同，MoE 的路由在两边可能选到不同的专家。<span class="term" data-t="ratio">重要性比率</span> \(r_t\) 的分母本来应该是“采样时的概率”，实际却用训练引擎重算的概率代替，比率就带上了一个系统误差。在长回答上，这个误差足以让训练悄悄崩掉。2025 年下半年起，这成了 RL 工程里最受关注的问题之一。</p>
 <div data-demo="rl-mismatch" class="bleed"></div>
@@ -401,6 +426,15 @@
     <dt>现象</dt><dd>Spurious Rewards（2025-06）：用随机奖励甚至错误奖励训练 Qwen2.5-Math-7B，MATH-500 也能提升约 20 个百分点；换成 Llama、OLMo 就不行。作者解释为 RL 激发了 Qwen 预训练里“用代码推理”的习惯。</dd>
     <dt>反方</dt><dd>2025-07 的研究用 Qwen 发布之后才构造的随机算术题测试：只有正确奖励有效，随机奖励毫无作用，因此认为主要原因是数据污染：Qwen 见过这些测试题，RL 只是把记住的答案调了出来。2026 年的机制研究支持这一点（训练后从错变对的题，与原答案的文字重合度激增）。也有 ICLR 2026 的论文在 Llama 和 QwQ 上看到类似现象，认为不能只归因于污染。</dd>
     <dt>启示</dt><dd>Qwen 是 RL 研究最常用的基座，很多结论只在 Qwen 上成立。读论文时看三件事：是否只用了一个模型家族；有没有随机奖励的对照；有没有用发布日期之后的、无污染的测试集。</dd>
+  </dl>
+</aside>
+
+<aside class="dispute">
+  <h4>SFT 记忆、RL 泛化？</h4>
+  <dl>
+    <dt>主张</dt><dd>Chu 等（2025-01）在纸牌算术和导航任务上发现：SFT 在训练分布内很好，换一种规则表述就失效；RL 学到的规则能迁移。RL's Razor（Shenfeld 等, 2025-09）补上遗忘的一面：新任务做到同样好时，RL 忘掉的旧能力比 SFT 少得多；遗忘程度由“微调后模型与基座在新任务上的 KL”预测得很准，而 RL 在自己的采样上学，天然偏向 KL 最小的解法。</dd>
+    <dt>反方</dt><dd>“Debunk the Myth of SFT Generalization”（2025-09）发现 SFT 的失败主要来自固定的提示模板，加入多样的提示和思维链后，泛化追平甚至超过 RL。Ren 等（2026-04）发现长思维链 SFT 的跨领域表现“先降后升”，过早的检查点会低估它；强基座能从少量思维链里学到可迁移的做法（比如回溯检查），弱基座只学到表面风格，这和 LIMR（2025）在 7B 模型上看到少量 SFT 数据的配方失效是一致的。</dd>
+    <dt>现在怎么看</dt><dd>“SFT 只会记忆”说得太重：它能泛化，但条件更苛刻。RL's Razor 的 KL 视角更持久：把模型推离自己的分布越远，忘得越多，SFT 只是最容易推远的那种。所以 2025 年以后的配方让 SFT 少而精、只做冷启动，把主要的能力提升交给在自己的样本上学习的方法（RL、在线蒸馏）。</dd>
   </dl>
 </aside>
 
