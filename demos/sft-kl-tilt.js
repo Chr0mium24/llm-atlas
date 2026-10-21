@@ -25,7 +25,7 @@ A.defineDemo('sft-kl-tilt', function (mount) {
     const KL = A.sum(p.map((x, i) => (x > 1e-300 ? x * Math.log(x / ANS[i].ref) : 0)));
     return { p, Z, ER, EQ, KL };
   }
-  const BETAS = []; for (let i = 0; i <= 240; i++) BETAS.push(Math.pow(10, -1.6 + 3.0 * i / 240)); // 0.025 … 25
+  const BETAS = []; for (let i = 0; i <= 240; i++) BETAS.push(Math.pow(10, Math.log10(0.05) + (Math.log10(20) - Math.log10(0.05)) * i / 240)); // 0.05 … 20，与滑块一致
   const v1 = A.canvas(cv1, { aspect: 0.72 }, (ctx, W, H) => {
     const cols = A.series(), s = solve(beta);
     const box = { x: 40, y: 26, w: W - 52, h: H - 74 };
@@ -62,10 +62,12 @@ A.defineDemo('sft-kl-tilt', function (mount) {
     [['π*（A, B, C）', s.p.map(fp).join(' / ')], ['奖励模型的期望分 E[R]', s.ER.toFixed(2) + '（SFT 模型 ' + solve(1e6).ER.toFixed(2) + '）'], ['真实质量 E[Q]', s.EQ.toFixed(2) + '（SFT 模型 0.02）'], ['离 SFT 模型多远 KL', s.KL.toFixed(2) + ' nat']]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, v))));
     legend.innerHTML = `<span><i style="background:${A.alpha(A.css('--muted'), 0.45)}"></i>π_ref（SFT 模型）</span><span><i style="background:${cols[2]}"></i><i style="background:${cols[1]}"></i><i style="background:${cols[7]}"></i>π*（按 β 重新加权后）</span><span><i class="line" style="background:${cols[1]}"></i>奖励模型的期望分</span><span><i class="line" style="background:${cols[0]}"></i>真实质量（人真正的偏好）</span>`;
-    const biased = rB > 0.6 + 1e-9;
+    const biased = rB > 1.0 + 1e-9, over = rB > 0.6 + 1e-9;
     hint.innerHTML = (biased
-      ? `奖励模型高估了啰嗦的 B（给它 ${rB.toFixed(2)}，人实际只给 0.6）。β 从大往小调：先是错误的 C 被迅速压掉，真实质量快速上升；再往下，概率开始从简洁的 A 流向奖励模型偏爱的 B，奖励分继续涨，真实质量却回落。真实质量的最高点在 β ≈ ${pk.b.toFixed(2)}、KL ≈ ${pk.KL.toFixed(2)} nat 处（右图圆圈）。这就是古德哈特定律最小的样子，也是 KL 约束存在的理由。`
-      : '奖励模型对 B 的打分和人一致（不高于 0.6）时，没有可钻的空子：β 越小，概率越集中到真正最好的 A 上，真实质量单调上升。过度优化只在代理有偏差时出现。')
+      ? `奖励模型高估了啰嗦的 B（给它 ${rB.toFixed(2)}，比 A 的 1.0 还高；人实际只给 0.6）。β 从大往小调：先是错误的 C 被迅速压掉，真实质量快速上升；再往下，概率开始从简洁的 A 流向奖励模型偏爱的 B，奖励分继续涨，真实质量却回落。真实质量的最高点在 β ≈ ${pk.b.toFixed(2)}、KL ≈ ${pk.KL.toFixed(2)} nat 处（右图圆圈）。这就是古德哈特定律最小的样子，也是 KL 约束存在的理由。`
+      : over
+        ? `B 被高估了（${rB.toFixed(2)}，人实际只给 0.6），但仍排在 A 的 1.0 之后：β 越小，概率越集中到 A，真实质量单调上升。只有当代理把错的回答排到第一，才有可钻的空子。`
+        : '奖励模型对 B 的打分和人一致（不高于 0.6）时，没有可钻的空子：β 越小，概率越集中到真正最好的 A 上，真实质量单调上升。过度优化只在代理有偏差时出现。')
       + ' 无论 β 取多少，π* 都只是在 π_ref 上按 e^{R/β} 重新加权：π_ref 给 0 的回答，π* 也是 0。';
     v1.redraw(); v2.redraw();
   }

@@ -6,7 +6,7 @@ A.defineDemo('bon-goodhart', function (mount) {
   const TRIALS = 300;
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   A.seg(ctl, [{ v: 'gauss', t: '正态（误差有界）' }, { v: 'heavy', t: '重尾（偶尔错得离谱）' }], kind, (v) => { kind = v; run(); draw(); }, '奖励模型误差的分布');
-  A.slider(ctl, { label: '误差大小 σ', min: 0.1, max: 2, step: 0.05, value: sigma, fmt: (v) => v.toFixed(2), on: (v) => { sigma = v; run(); draw(); }, width: 170 });
+  A.slider(ctl, { label: '误差尺度 σ（重尾时是 t 分布的尺度）', min: 0.1, max: 2, step: 0.05, value: sigma, fmt: (v) => v.toFixed(2), on: (v) => { sigma = v; run(); draw(); }, width: 170 });
   ctl.append(A.el('button', { onclick: () => { seed = (seed * 48271) % 2147483647; run(); draw(); } }, '重新抽样'));
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
