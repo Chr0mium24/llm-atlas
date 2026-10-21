@@ -3,8 +3,8 @@ A.defineDemo('batching', function (mount) {
   const { bd } = A.demo(mount, '静态批处理 vs 连续批处理（同一串请求）', '6 个槽位；KV 显存：预留最大长度 vs 分页');
   const ctl = A.el('div', { class: 'flex', style: { marginBottom: '10px' } }); bd.append(ctl);
   let running = false;
-  ctl.append(A.el('button', { class: 'primary', onclick: () => { running = !running; if (running) loop(); } }, '运行 / 暂停'), A.el('button', { onclick: () => { reset(); view.redraw(); } }, '重置'));
-  const spd = A.slider(ctl, { label: '到达率', min: 0.05, max: 0.4, step: 0.01, value: 0.16, fmt: (v) => v.toFixed(2) + ' 个/步', on: () => {} });
+  ctl.append(A.el('button', { class: 'primary', onclick: () => { running = !running; if (running) loop(); } }, '运行 / 暂停'), A.el('button', { onclick: () => { reset(); view.redraw(); info(); } }, '重置'));
+  const spd = A.slider(ctl, { label: '到达率', min: 0.05, max: 0.4, step: 0.01, value: 0.08, fmt: (v) => v.toFixed(2) + ' 个/步', on: () => {} });
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
   const stats = A.el('div', { class: 'cols' }); bd.append(stats);
   const S = 6, MAXLEN = 160, HIST = 240;
@@ -61,6 +61,6 @@ A.defineDemo('batching', function (mount) {
       stats.append(card);
     });
   }
-  bd.append(A.el('p', { class: 'hint' }, '每一行是一个槽位，颜色块是正在生成的请求，灰色是空闲。静态批处理里，一批中的短请求结束后，槽位要空等到最长的请求结束；连续批处理随时补位。KV 利用率：静态方案为每个请求预留最大长度（160 token），分页方案按 16 token 一块按需分配。'));
-  reset(); info();
+  bd.append(A.el('p', { class: 'hint' }, '已预先运行 300 步。每一行是一个槽位，颜色块是正在生成的请求，灰色是空闲。左右两边换了两件事：调度决定槽位利用率（静态批处理里，一批中的短请求结束后，槽位要空等到最长的请求结束；连续批处理随时补位），显存分配决定 KV 利用率（静态方案为每个请求预留最大长度 160 token，分页方案按 16 token 一块按需分配）。默认到达率 0.08 个/步时，连续批处理几乎不排队，静态批处理的队列越排越长；超过约 0.11 个/步，两者都会过载。'));
+  reset(); for (let k = 0; k < 300; k++) { t++; lanes.forEach(stepLane); } info();
 });

@@ -18,12 +18,12 @@ A.defineDemo('serving-goodput', function (mount) {
   const cols = A.series();
 
   function rng(seed) { return A.rng(seed); }
-  // one run: returns per-request {at, first, fin, o} and mean decode batch
+  // one run: per-request TTFT/TPOT, plus time-averaged number in system and mean stay over a steady window (Little's law holds for time averages)
   function runSim(lambda, cap, ch, nreq) {
     const { N, AT, BW, P, UP, KV, CAP } = M, W = N * 2;
     const r = rng(11), Q = []; let at = 0;
     for (let i = 0; i < nreq; i++) { at += -Math.log(1 - r()) / lambda; Q.push({ at, p: 1000 + Math.floor(r() * 6000), o: Math.min(4000, Math.round(30 - Math.log(1 - r()) * 970)), pre: 0, done: 0, first: -1, fin: -1, st: 0 }); }
-    let t = 0, next = 0, used = 0, steps = 0, sumB = 0; const wait = []; let run = [];
+    let t = 0, next = 0, used = 0; const wait = []; let run = [];
     while (next < nreq || wait.length || run.length) {
       while (next < nreq && Q[next].at <= t) wait.push(Q[next++]);
       if (!wait.length && !run.length) { t = Q[next].at; continue; }
@@ -39,14 +39,17 @@ A.defineDemo('serving-goodput', function (mount) {
       let room = Math.max(0, 2048 - B), ct = 0, ca = 0; const fin = [];
       if (ch) for (const q of run) { if (room <= 0) break; if (q.st !== 0) continue; const c = Math.min(room, q.p - q.pre); ca += c * (q.pre + c / 2); q.pre += c; room -= c; ct += c; if (q.pre >= q.p) fin.push(q); }
       const mem = (W + ctx * KV) / BW, comp = (2 * N * B + AT * ctx) / P + (2 * N * ct + AT * ca) / (P * UP);
-      t += Math.max(mem, comp); steps++; sumB += B;
+      t += Math.max(mem, comp);
       for (const q of run) if (q.st === 1) { q.done++; if (q.done >= q.o) { q.fin = t; q.st = 2; used -= q.p + q.o; } }
       for (const q of fin) { q.st = 1; q.first = t; q.done = 1; }
       run = run.filter((q) => q.st !== 2);
       if (t > 4000) break;
     }
     const S = Q.slice(Math.floor(nreq / 6));
-    return { meanB: sumB / Math.max(1, steps), S: S.map((q) => ({ tt: q.first >= 0 ? q.first - q.at : 1e9, tp: q.fin >= 0 ? (q.fin - q.first) / Math.max(1, q.o - 1) : 1e9 })) };
+    const w0 = Q[Math.floor(nreq / 6)].at, w1 = Q[Math.floor((nreq * 5) / 6)].at;
+    const nSys = Q.reduce((a, q) => a + Math.max(0, Math.min(q.fin >= 0 ? q.fin : t, w1) - Math.max(q.at, w0)), 0) / (w1 - w0);
+    const F = S.filter((q) => q.fin >= 0), stay = F.length ? F.reduce((a, q) => a + q.fin - q.at, 0) / F.length : 1e9;
+    return { nSys, stay: F.length === S.length ? stay : 1e9, S: S.map((q) => ({ tt: q.first >= 0 ? q.first - q.at : 1e9, tp: q.fin >= 0 ? (q.fin - q.first) / Math.max(1, q.o - 1) : 1e9 })) };
   }
   function evalRun(R) {
     const tt = R.S.map((s) => s.tt).sort((a, b) => a - b), tp = R.S.map((s) => s.tp).sort((a, b) => a - b);
@@ -70,7 +73,7 @@ A.defineDemo('serving-goodput', function (mount) {
     step();
   }
 
-  const pts = () => { const C = cache[key()] || {}; return LAMS.filter((l) => C[l]).map((l) => ({ l, B: C[l].meanB, ...evalRun(C[l]) })); };
+  const pts = () => { const C = cache[key()] || {}; return LAMS.filter((l) => C[l]).map((l) => ({ l, ...evalRun(C[l]) })); };
   const vline = (ctx, ax, box) => { const x = ax.X(lam); ctx.save(); ctx.strokeStyle = A.css('--axis'); ctx.lineWidth = 1.5; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x, box.y); ctx.lineTo(x, box.y + box.h); ctx.stroke(); ctx.restore(); };
   const hline = (ctx, box, y, label, c) => { ctx.save(); ctx.strokeStyle = c; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.moveTo(box.x, y); ctx.lineTo(box.x + box.w, y); ctx.stroke(); ctx.restore(); A.text(ctx, label, box.x + 4, y - 8, { size: 11, color: c }); };
   const poly = (ctx, ax, P, f, c, w) => { ctx.save(); ctx.strokeStyle = c; ctx.lineWidth = w; ctx.beginPath(); P.forEach((p, i) => { const y = f(p); i ? ctx.lineTo(ax.X(p.l), y) : ctx.moveTo(ax.X(p.l), y); }); ctx.stroke(); P.forEach((p) => { ctx.fillStyle = c; ctx.beginPath(); ctx.arc(ax.X(p.l), f(p), 2.4, 0, 7); ctx.fill(); }); ctx.restore(); };
@@ -110,11 +113,11 @@ A.defineDemo('serving-goodput', function (mount) {
     else {
       const e = evalRun(R);
       const f = (s) => (s >= 1e8 ? '未完成' : s < 1 ? (s * 1e3).toFixed(0) + ' ms' : s.toFixed(1) + ' s');
-      [['平均同时解码的请求', R.meanB.toFixed(0) + ' 个'], ['首 token 延迟 p90', f(e.ttft90)], ['每 token 间隔 p90', e.tpot90 >= 1e8 ? '未完成' : (e.tpot90 * 1e3).toFixed(1) + ' ms'], ['SLO 达标率', A.pct(e.att, 0)], ['有效吞吐', (lam * e.att).toFixed(2) + ' 请求/秒']]
-        .forEach(([k, v], i) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px', color: i === 3 ? (e.att >= 0.9 ? 'var(--good-ink)' : 'var(--bad)') : '' } }, v))));
+      [['系统里的请求（时间平均）', R.nSys.toFixed(0) + ' 个'], ['平均停留时间', R.stay >= 1e8 ? '未完成' : R.stay.toFixed(1) + ' s'], ['首 token 延迟 p90', f(e.ttft90)], ['每 token 间隔 p90', e.tpot90 >= 1e8 ? '未完成' : (e.tpot90 * 1e3).toFixed(1) + ' ms'], ['SLO 达标率', A.pct(e.att, 0)], ['有效吞吐', (lam * e.att).toFixed(2) + ' 请求/秒']]
+        .forEach(([k, v], i) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px', color: i === 4 ? (e.att >= 0.9 ? 'var(--good-ink)' : 'var(--bad)') : '' } }, v))));
     }
     const P = pts(), cap90 = P.length === LAMS.length ? P.filter((p) => p.att >= 0.9).reduce((a, p) => Math.max(a, p.l), 0) : 0;
-    hint.innerHTML = `左上：首 token 延迟在负载低时几乎不变，到某个到达率附近突然上翘（纵轴是对数），这是排队：批已经满了，新请求只能等。左下：每 token 间隔随负载缓慢上升，因为同时解码的请求越多，每一步要读的 KV 越多，插进来的预填充也越频繁。右：有效吞吐沿着对角线上升，过了拐点不是持平，而是崩塌，因为队列一旦越排越长，几乎每个请求都超时。` +
+    hint.innerHTML = `默认调度“预填充优先”：新请求的整段提示先算完，这期间正在解码的人全部停下。p90 = 90% 的请求不超过的值。左上：首 token 延迟在负载低时几乎不变，到某个到达率附近突然上翘（纵轴是对数），这是排队：批已经满了，新请求只能等。左下：每 token 间隔随负载缓慢上升，因为同时解码的请求越多，每一步要读的 KV 越多，插进来的预填充也越频繁。右：有效吞吐沿着对角线上升，过了拐点不是持平，而是崩塌，因为队列一旦越排越长，几乎每个请求都超时。` +
       (cap90 ? ` 当前设置下，能保证 90% 请求达标的最大到达率约 ${cap90.toFixed(2)} 请求/秒。` : '') +
       ' 试试：把调度换成分块预填充，拐点右移一点；把批上限调到 256、每 token 间隔的 SLO 收紧到 20 ms，限制你的就变成了间隔而不是排队。';
     left.redraw(); right.redraw();

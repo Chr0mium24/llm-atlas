@@ -217,7 +217,7 @@ window.ATLAS_TERMS = {
   // ---- serving (serving.html)
   prefill: { t: '预填充', en: 'prefill', d: '一次性处理整个提示、算出全部 KV 缓存和第一个 token 的阶段。大矩阵乘法，计算受限，决定首 token 延迟（TTFT）。', at: 'serving#phases' },
   decode: { t: '解码（阶段）', en: 'decode', d: '之后每步生成一个 token 的阶段。矩阵乘向量，访存受限，决定每 token 间隔（TPOT）；靠批处理提高吞吐。', at: 'serving#phases' },
-  goodput: { t: '有效吞吐', en: 'goodput', d: '满足延迟要求（如首 token 与每 token 延迟上限）的那部分吞吐，比单纯的吞吐更能反映服务质量。', at: 'serving#phases' },
+  goodput: { t: '有效吞吐', en: 'goodput', d: '满足延迟要求（如首 token 与每 token 延迟上限）的那部分吞吐，比单纯的吞吐更能反映服务质量。', at: 'serving#queue' },
   'continuous-batching': { t: '连续批处理', en: 'continuous batching', d: '每个解码步都把已结束的请求换成队列中的新请求，而不是等一整批都结束（Orca, 2022）。', at: 'serving#batching' },
   'paged-attention': { t: 'PagedAttention', en: 'PagedAttention', d: 'KV 缓存按固定大小的块按需分配、用块表映射，借鉴操作系统分页；显存浪费从 60–80% 降到 4% 以下（vLLM, 2023）。', at: 'serving#batching' },
   'prefix-cache': { t: '前缀缓存', en: 'prefix caching', d: '多个请求共享的前缀（系统提示、对话历史、工具说明）只计算一次 KV，之后直接复用。API 对缓存命中的输入大幅降价。', at: 'serving#batching' },
@@ -377,13 +377,13 @@ window.ATLAS_TERMS = {
   // ---- serving (upgrade 2026-10-20)
   ttft: { t: "首 token 延迟", en: "time to first token (TTFT)", d: "从请求到达到第一个输出 token 返回的时间，等于排队 + 预填充 + 网络。长提示、高负载时主要被预填充和排队拉长。", at: "serving#life-prefill" },
   tpot: { t: "每 token 间隔", en: "time per output token (TPOT)", d: "第一个 token 之后平均每生成一个 token 的时间 \\((T_{\\text{结束}} - T_{\\text{首}})/(n_{\\text{输出}} - 1)\\)，即用户看到的“打字速度”。由解码一步的时长决定，批越大、上下文越长越慢。", at: "serving#life-decode" },
-  slo: { t: "服务等级目标", en: "service level objective (SLO)", d: "服务方给延迟定的目标，例如“90% 的请求首 token ≤ 2 秒、每 token ≤ 50 毫秒”。有效吞吐只计算达标的请求。", at: "serving#life-done" },
+  slo: { t: "服务等级目标", en: "service level objective (SLO)", d: "服务方给延迟定的目标，例如“90% 的请求首 token ≤ 2 秒、每 token ≤ 50 毫秒”。有效吞吐只计算达标的请求。", at: 'serving#queue' },
   'littles-law': { t: "利特尔定律", en: "Little's law", d: "稳定系统里的平均请求数 = 到达率 × 平均停留时间，\\(\\bar N = \\lambda\\bar T\\)，与到达和服务时间的分布无关（Little, 1961）。", at: "serving#queue" },
   'load-factor': { t: "负载率", en: "utilization / load factor", d: "到达率与最大服务率之比 \\(\\rho = \\lambda/\\mu\\)。M/M/1 队列的平均停留时间是 \\(S/(1-\\rho)\\)，\\(\\rho\\) 接近 1 时发散，所以服务必须留余量。", at: "serving#queue" },
   'kv-fragmentation': { t: "显存碎片", en: "KV-cache fragmentation", d: "预留了却没存 token 的 KV 显存：按最大长度预留造成的内部碎片，以及大小不一的空洞放不下新请求的外部碎片。分页把它压到每个请求最多半块。", at: "serving#batching" },
   'chunked-prefill': { t: "分块预填充", en: "chunked prefill", d: "把长提示切成几百到几千 token 的块，与正在解码的请求拼进同一步，用解码留下的空闲算力完成预填充，避免长提示让所有人卡顿（Sarathi-Serve, 2024）。", at: "serving#disagg" },
   'kv-aware-routing': { t: "KV 感知路由", en: "KV-aware routing", d: "多台机器部署同一模型时，把请求发给已经缓存了它前缀 KV 的那台，以提高前缀缓存命中率（NVIDIA Dynamo、llm-d）。", at: "serving#prefix" },
-  'wide-ep': { t: "宽专家并行", en: "wide expert parallelism", d: "大型 MoE 解码时把专家分散到几十到上百张卡（如 DeepSeek 的 144 路），注意力部分用数据并行，token 经全对全通信送到专家所在的卡。", at: "serving#scale" },
+  'wide-ep': { t: "宽专家并行", en: "wide expert parallelism", d: "大型 MoE 解码时把专家分散到几十到上百张卡（如 DeepSeek 2025-03 的线上解码：18 个节点、144 路；V3 报告里的最小部署单元是 40 节点 320 卡），注意力部分用数据并行，token 经全对全通信送到专家所在的卡。", at: "serving#scale" },
 
   // ---- hardware (upgrade 2026-10-20)
   sm: { t: "流式多处理器（SM）", en: "streaming multiprocessor", d: "GPU 的基本计算单元。H100 有 132 个，每个含 4 个张量核心、256 KB 寄存器和最多 228 KB 共享内存，可同时驻留 2048 个线程。", at: "hardware#hw0-why" },

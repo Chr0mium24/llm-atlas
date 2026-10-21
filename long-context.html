@@ -37,7 +37,7 @@
     <dt data-sym="dh">\(d_h\)</dt><dd>每个头的维度，常为 128</dd>
     <dt data-sym="by">\(b\)</dt><dd>每个数的字节数：BF16 为 2，FP8 为 1</dd>
   </dl>
-  <div class="fx-eg">Llama 3 70B：80 层，8 个 KV 头，头维度 128，BF16。每 token \(2\times 80\times 8\times 128\times 2 = 32\) 万字节（320 KB）。128K 上下文约 40 GB，<b>单个请求</b>就要这么多，比很多显卡的总显存还大。如果用 64 个 KV 头（不用 GQA），要再乘 8。</div>
+  <div class="fx-eg">Llama 3 70B：80 层，8 个 KV 头，头维度 128，BF16。每 token \(2\times 80\times 8\times 128\times 2 = 32\) 万字节（320 KB）。128K 上下文约 43 GB，<b>单个请求</b>就要这么多，比很多显卡的总显存还大。如果用 64 个 KV 头（不用 GQA），要再乘 8。</div>
 </div>
 <p>减小 KV 缓存的办法有四类，2025–26 年的模型通常组合使用：</p>
 <ul>

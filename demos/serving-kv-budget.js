@@ -1,6 +1,6 @@
 /* serving-kv-budget — memory → max concurrency → decode throughput for a 70B-class dense model on 8×H100; ideal roofline step time t(B) = max((W + B·n·κ)/BW, FLOPs/P) */
 A.defineDemo('serving-kv-budget', function (mount) {
-  const { bd } = A.demo(mount, '显存账：KV 缓存决定能同时服务多少人', '玩具估算：70B 级稠密模型（80 层、64 个 Q 头、头维 128），8×H100（640 GB、26.8 TB/s），理想 roofline，忽略通信');
+  const { bd } = A.demo(mount, '显存账：KV 缓存决定能同时服务多少人', '玩具估算：70B 级稠密模型（80 层、64 个 Q 头、头维 128），8×H100（640 GB、26.8 TB/s），理想 roofline，忽略通信；每个请求按用满 n 个 token 计算');
   const N = 70.6e9, L = 80, BW = 26.8e12, HBM = 640e9, RT = 50e9, GPU_HR = 16;
   const VAR = {
     mha: { n: 'MHA（64 组 KV）', k: (b) => 2 * L * 64 * 128 * b, a: 4 * 64 * 128, c: 6 },
@@ -55,11 +55,11 @@ A.defineDemo('serving-kv-budget', function (mount) {
   const view = A.canvas(cv, { aspect: 0.46 }, (ctx, W, H) => {
     const n = Math.round(nS.value);
     const box = { x: 62, y: 26, w: W - 84, h: H - 62 };
-    const ax = A.axes(ctx, box, { xmin: 1, xmax: 4096, xlog: true, xticks: [1, 4, 16, 64, 256, 1024, 4096], xfmt: (v) => String(v), ymin: 100, ymax: 2e5, ylog: true, yticks: [100, 1000, 1e4, 1e5], yfmt: (v) => A.human(v, 0), xlabel: '同时服务的请求数 B（对数）', ylabel: '整台服务器每秒生成的 token（对数）', ylabelOffset: 56, xgrid: true });
+    const ax = A.axes(ctx, box, { xmin: 1, xmax: 4096, xlog: true, xticks: [1, 4, 16, 64, 256, 1024, 4096], xfmt: (v) => String(v), ymin: 10, ymax: 2e5, ylog: true, yticks: [10, 100, 1000, 1e4, 1e5], yfmt: (v) => A.human(v, 0), xlabel: '同时服务的请求数 B（对数）', ylabel: '整台服务器每秒生成的 token（对数）', ylabelOffset: 56, xgrid: true });
     const curve = (v, strong) => {
       const m = model(v, n), c = cols[VAR[v].c];
       ctx.save(); ctx.lineWidth = strong ? 3 : 1.6; ctx.strokeStyle = strong ? c : A.alpha(c, 0.4);
-      const seg = (from, to, dash) => { ctx.setLineDash(dash || []); ctx.beginPath(); for (let i = 0; i <= 160; i++) { const B = Math.exp(Math.log(from) + (Math.log(to) - Math.log(from)) * (i / 160)); const y = ax.Y(A.clamp(B / m.t(B), 100, 2e5)); i ? ctx.lineTo(ax.X(B), y) : ctx.moveTo(ax.X(B), y); } ctx.stroke(); };
+      const seg = (from, to, dash) => { ctx.setLineDash(dash || []); ctx.beginPath(); for (let i = 0; i <= 160; i++) { const B = Math.exp(Math.log(from) + (Math.log(to) - Math.log(from)) * (i / 160)); const y = ax.Y(A.clamp(B / m.t(B), 10, 2e5)); i ? ctx.lineTo(ax.X(B), y) : ctx.moveTo(ax.X(B), y); } ctx.stroke(); };
       const wall = A.clamp(m.Bmax, 1, 4096);
       if (m.Bmax >= 1) seg(1, wall);
       if (m.Bmax < 4096) seg(Math.max(1, wall), 4096, [4, 4]);
@@ -69,7 +69,7 @@ A.defineDemo('serving-kv-budget', function (mount) {
     Object.keys(VAR).filter((v) => v !== va).forEach((v) => curve(v, false));
     const m = curve(va, true), c = cols[VAR[va].c];
     // ceiling
-    const yc = ax.Y(A.clamp(m.ceil, 100, 2e5));
+    const yc = ax.Y(A.clamp(m.ceil, 10, 2e5));
     ctx.save(); ctx.strokeStyle = A.alpha(c, 0.7); ctx.setLineDash([2, 4]); ctx.beginPath(); ctx.moveTo(box.x, yc); ctx.lineTo(box.x + box.w, yc); ctx.stroke(); ctx.restore();
     A.text(ctx, 'B → ∞ 的上限 ' + A.human(m.ceil, 1) + ' token/s', box.x + 6, yc - 9, { size: 11.5, color: c });
     if (m.Bmax >= 1) {
@@ -77,7 +77,7 @@ A.defineDemo('serving-kv-budget', function (mount) {
       ctx.save(); ctx.strokeStyle = A.css('--bad'); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(xw, box.y); ctx.lineTo(xw, box.y + box.h); ctx.stroke(); ctx.restore();
       A.text(ctx, '显存墙 B = ' + m.Bmax, xw + (xw > box.x + box.w - 110 ? -6 : 6), box.y + box.h - 12, { size: 12, weight: 600, color: A.css('--bad'), align: xw > box.x + box.w - 110 ? 'right' : 'left' });
       const tp = m.Bmax / m.t(m.Bmax);
-      ctx.fillStyle = c; ctx.strokeStyle = A.css('--surface'); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(xw, ax.Y(A.clamp(tp, 100, 2e5)), 6.5, 0, 7); ctx.fill(); ctx.stroke();
+      ctx.fillStyle = c; ctx.strokeStyle = A.css('--surface'); ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(xw, ax.Y(A.clamp(tp, 10, 2e5)), 6.5, 0, 7); ctx.fill(); ctx.stroke();
     } else A.text(ctx, '一个请求都装不下', box.x + box.w / 2, box.y + box.h / 2, { size: 14, weight: 700, color: A.css('--bad'), align: 'center' });
     if (hx !== null && hx >= box.x && hx <= box.x + box.w) {
       const B = Math.max(1, Math.round(ax.invX(hx)));
