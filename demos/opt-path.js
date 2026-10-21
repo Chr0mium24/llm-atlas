@@ -22,8 +22,10 @@ A.defineDemo('opt-path', function (mount) {
     const g = (x, y) => [H[0][0] * x + H[0][1] * y, H[1][0] * x + H[1][1] * y];
     return { H, f, g, l1, l2 };
   }
+  // start point fixed in the valley's own axes (steep u = −2.6, flat w = 1.6), rotated with the valley
+  function startPt() { const t = rot * Math.PI / 180, c = Math.cos(t), s = Math.sin(t); return [-2.6 * c - 1.6 * s, -2.6 * s + 1.6 * c]; }
   function run(k, P) {
-    const start = [-2.6, 1.6];
+    const start = startPt();
     let [x, y] = start, vx = 0, vy = 0, m = [0, 0], v = [0, 0];
     const path = [[x, y]]; let hit = null;
     const lr = lrRel * 2 / P.l1;
@@ -58,8 +60,8 @@ A.defineDemo('opt-path', function (mount) {
       ctx.stroke();
       ctx.fillStyle = cols[o.c]; p.forEach(([x, y], i) => { if (i % 4 === 0 && i < 40) { ctx.beginPath(); ctx.arc(X(x), Y(y), 2.2, 0, 7); ctx.fill(); } });
     });
-    ctx.fillStyle = A.css('--ink'); ctx.beginPath(); ctx.arc(X(-2.6), Y(1.6), 4, 0, 7); ctx.fill();
-    A.text(ctx, '起点', X(-2.6) - 8, Y(1.6) - 10, { size: 12, align: 'right' });
+    const [sx0, sy0] = startPt(); ctx.fillStyle = A.css('--ink'); ctx.beginPath(); ctx.arc(X(sx0), Y(sy0), 4, 0, 7); ctx.fill();
+    A.text(ctx, '起点', X(sx0) - 8, Y(sy0) - 10, { size: 12, align: 'right' });
     A.text(ctx, '最低点', cx + 8, cy + 12, { size: 12 });
   });
   function draw() {
