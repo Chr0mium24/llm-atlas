@@ -52,7 +52,7 @@ A.defineDemo('video-consistency', function (mount) {
     film.append(play, ...fr); r.append(lab, film); bd.append(r);
     return { play, fr, data: null };
   });
-  bd.append(A.el('p', { class: 'hint' }, '左侧大图循环播放，右侧是 8 帧胶片。可以把“运动”设为“任意”：时空联合每次挑一种运动并保持；逐帧独立的每帧可能来自不同的运动轨迹，物体会乱跳。'));
+  bd.append(A.el('p', { class: 'hint' }, '左侧大图循环播放，右侧是 8 帧胶片。逐帧独立的图像模型知道自己是第几帧，只在“各段视频的第 f 帧”里挑，但每帧各挑各的。默认（圆、红、运动任意）有 6 种运动：时空联合每次挑一种并保持；逐帧独立的每帧可能来自不同的运动轨迹，物体会乱跳，8 帧全挑中同一种的概率是 6 的负 7 次方。'));
   function put(cv, v, off0) {
     const ctx = cv.getContext('2d'), id = ctx.createImageData(S, S);
     for (let i = 0; i < S * S; i++) { for (let c = 0; c < 3; c++) id.data[i * 4 + c] = A.clamp((v[off0 + i * 3 + c] + 1) * 127.5, 0, 255); id.data[i * 4 + 3] = 255; }
@@ -82,10 +82,9 @@ A.defineDemo('video-consistency', function (mount) {
   function run() {
     const sel = clips.filter((c) => (csh < 0 || c.sh === csh) && (cco < 0 || c.co === cco) && (cmo < 0 || c.mo === cmo));
     const steps = Math.round(stepsS.value), r = A.rng(seed * 97);
-    // 1) per-frame independent: components = all frames of selected clips
-    const frameComps = []; sel.forEach((c) => { for (let f = 0; f < F; f++) frameComps.push({ arr: c.v, off: f * FD }); });
+    // 1) per-frame independent: an image model that knows its frame index f; candidates = frame f of each selected clip
     const indep = new Float32Array(CD);
-    for (let f = 0; f < F; f++) indep.set(sampleRF(FD, frameComps, steps, r), f * FD);
+    for (let f = 0; f < F; f++) indep.set(sampleRF(FD, sel.map((c) => ({ arr: c.v, off: f * FD })), steps, r), f * FD);
     // 2) joint
     const joint = sampleRF(CD, sel.map((c) => ({ arr: c.v, off: 0 })), steps, r);
     // 3) autoregressive: frame f conditioned on generated frames < f

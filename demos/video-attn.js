@@ -39,13 +39,13 @@ A.defineDemo('video-attn', function (mount) {
     ctx.strokeStyle = A.css('--ink'); ctx.lineWidth = 2.5; ctx.strokeRect(qx + 1, qy + 1, cs - 2, cs - 2);
   });
   function state() {
-    // 2 = attended directly in this layer; 1 = reachable only through an intermediate token (two hops)
+    // 2 = attended directly (in fact mode: by the spatial layer if same frame, by the temporal layer if same position); 1 = reachable only through an intermediate token (two hops)
     const get = (f, x, y) => {
       const same = f === q.f, col = x === q.x && y === q.y;
       if (mode === 'full') return 2;
       if (mode === 'sp') return same ? 2 : 0;
       if (mode === 'tm') return col ? 2 : 0;
-      if (mode === 'fact') return col ? 2 : 1;
+      if (mode === 'fact') return col || same ? 2 : 1;
       if (mode === 'win') return Math.abs(f - q.f) <= 1 && Math.abs(x - q.x) <= 1 && Math.abs(y - q.y) <= 1 ? 2 : 0;
       return 0;
     };
@@ -87,11 +87,11 @@ A.defineDemo('video-attn', function (mount) {
       if (q.f === 0) msg = '查询在第 1 个潜帧，没有“上一帧”。';
       else {
         const [bx, by] = ball(q.f - 1), k = st.get(q.f - 1, bx, by);
-        msg = k === 2 ? '上一帧的红球：<b>这一层就能直接看到</b>。' : k === 1 ? `上一帧的红球：<b>只能两跳间接看到</b>：第一层在潜帧 ${q.f} 内部把红球的信息汇到 (${q.x}, ${q.y}) 这个位置，第二层再沿时间传过来；那个中转 token 要用一个向量概括整帧的内容。` : '上一帧的红球：<b>这一层看不到</b>。';
+        msg = k === 2 ? '上一帧的红球：<b>这一层就能直接看到</b>。' : k === 1 ? `上一帧的红球：<b>只能两跳间接看到</b>：第一层在潜帧 ${q.f} 内部把红球的信息汇到 (${q.x}, ${q.y}) 这个位置的 token，第二层再沿时间传过来；那个中转 token 要用一个向量概括整帧的内容。` : '上一帧的红球：<b>这一层看不到</b>。';
         if (mode === 'win' && k !== 2) msg += ' 物体一个潜帧跑出窗口，就要靠多层逐步接力。';
         if (mode === 'tm' && k !== 2) msg += ' 时间注意力只连同一位置，物体一动就离开了这一“列”。';
       }
-      say.innerHTML = `查询 = 潜帧 ${q.f + 1} 的 (${q.x}, ${q.y})，这一层直接看 <b>${nk}</b> 个 key（共 ${F * G * G} 个 token）。` + msg + (mode === 'fact' ? ' 深色 = 第二层（时间）直接看的；浅色 = 第一层（空间）先汇总过、再间接传来的。' : '');
+      say.innerHTML = `查询 = 潜帧 ${q.f + 1} 的 (${q.x}, ${q.y})，${mode === 'fact' ? '两层合计' : '这一层'}直接看 <b>${nk}</b> 个 key（共 ${F * G * G} 个 token）。` + msg + (mode === 'fact' ? ' 深色 = 直接看到的（同一帧的由第一层空间注意力看，同一位置的由第二层时间注意力看）；浅色 = 既不同帧也不同位置，只能经中转 token 两跳到达。' : '');
     }
     const c = costs(durS.value);
     stats.innerHTML = '';

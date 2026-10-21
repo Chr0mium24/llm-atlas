@@ -1,14 +1,14 @@
 /* video-tokens — interactive demo (moved from ch13-video.html) */
 A.defineDemo('video-tokens', function (mount) {
-  const { bd } = A.demo(mount, '视频的 token 账：为什么生成一段视频要几分钟', '以 Wan 2.1 14B 的结构估算（40 层，d=5120）');
+  const { bd } = A.demo(mount, '视频的 token 账：为什么生成一段视频要几分钟', '以 Wan 2.1 14B 的结构估算（40 层，d=5120）；耗时按 H100 BF16 稠密 989 TFLOPS、40% 利用率估算');
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const dur = A.slider(ctl, { label: '时长', min: 1, max: 30, step: 1, value: 5, fmt: (v) => v + ' 秒', on: draw });
-  const fps = A.slider(ctl, { label: '帧率', min: 8, max: 30, step: 1, value: 16, fmt: (v) => v + ' fps', on: draw });
+  const fps = A.slider(ctl, { label: '帧率', min: 8, max: 30, step: 1, value: 24, fmt: (v) => v + ' fps', on: draw });
   let res = [1280, 720], sp = 8, attn = 'full';
   A.seg(ctl, [{ v: '480', t: '480p' }, { v: '720', t: '720p' }, { v: '1080', t: '1080p' }, { v: '2160', t: '4K' }], '720', (v) => { res = { 480: [854, 480], 720: [1280, 720], 1080: [1920, 1080], 2160: [3840, 2160] }[v]; draw(); }, '分辨率');
   const ctl2 = A.el('div', { class: 'controls' }); bd.append(ctl2);
   A.seg(ctl2, [{ v: 8, t: '4×8×8' }, { v: 16, t: '4×16×16' }], sp, (v) => { sp = v; draw(); }, 'VAE 压缩（时×高×宽）');
-  A.seg(ctl2, [{ v: 'full', t: '全 3D 注意力' }, { v: 'fact', t: '空间 + 时间分解' }], attn, (v) => { attn = v; draw(); }, '注意力');
+  A.seg(ctl2, [{ v: 'full', t: '全 3D 注意力' }, { v: 'fact', t: '空间 + 时间分解（下一节讲）' }], attn, (v) => { attn = v; draw(); }, '注意力');
   const steps = A.slider(ctl2, { label: '去噪步数', min: 1, max: 50, step: 1, value: 50, fmt: (v) => v + ' 步', on: draw });
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const cv = A.el('canvas', { class: 'cv' }); bd.append(cv);
@@ -36,6 +36,6 @@ A.defineDemo('video-tokens', function (mount) {
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
     view.redraw();
   }
-  bd.append(A.el('p', { class: 'hint' }, '默认设置（720p、5 秒、16fps、4×8×8）约 7.6 万个 token，与 Wan 2.1 720p 的实际规模一致。分辨率翻倍，token 数变成 4 倍，注意力代价变成 16 倍。所以长视频和高分辨率要靠更强的压缩（4×16×16）、稀疏注意力、少步蒸馏，以及先生成低分辨率再超分。'));
+  bd.append(A.el('p', { class: 'hint' }, '默认设置就是红球（720p、5 秒、24 fps、4×8×8）：111,600 个 token，注意力约占一次前向的 77%（线性层这里按 2 × 14B 次运算计，正文公式卡按每层 24d² 估为 78%），50 步加 CFG 在单张 H100 上约 56 分钟。帧率改成 16 就是 Wan 2.1 的实际设置：约 7.6 万个 token。分辨率翻倍，token 数变成 4 倍，注意力代价变成 16 倍。所以长视频和高分辨率要靠更强的压缩（4×16×16）、稀疏注意力、少步蒸馏，以及先生成低分辨率再超分。'));
   draw();
 });
