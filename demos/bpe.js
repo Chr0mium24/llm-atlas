@@ -64,9 +64,11 @@ Language models use attention. The attention mechanism lets every token look at 
   function render() {
     const n = Math.min(sl.value, merges.length);
     const ms = merges.slice(0, n);
+    const known = new Set(Array.from(ta.value));
     const toks = [];
     for (const chunk of inp.value.match(RE) || []) {
       let s = toSyms(chunk);
+      if (mode === 'char') s = s.map((c) => (known.has(c) ? c : '[UNK]'));
       for (const [a, b] of ms) if (s.length > 1) s = mergeOnce(s, a, b);
       toks.push(...s);
     }
@@ -78,9 +80,9 @@ Language models use attention. The attention mechanism lets every token look at 
       out.append(A.el('span', { class: 'tok', style: { background: A.alpha(c, 0.16), borderColor: A.alpha(c, 0.45) }, title: 'token #' + i }, label));
     });
     const nChar = Array.from(inp.value).length;
-    const base = mode === 'char' ? new Set(Array.from(ta.value + inp.value)).size : 256;
+    const base = mode === 'char' ? known.size : 256;
     stats.innerHTML = '';
-    [['token 数', toks.length], ['字符数', nChar], ['平均每 token 字符', (nChar / toks.length).toFixed(2)], ['词表大小', base + n + (mode === 'char' ? '（基础 ' + base + ' + 合并 ' + n + '）' : '（256 字节 + ' + n + '）')]]
+    [['token 数', toks.length], ['字符数', nChar], ['平均每 token 字符', (toks.length ? (nChar / toks.length).toFixed(2) : '—')], ['词表大小', base + n + (mode === 'char' ? '（基础 ' + base + ' + 合并 ' + n + '）' : '（256 字节 + ' + n + '）')]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, String(v)))));
     mergesBox.innerHTML = ms.length ? ms.map(([a, b, c], i) => `${i + 1}. <b>${esc(show(a))}</b> + <b>${esc(show(b))}</b> → ${esc(show(a + b))} <span style="color:var(--muted)">(${c})</span>`.replace(/ \+ /g, ' + ')).join('<br>') : '<span class="muted">（还没有合并）</span>';
   }
