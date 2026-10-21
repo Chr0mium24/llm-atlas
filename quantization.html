@@ -13,7 +13,7 @@
 <header>
   <div class="kicker"></div>
   <h1>量化：把 16 位权重压到 4 位、2 位，甚至 1 位</h1>
-  <p class="lede">量化是让大模型在显卡、Mac、手机上跑起来的最重要的技术，也已经成为前沿模型训练的一部分：Kimi K3 从 SFT 阶段就开始用 MXFP4 训练，DeepSeek V4 给专家权重做 FP4 量化感知训练，PrismML 的 Bonsai 把 27B 模型压到每权重 1.76 位。这一章从数字格式讲起，推导量化误差从哪来、离群值为什么是真正的敌人、旋转为什么能消灭离群值，用一个可以直接调参的量化实验室把各种方法放在同一组数据上比较，最后讲为什么低于 4 位就必须在训练中解决。</p>
+  <p class="lede">量化是让大模型在显卡、Mac、手机上跑起来的最重要的技术，也已经成为前沿模型训练的一部分：Kimi K3 从 SFT 阶段就开始用 MXFP4 训练，DeepSeek V4 给专家权重做 FP4 量化感知训练，PrismML 的 Bonsai 把 27B 模型压到每权重 1.75 位。这一章从数字格式讲起，推导量化误差从哪来、离群值为什么是真正的敌人、旋转为什么能消灭离群值，用一个可以直接调参的量化实验室把各种方法放在同一组数据上比较，最后讲为什么低于 4 位就必须在训练中解决。</p>
 </header>
 
 <div class="bridge">上一章说，解码时计算单元大多在等数据，速度上限由“每个 token 要读多少字节”决定；同样的数据通路，位数减半，每拍能送进两倍的数，要搬的字节也减半（乘法器本身的面积省得更多，但吞吐受限于数据通路，见第 <a class="xref" data-ref="hardware"></a> 章）。两件事都指向同一个方向：用更少的位数表示模型。</div>
@@ -121,7 +121,7 @@
   <tr><td>MXFP4</td><td>OCP 标准，Blackwell / MI355 原生</td><td>4.25</td><td>32 个 E2M1 + E8M0 缩放</td><td>gpt-oss、Kimi K3 专家权重</td></tr>
   <tr><td>NVFP4</td><td>NVIDIA Blackwell</td><td>4.5</td><td>16 个 E2M1 + E4M3 缩放 + FP32 张量缩放</td><td>FP4 推理与训练</td></tr>
   <tr><td>TQ1_0 / Q2_0（三值）</td><td>llama.cpp</td><td>1.69 / 2.06</td><td>\(\{-1, 0, 1\}\) 打包</td><td>BitNet b1.58 类模型</td></tr>
-  <tr><td>PTQ1_0 / PQ2_0</td><td>PrismML 分支</td><td>1.76 / 2.16</td><td>三值，分组 128 + Hadamard 旋转</td><td>Ternary Bonsai 2</td></tr>
+  <tr><td>PTQ1_0 / PQ2_0</td><td>PrismML 分支</td><td>1.75 / 2.13</td><td>三值，分组 128 + Hadamard 旋转</td><td>Ternary Bonsai 2</td></tr>
 </table></div>
 <p>只量化权重、计算时还原成 16 位，叫 W4A16，主要省带宽；权重和激活都用低位（W8A8、W4A4），才能用上低精度张量核心的算力，FP8 和 FP4 的硬件支持就是为此准备的。KV 缓存也可以量化成 FP8 或 4 位，对长上下文尤其重要（第 <a class="xref" data-ref="long-context"></a> 章；做法和代价见第 <a class="xref" data-ref="on-device"></a> 章<a href="on-device.html#od0-kv">「KV 量化」</a>）。</p>
 <aside class="dispute">
@@ -149,7 +149,7 @@
   <li><b>DeepSeek V4</b>（2026）：专家权重和稀疏注意力的索引器做 FP4 QAT，其余 FP8，针对 Blackwell。</li>
   <li><b>Kimi K3</b>（2026-07）：从 SFT 阶段开始 QAT，专家权重 MXFP4、激活 MXFP8。2.8 万亿参数按 4 位存储约 1.4 TB，加上缩放约 1.5 TB。</li>
   <li><b>原生低精度预训练</b>：NVIDIA 展示了用 NVFP4 预训练 12B 模型到 10 万亿 token，与 FP8 基线几乎无差距（第 <a class="xref" data-ref="training-systems"></a> 章）。</li>
-  <li><b>极低位</b>：BitNet b1.58（2024）从头训练三值模型，2B4T（2025-04）是第一个原生训练的开源 1 位级模型；PrismML 的 1-bit Bonsai（2026-03，8B 只占 1.15 GB）和 Ternary Bonsai 2 27B（1.76 bpw，5.9 GB，PrismML 报告保留约 98% 的评测成绩）；腾讯混元走 2 位 QAT 的端侧路线。</li>
+  <li><b>极低位</b>：BitNet b1.58（2024）从头训练三值模型，2B4T（2025-04）是第一个原生训练的开源 1 位级模型；PrismML 的 1-bit Bonsai（2026-03，8B 只占 1.15 GB）和 Ternary Bonsai 2 27B（1.75 bpw，5.95 GB，PrismML 报告保留约 98% 的评测成绩）；腾讯混元走 2 位 QAT 的端侧路线。</li>
 </ul>
 <aside class="dispute surprise">
   <h4>意外：训练得越久的模型，越难量化</h4>

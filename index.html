@@ -48,35 +48,35 @@
 document.addEventListener('DOMContentLoaded', () => {
   const INFO = {
     prologue: '六个时代的主线与支线：每个时代卡在哪个瓶颈、怎么突破、代价与引出；九年算力曲线；苦涩的教训之争；全书路线图',
-    tokens: '从零开始：五个短语手动跑 BPE 合并、切句子、查嵌入表、算余弦相似度；BPE 是贪心压缩、Unigram 与 EM、词表大小的账、中英文 token 效率、字节回退、数字怎么切、word2vec 与向量算术、特殊 token、每一代分词器在修什么',
+    tokens: '从零开始：五个短语手动跑 BPE 合并、切句子、查嵌入表、算余弦相似度；BPE 是贪心压缩、Unigram 与 EM、字节级 BPE 与字节回退、输出端与共享嵌入、词表大小的账、中英文 token 效率、数字怎么切、word2vec 与向量算术、特殊 token、还要不要分词器',
     attention: 'RNN 的瓶颈与路径长度；从零开始：“小猫追红球”四个词手算 Q/K/V、打分、缩放、softmax 与加权求和；因果掩码与 KV 缓存的来历、除以根号 d 的推导与 softmax 饱和、多头、归纳头与注意力汇、平方代价、每一代在修什么',
     transformer: '从零开始：一个 4 维向量逐步穿过一个块，数清一层的参数（12d²）与每 token 计算；残差流、MLP 键值记忆与 SwiGLU、Pre-Norm 与 Post-Norm 的梯度、RoPE 推导与上下文扩展、训练稳定性（QK-Norm、门控）、每一代在修什么；2026 年连残差都在改',
-    generation: '从零开始：5 个词的词表手算 softmax、交叉熵、困惑度与温度采样；预测即压缩（比特数）、截断采样各砍掉什么、贪心与束搜索为什么陷入循环、约束解码、扩散语言模型的并行生成、每一代解码方法在修什么',
+    generation: '从零开始：5 个词的词表手算 softmax、交叉熵、困惑度与温度采样；从计数到神经网络每一代语言模型在修什么、预测即压缩（比特数）、截断采样各砍掉什么、贪心与束搜索为什么陷入循环、约束解码、多 token 预测与扩散语言模型的并行生成',
     data: '流水线、MinHash 去重与“去重太狠反而变差”、质量分类器、重复数据值多少、中期训练、改写为什么有效、模型崩溃、数据墙与版权',
     scaling: '从零开始：五次玩具训练，在双对数坐标上手算幂律指数并外推；Chinchilla 最优分配推导与 2024 复现、过度训练与推理成本、重复数据的价值、μP 与 WSD、涌现之争、预训练撞墙之争；Adam/AdamW、Muon 的正交化与谱范数推导',
-    sft: '从零开始：三条示范手算只算回答的 SFT 损失、一对偏好手算 Bradley-Terry 与 DPO 损失；浅层对齐假说、带 KL 约束的最优策略与 DPO 推导、奖励过度优化（古德哈特）、标注噪声的上限、DPO 家族各修什么、LoRA（RL 秩 1 就够）、模型合并',
+    sft: '从零开始：三条示范手算只算回答的 SFT 损失、一对偏好手算 Bradley-Terry 与 DPO 损失；浅层对齐假说、带 KL 约束的最优策略与 DPO 推导、奖励过度优化（古德哈特）、标注噪声的上限、DPO 之后的三条线、LoRA（RL 秩 1 就够）、模型合并、2025–26 的新位置',
     rl: '策略梯度推导、PPO → GRPO → DAPO / GSPO / CISPO、奖励与环境、训练-推理不一致、“发现还是挑选”之争',
     distillation: '软标签与温度、正向 vs 反向 KL、在线蒸馏 = 逐 token 奖励的 RL（推导）、MOPD 解决跷跷板、自蒸馏与持续学习、潜意识学习与蒸馏攻击',
     reasoning: '思维链为什么有用（串行深度与复杂性）、并行 vs 串行的预算分配、过度思考与反向规模化、思维链忠实性、不用文字的推理',
     agents: '跟着一个查天气的任务走一遍循环；上下文的平方账与压缩的最优时机、工具调用与 MCP、上下文工程、检索（块大小、召回率）、长任务的可靠性与重试、harness 与多智能体、提示注入、评测与每一代在修什么',
-    coding: '跟着一个 bug 走一遍编程智能体；FIM 训练目标、测试作为奖励的误放率与针对测试取巧、采样 + 测试筛选的收益上限、阿姆达尔定律与开发者实验（METR）、RL 环境、每一代在修什么',
-    moe: '从零开始：6 个 token、4 个专家手算路由；负载均衡的三种做法（辅助损失、无辅助损失偏置控制器、router z-loss）及推导、细粒度与共享专家、MoE 规模定律与效率杠杆、专家并行的全对全通信、每一代在修什么、条件记忆',
+    coding: '跟着一个 bug 走一遍编程智能体；FIM 训练目标、测试作为奖励的误放率与针对测试取巧、采样 + 测试筛选的收益上限、阿姆达尔定律与开发者实验（METR）、RL 环境、代码质量与安全、每一代在修什么',
+    moe: '从零开始：6 个 token、4 个专家手算路由；负载均衡的三种做法（辅助损失、无辅助损失偏置控制器、router z-loss）及推导、专家到底在分工什么、细粒度与共享专家、MoE 规模定律、专家并行的全对全通信、部署时省计算不一定省显存、条件记忆',
     'long-context': 'KV 缓存公式、GQA 与 MLA（矩阵吸收推导）、FlashAttention 与在线 softmax、线性注意力的结合律与 Delta 规则（梯度下降视角）、混合之争、稀疏注意力、迷失在中间',
     hardware: '跟着一次矩阵乘法走进 H100：SM、存储层次与三种瓶颈；roofline 与分块的推导、低精度为什么翻倍、脉动阵列与全片上存储、互连与扩展域、从 V100 到 Rubin 每一代在修什么、软件栈与 2026 芯片格局',
     quantization: '带宽上限、Δ²/12 误差推导与离群值、分组与微缩放（bpw）、Hadamard 旋转与 GPTQ 推导、量化实验室、STE 与 QAT、过度训练更难量化、三值模型之争',
-    serving: '跟着一个请求走一遍；批处理的算术强度、KV 显存账与 GQA/MLA、分页与前缀缓存、排队论与 goodput、投机解码的证明、分块预填充与 P/D 分离、每百万 token 的成本',
+    serving: '跟着一个请求走一遍；批处理的算术强度、KV 显存账与 GQA/MLA、分页与前缀缓存、投机解码的证明、排队论与 goodput、分块预填充与 P/D 分离、MoE 的宽专家并行与注意力–FFN 分离、每百万 token 的成本',
     'training-systems': '一个训练步里显存怎么涨落（每参数 16 字节、激活与重计算）；环形全规约、ZeRO、张量 / 流水线 / 专家 / 上下文并行；MFU、低精度训练、故障与检查点间隔（Daly 公式）、RL 训练系统',
-    'on-device': '从零开始：16 GB 显存能跑什么——权重、KV 与生成速度一步步算；带宽决定解码上限、MoE 专家卸载的速度账、端侧投机解码、手机的发热与降频、同样内存下大模型低比特还是小模型高比特、开源与前沿的差距',
+    'on-device': '从零开始：16 GB 的设备能跑什么——权重、KV 与生成速度一步步算；带宽决定解码上限、格式与运行时、MoE 专家卸载的速度账、端侧投机解码、大模型低比特还是小模型高比特、Mac 统一内存、手机的发热与降频、NPU 的 TOPS 为什么不能直接比、实战记录',
     vlm: 'ViT 与 patch 计数、CLIP 对比学习（互信息下界推导）与 SigLIP、编码器 + 投影 + LLM、原生 vs 后装之争、动态分辨率、光学压缩、视频 token 预算、视觉盲点之争',
     diffusion: '前向加噪、后验均值与 Tweedie 公式、速度场与连续性方程、SDE vs ODE（福克-普朗克）、CFG 的贝叶斯推导、少步蒸馏、完美去噪器只会背书、扩散 vs 自回归',
-    image: '从零开始走一遍潜扩散流水线：VAE、文本编码器、去噪与 CFG 的账；MMDiT 联合注意力、SDEdit 强度权衡与上下文编辑、DreamBooth 个性化、少步蒸馏、FID 的推导与局限、每一代在修什么',
-    video: '从零开始算一段 5 秒视频的 token 与注意力账、3D 因果 VAE、联合去噪为什么一致、自回归漂移与 Self Forcing、少步与实时、每一代在修什么（噪声分工 MoE、原生音频、多镜头）、懂物理之争',
-    audio: '从零开始：一秒语音是多少个采样、多少帧梅尔频谱、多少编解码 token；STFT 的时频权衡、RVQ 码率、多码本的排列（延迟模式、深度 Transformer）、语音对话的延迟账与全双工判停、每一代在修什么、音乐生成与版权',
-    spatial: '从零开始：针孔相机把三维点投影成像素、一条光线累加颜色；体渲染与 alpha 合成、NeRF 位置编码与频谱偏置、3D 高斯投影与实时光栅化、SDS 与多面问题、前馈重建（DUSt3R、VGGT）、每一代在修什么与世界生成',
-    'world-models': '从零开始：网格世界里世界模型预测什么、怎样在想象中规划；误差累积与最优视野、Dreamer 的潜变量目标、JEPA 为什么不重建像素、Genie 的潜动作、MuZero 的价值等价；每一代在修什么与路线之争',
-    embodied: '从零开始：玩具机械臂的观测、动作与一条示范；行为克隆的误差累积（T²ε）与 DAgger、动作块的权衡、FAST 频域 token 化、流匹配动作专家、双系统的时间账、仿真到现实、RL 微调、每一代在修什么',
+    image: '从零开始走一遍潜扩散流水线：VAE、文本编码器、去噪与 CFG 的账；MMDiT 联合注意力、SDEdit 强度权衡与上下文内编辑、DreamBooth 个性化、少步蒸馏、FID 的推导与局限、自回归与统一模型、水印与版权',
+    video: '从零开始算一段 5 秒视频的 token 与注意力账、3D 因果 VAE、联合去噪为什么一致、自回归漂移与 Self Forcing、少步、缓存与长视频记忆、Sora 之后在修什么（噪声分工 MoE、原生音频、多镜头与参考）、懂物理之争',
+    audio: '从零开始：两秒的一句话是多少个采样、多少帧梅尔频谱、多少编解码 token；STFT 的时频权衡、自监督与 Whisper、RVQ 码率、多码本的排列（延迟模式、深度 Transformer）、语音对话的延迟账与全双工判停、抢话与想得浅、音乐生成与版权',
+    spatial: '从零开始：针孔相机把三维点投影成像素、一条光线累加颜色；从照片恢复相机与点云、体渲染与 alpha 合成、NeRF 位置编码与频谱偏置、3D 高斯投影与实时光栅化、SDS 与雅努斯（多脸）问题、前馈重建（DUSt3R、VGGT）、从物体到世界、多模态模型的空间推理',
+    'world-models': '从零开始：9×9 小球世界里世界模型预测什么、怎样在想象中规划；Dreamer 的潜变量目标、MuZero 的价值等价、误差累积与最优视野、可以玩的视频与 Genie 的潜动作、实时与记忆（Genie 3、Matrix-Game）、自动驾驶与机器人、JEPA 与路线之争',
+    embodied: '从零开始：玩具机械臂的观测、动作与一条示范；行为克隆的误差累积（T²ε）与 DAgger、动作块的权衡、FAST 频域 token 化、流匹配动作专家、双系统的时间账、仿真到现实、RL 微调、世界动作模型、机器人的数据从哪来',
     interpretability: '探针与 logit lens、叠加（实时训练的玩具模型）与高维几乎正交、SAE 与金门大桥、归因图、拒绝方向与操控、2026 发现（助手轴、功能性情绪、内省、全局工作空间）、监督会教会隐藏',
-    evaluation: '100 题玩具基准：标准误、配对检验与聚类；饱和与污染、pass@k 的无偏估计、竞技场 Elo 与 Bradley-Terry、METR 时间跨度、每一代基准在修什么、评估意识',
+    evaluation: '100 题玩具基准：随机误差与系统误差、标准误、配对检验与聚类；饱和与污染、pass@k 的无偏估计、竞技场 Elo 与 Bradley-Terry、METR 时间跨度与 IRT、构念效度、评估意识',
     alignment: '宪法与 Model Spec、谄媚事故、钻空子泛化成涌现不对齐、幻觉的计分根源、思维链可监控性、对齐伪装与人设',
     jailbreak: '目标冲突、浅层对齐与拒绝方向；越狱的幂律统计；防御从拒绝训练下移到分类器级联、数据过滤与架构隔离（只讲机制）',
     science: '共进化与 AlphaFold、天气 AI、材料发现的基础率、数学从 IMO 金牌到开放问题、AI 科学家；验证是瓶颈',
@@ -97,7 +97,7 @@ document.addEventListener('DOMContentLoaded', () => {
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 131], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 130], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }

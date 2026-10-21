@@ -102,14 +102,14 @@
 <p>清洗好的数据按来源和领域分成若干堆：网页、代码、数学、学术论文、书籍、多语言等。<dfn data-t="data-mixture">数据配比</dfn>决定每一堆占多少。配比很难靠直觉定：代码数据能提升非代码任务的推理（Aryabumi 等, 2024 的实验中相对提升约 8%），但占比过高又会损害自然语言能力。常用办法是在小模型上搜索配比再外推到大模型，例如 DoReMi（2023）用一个小代理模型自动调整各领域权重，RegMix（2024）训练几百个小模型拟合“配比 → 损失”的回归模型。</p>
 <p>高质量数据有限，就不得不重复使用。重复几遍还算“新数据”？Muennighoff 等（2023）训练了 400 多个模型，拟合出重复数据的“等效数据量”：</p>
 <div class="fx">
-\[ D' = \htmlClass{sym-U}{U} + U\,\htmlClass{sym-Rs}{R^\ast}\Big(1 - e^{-\htmlClass{sym-R}{R}/R^\ast}\Big),\qquad R^\ast\approx 15 \]
-  <div class="fx-read">\(U\) 份不重复的数据，额外重复 \(R\) 遍，相当于多少份新数据。重复几遍时几乎和新数据一样好；重复次数越多，每多一遍的价值指数衰减，最终最多相当于 \(U(1 + R^\ast)\)，即约 16 倍。</div>
+\[ D' = \htmlClass{sym-U}{U} + U\,\htmlClass{sym-Rs}{R^\ast}\Big(1 - e^{-\htmlClass{sym-R}{R}/R^\ast}\Big),\qquad R^\ast\approx 15.4 \]
+  <div class="fx-read">\(U\) 份不重复的数据，额外重复 \(R\) 遍，相当于多少份新数据。重复几遍时几乎和新数据一样好；重复次数越多，每多一遍的价值指数衰减，最终最多相当于 \(U(1 + R^\ast)\)，即约 16.4 倍。</div>
   <dl class="fx-syms">
     <dt data-sym="U">\(U\)</dt><dd>不重复的数据量（token 数）</dd>
     <dt data-sym="R">\(R\)</dt><dd>在第一遍之外又重复的遍数（共训练 \(1 + R\) 遍）</dd>
-    <dt data-sym="Rs">\(R^\ast\)</dt><dd>拟合得到的常数，约 15，表示重复的价值衰减到 \(1/e\) 所需的遍数</dd>
+    <dt data-sym="Rs">\(R^\ast\)</dt><dd>拟合得到的常数，约 15.4（与第 <a class="xref" data-ref="scaling"></a> 章的 \(R_D^\ast\) 相同），表示重复的价值衰减到 \(1/e\) 所需的遍数</dd>
   </dl>
-  <div class="fx-eg">训练 5 遍（\(R = 4\)）：\(D' = U(1 + 15\times(1 - e^{-4/15})) = 4.51U\)，相当于 5 份新数据的 90%。训练 16 遍（\(R = 15\)）：\(D' = 10.5U\)，只相当于 16 份新数据的 65%。训练 41 遍：\(D'\approx 15U\)，不到 37%。</div>
+  <div class="fx-eg">训练 5 遍（\(R = 4\)）：\(D' = U(1 + 15.4\times(1 - e^{-4/15.4})) = 4.52U\)，相当于 5 份新数据的 90%。训练 16 遍（\(R = 15\)）：\(D' = 10.6U\)，只相当于 16 份新数据的 66%。训练 41 遍：\(D'\approx 15.3U\)，约 37%。</div>
 </div>
 <p>结论是：重复 4 遍左右几乎不吃亏，这给“数据不够”留出了余地。另一个重要的手段是分阶段训练。现代预训练通常分三段：</p>
 <ol>
@@ -236,7 +236,7 @@
 
 <h2 id="quiz">自测</h2>
 <details class="quiz"><summary>1. 用 \(b = 14\)、\(r = 8\) 的 LSH 去重，一对 Jaccard 相似度为 0.8 的文档被抓到的概率是多少？想让阈值降到约 0.6，可以怎么调？</summary><div class="ans">\(0.8^8\approx 0.168\)，\((1 - 0.168)^{14}\approx 0.076\)，概率约 92.4%。阈值约为 \((1/b)^{1/r}\)：减小 \(r\) 或增大 \(b\) 都能降低阈值，例如 \(b = 20, r = 6\)：\((1/20)^{1/6}\approx 0.61\)。</div></details>
-<details class="quiz"><summary>2. 你有 5 万亿 token 的高质量数据，计划训练 20 万亿 token。按 \(R^\ast = 15\) 的公式，这相当于多少不重复的新数据？</summary><div class="ans">共 4 遍，\(R = 3\)。\(D' = 5\times(1 + 15\times(1 - e^{-0.2})) = 5\times(1 + 15\times 0.181) = 5\times 3.72\approx 18.6\) 万亿，相当于 20 万亿新数据的 93%。</div></details>
+<details class="quiz"><summary>2. 你有 5 万亿 token 的高质量数据，计划训练 20 万亿 token。按 \(R^\ast = 15.4\) 的公式，这相当于多少不重复的新数据？</summary><div class="ans">共 4 遍，\(R = 3\)。\(D' = 5\times(1 + 15.4\times(1 - e^{-3/15.4})) = 5\times(1 + 15.4\times 0.177) = 5\times 3.73\approx 18.6\) 万亿，相当于 20 万亿新数据的 93%。</div></details>
 <details class="quiz"><summary>3. 按每参数 2 比特的知识容量，一个 7B 模型最多能存多少条“某人的出生日期”这样的事实？（一条日期在 100 年范围内约有 \(\log_2 36500\approx 15\) 比特信息，再加上把它和人名关联的开销，按每条 30 比特估算。）</summary><div class="ans">\(7\times 10^9\times 2 = 1.4\times 10^{10}\) 比特，\(1.4\times 10^{10}/30\approx 4.7\times 10^8\)，约 5 亿条。这远多于维基百科的条目数，但知识要被见过足够多次（约 1000 次）才能达到这个容量，罕见知识存得远没有这么多。</div></details>
 
 <h2 id="reading">必读</h2>

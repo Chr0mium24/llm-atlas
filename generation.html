@@ -124,12 +124,12 @@
 <p><b>RNN 语言模型（2010）修的是固定窗口。</b><span class="term" data-t="rnn">循环神经网络</span>每读一个词更新一次隐藏状态，理论上能记住任意长的历史；Mikolov 等（2010）报告，几个 RNN 语言模型混合后，困惑度比 5 元 Kneser-Ney 回退模型低约 50%。代价是只能串行训练，<span class="term" data-t="vanishing-grad">梯度消失</span>让它实际只记得住几十个词（第 <a class="xref" data-ref="attention"></a> 章）。</p>
 <p><b>Transformer 解码器（2017–2018）修的是“压成一个向量、只能串行训练”。</b>注意力让每个位置直接查看前文，因果掩码让整段文本并行训练（teacher forcing）；代价是生成时每个新 token 都要读一遍前面所有 token 的 K、V（第 <a class="xref" data-ref="long-context"></a> 章）。训练一旦可以并行，问题就变成了“能做多大”：GPT-2（2019）15 亿参数，GPT-3（2020）1750 亿（第 <a class="xref" data-ref="scaling"></a> 章）。</p>
 <div class="fx">
-\[ \begin{aligned} \text{神经语言模型：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}\big(W\tanh(U\,[\mathbf e_{t-n+1};\dots;\mathbf e_{t-1}])\big)\\ \text{RNN：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}(W\mathbf h_{t-1}),\quad \mathbf h_{t-1} = f(\mathbf h_{t-2},\ \mathbf e_{t-1})\\ \text{Transformer：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}(W\mathbf h_{t-1}),\quad \mathbf h_{t-1} = \operatorname{Attn}(\mathbf e_1,\dots,\mathbf e_{t-1}) \end{aligned} \]
+\[ \begin{aligned} \text{神经语言模型：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}\big(W_U\tanh(U\,[\mathbf e_{t-n+1};\dots;\mathbf e_{t-1}])\big)\\ \text{RNN：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}(W_U\mathbf h_{t-1}),\quad \mathbf h_{t-1} = f(\mathbf h_{t-2},\ \mathbf e_{t-1})\\ \text{Transformer：}&\quad p(\cdot\mid x_{&lt;t}) = \operatorname{softmax}(W_U\mathbf h_{t-1}),\quad \mathbf h_{t-1} = \operatorname{Attn}(\mathbf e_1,\dots,\mathbf e_{t-1}) \end{aligned} \]
 <span class="eqnote">三代神经语言模型只换了一件事：怎样把前缀变成一个向量</span>
-  <div class="fx-read">输出端完全一样：一个向量乘以输出矩阵 \(W\) 得到 logit，再做 softmax；训练目标都是交叉熵。区别只在中间：拼接固定窗口、逐步更新状态，还是直接注意所有前文。</div>
+  <div class="fx-read">输出端完全一样：一个向量乘以输出矩阵 \(W_U\) 得到 logit，再做 softmax；训练目标都是交叉熵。区别只在中间：拼接固定窗口、逐步更新状态，还是直接注意所有前文。</div>
   <dl class="fx-syms">
     <dt>\(\mathbf e_t\)</dt><dd>第 \(t\) 个 token 的嵌入向量</dd>
-    <dt>\(W\)、\(U\)</dt><dd>输出矩阵（\(V\times d\)）、隐藏层的权重</dd>
+    <dt>\(W_U\)、\(U\)</dt><dd>输出矩阵（\(V\times d\)，与第 <a class="xref" data-ref="tokens"></a> 章同一记号，按列向量写；第 <a class="xref" data-ref="transformer"></a> 章用行向量，是它的转置 \(d\times V\)）、隐藏层的权重</dd>
     <dt>\(\mathbf h_{t-1}\)</dt><dd>读完前 \(t-1\) 个 token 后的向量；\(f\) 是 RNN 的更新函数，\(\operatorname{Attn}\) 是整个 Transformer</dd>
   </dl>
   <div class="fx-eg">“猫 吃 __”：神经语言模型拼接两个词的向量；RNN 用读完两个词后的状态；Transformer 让最后一个位置按内容决定看“猫”和“吃”各多少。输出都是词表上的一个分布。</div>

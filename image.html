@@ -179,7 +179,7 @@
   <dl>
     <dt>原以为</dt><dd>能画出逼真照片的模型，画几个字母应该不在话下。</dd>
     <dt>实际发现</dt><dd>DALL·E 2、Stable Diffusion 1.x 生成的招牌、书名几乎全是乱码。Google 的研究（Liu 等, 2022）发现关键在文本编码器：CLIP 和 T5 用<span class="term" data-t="subword">子词分词</span>（第 <a class="xref" data-ref="tokens"></a> 章），一个词被切成一两个 token，模型根本不知道 “coffee” 由哪几个字母组成；换成按字节编码的 ByT5，拼写准确率大幅提高。这是原因之一：4 通道 VAE 会把小字糊掉，训练数据里清晰的文字也不多。</dd>
-    <dt>为什么</dt><dd>要把文字画对，模型必须知道每个字符的形状和顺序；子词 token 把这些信息藏在了一个整体编号里。这和语言模型数不清 “strawberry” 里有几个 r 是同一个问题。</dd>
+    <dt>为什么</dt><dd>要把文字画对，模型必须知道每个字符的形状和顺序；子词 token 把这些信息藏在了一个整体编号里。这和语言模型数不清 “strawberry” 里有几个 r 是同一个问题（第 <a class="xref" data-ref="tokens"></a> 章<a href="tokens.html#letters">「模型为什么数不清字母」</a>）。</dd>
     <dt>现在怎么看</dt><dd>2024–25 年，更多的潜空间通道、字符级或大语言模型做编码器、大量合成的文字渲染数据，让准确的中英文排版成为标配；Qwen-Image 以中文文字渲染见长，GPT-4o 与 Nano Banana Pro 能生成带准确多语言文字的海报和图表。</dd>
   </dl>
 </aside>
