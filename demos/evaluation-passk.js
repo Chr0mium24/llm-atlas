@@ -1,7 +1,7 @@
 /* evaluation-passk — plug-in estimators 1−(1−c/n)^k and (c/n)^k vs the unbiased combinatorial ones, for pass@k and pass^k, over 300 simulated evaluations of a 200-question toy benchmark */
 A.defineDemo('evaluation-passk', function (mount) {
   const { bd } = A.demo(mount, 'pass@k 与 pass^k：把 c/n 直接代进去，为什么会偏', '玩具基准：200 道题，每题有自己的真实答对率 p（35% 难题、35% 中等、30% 简单）；每题采样 n 次，同样的评测重复 300 次，看估计值平均落在哪里');
-  let n = 10, k = 10, mode = 'at';
+  let n = 10, k = 5, mode = 'at';
   const Q = 200, S = 300;
   const r0 = A.rng(11), P = [];
   for (let i = 0; i < Q; i++) { const u = r0(); P.push(u < 0.35 ? 0.15 * r0() : u < 0.7 ? 0.15 + 0.55 * r0() : 0.7 + 0.3 * r0()); }
@@ -90,8 +90,13 @@ A.defineDemo('evaluation-passk', function (mount) {
     const rb = (d.pm - d.truth) / d.truth;
     let msg;
     if (k === 1) msg = 'k = 1 时两种估计完全相同，都是答对比例 c/n 的平均，都无偏。偏差只在 k > 1 时出现：k 越接近 n，偏差越大。';
-    else if (mode === 'at') msg = `pass@k 是 p 的凹函数，代入法系统性地<b>低估</b>：一道题 n 次里一次也没做对（c = 0），代入法就认为它永远做不对，可它的真实 p 并不是 0。现在 n = ${n}、k = ${k}，代入法平均低估 ${(-rb * 100).toFixed(1)}%；组合数公式的平均正好落在真值上，代价是单次的波动略大。把 n 拉大，代入法的偏差会缩小：每题多采样、再用组合数公式，是 HumanEval 以来的标准做法。`;
-    else msg = `pass^k 是 p 的凸函数，代入法系统性地<b>高估</b>可靠性：一道题 n 次全对（c = n），代入法就认为它永远不会错。现在 n = ${n}、k = ${k}，代入法高估了 ${(rb * 100).toFixed(0)}%（右图），对“智能体能不能每次都把事办对”这个问题，这是往乐观方向的错。组合数公式 C(c, k)/C(n, k) 是无偏的。`;
+    else if (mode === 'at') {
+      const u1 = k / n, p1 = 1 - Math.pow(1 - 1 / n, k);
+      msg = `pass@k 是 p 的凹函数，代入法系统性地<b>低估</b>。偏差不是来自 c = 0：那时两种估计都给 0，完全一样。偏差来自中间的 c。代入法相当于从这 n 次结果里<b>有放回地</b>重抽 k 次，同一次失败可能被抽到好几遍；组合数公式是<b>无放回地</b>挑 k 次，用的都是真实发生过的独立尝试。例如 c = 1：组合数公式给 ${u1.toFixed(2)}（k/n），代入法只给 ${p1.toFixed(2)}${k === n ? '；k = n 时这道题其实已经被做出来过，组合数公式给 1' : ''}。现在 n = ${n}、k = ${k}，代入法平均低估 ${((d.truth - d.pm) * 100).toFixed(1)} 个点（相对 ${(-rb * 100).toFixed(1)}%）；组合数公式的平均落在真值上。把 n 拉大、k 不变，代入法的偏差会缩小：每题多采样、再用组合数公式，是 HumanEval 以来的标准做法。`;
+    } else {
+      const u1 = (n - k) / n, p1 = Math.pow(1 - 1 / n, k);
+      msg = `pass^k 是 p 的凸函数，代入法系统性地<b>高估</b>可靠性。c = n 时两种估计都给 1，偏差同样来自中间的 c：例如 n 次里只错 1 次，组合数公式 C(c, k)/C(n, k) 给 ${u1.toFixed(2)}，代入法给 ${p1.toFixed(2)}。现在 n = ${n}、k = ${k}，代入法高估了 ${((d.pm - d.truth) * 100).toFixed(1)} 个点（相对 ${(rb * 100).toFixed(0)}%，右图）。对“智能体能不能每次都把事办对”这个问题，这是往乐观方向的错。`;
+    }
     hint.innerHTML = msg;
     v1.redraw(); v2.redraw();
   }

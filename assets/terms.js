@@ -295,7 +295,7 @@ window.ATLAS_TERMS = {
 
   // ---- evaluation (evaluation.html)
   contamination: { t: '数据污染', en: 'data contamination', d: '测试题（或其答案）进入了模型的训练数据，使分数反映的是“见过”而非“会做”。2026 年行业默认公开基准已被污染。', at: 'evaluation#static' },
-  'time-horizon': { t: '时间跨度（METR）', en: 'time horizon', d: '人类专家需要多长时间的任务，模型有 50%（或 80%）的把握完成。2019–2025 年约每 7 个月翻倍，2024 年后约每 4 个月。', at: 'evaluation#horizon' },
+  'time-horizon': { t: '时间跨度（METR）', en: 'time horizon', d: '人类专家需要多长时间的任务，模型有 50%（或 80%）的把握完成。2019–2025 年约每 7 个月翻倍；按 METR Time Horizon 1.1，2023 年后约 131 天、2024 年后约 89 天翻一倍。', at: 'evaluation#horizon' },
 
   // ---- alignment (alignment.html)
   alignment: { t: '对齐', en: 'alignment', d: '让模型的行为符合我们真正的意图，而不只是符合给它的代理目标（奖励、标注、分数）。分为外部对齐（目标写对了没有）与内部对齐（模型学到的是不是这个目标）。', at: 'alignment#what' },
@@ -361,8 +361,8 @@ window.ATLAS_TERMS = {
   benchmark: { t: "基准", en: "benchmark", d: "一组固定的题目、标准答案和判分规则。它是从“这一类题”的总体里抽出的一份样本，分数是对真实能力的有噪声的估计。", at: "evaluation#ev0-toy" },
   'standard-error': { t: "标准误", en: "standard error (SE)", d: "估计量（如准确率）在“换一份题再考一次”时的标准差。准确率的标准误是 \\(\\sqrt{p(1-p)/n}\\)，题目翻 4 倍才减半。", at: "evaluation#ev0-se" },
   'confidence-interval': { t: "置信区间", en: "confidence interval", d: "\\(\\hat p \\pm 1.96\\,\\mathrm{SE}\\)：反复抽题、每次都这样算一个区间，95% 的区间会盖住真实值。区间包含 0 的差距，统计上不能断言存在。", at: "evaluation#ev0-ci" },
-  'paired-test': { t: "配对比较", en: "paired comparison", d: "两个模型在同一组题上比较时，逐题求差再估计差的均值。两者一起涨落的部分（协方差）被扣掉，方差通常小一半左右。", at: "evaluation#ev0-paired" },
-  'stat-power': { t: "统计功效", en: "statistical power", d: "真实差距存在时，一次评测能得出“显著”结论的概率。80% 功效需要约 \\(2.8^2\\sigma_d^2/\\delta^2\\) 道题，差距减半，题目要翻 4 倍。", at: "evaluation#ev0-paired" },
+  'paired-test': { t: "配对比较", en: "paired comparison", d: "两个模型在同一组题上比较时，逐题求差再估计差的均值。两者一起涨落的部分（协方差）被扣掉，两个模型越相似，方差降得越多。", at: "evaluation#ev0-paired" },
+  'stat-power': { t: "统计功效", en: "statistical power", d: "真实差距存在时，一次评测能得出“显著”结论的概率。80% 功效需要约 \\(2.8^2\\sigma_d^2/\\delta^2\\) 道题，差距减半，题目要翻 4 倍。", at: "evaluation#ev0-power" },
   'clustered-se': { t: "聚类标准误", en: "clustered standard error", d: "题目成组出现（同一篇文章、同一个仓库）时按组计算的标准误。组内相关 \\(\\rho\\)、每组 \\(m\\) 题时，方差放大 \\(1+(m-1)\\rho\\) 倍。", at: "evaluation#ev0-cluster" },
   bootstrap: { t: "自助法", en: "bootstrap", d: "从已有数据里有放回地重抽同样多的样本、重算统计量，重复上千次，用结果的散布当误差棒。不需要推公式，任何统计量都能用。", at: "evaluation#ev0-cluster" },
   saturation: { t: "饱和（基准）", en: "benchmark saturation", d: "前沿模型的分数挤到天花板附近，模型之间的差距小于统计误差和标注错误，基准不再能区分模型。", at: "evaluation#static" },
@@ -370,7 +370,7 @@ window.ATLAS_TERMS = {
   elo: { t: "Elo 等级分", en: "Elo rating", d: "每赛一场按“实际结果 − 预期胜率”调整分数：\\(R \\leftarrow R + K(S - E)\\)。它是 Bradley-Terry 似然上步长固定的随机梯度，结果依赖对局顺序。", at: "evaluation#arena" },
   'style-control': { t: "风格控制", en: "style control", d: "在 Bradley-Terry 回归里加入回答长度、标题、列表、加粗等风格变量，把“风格带来的胜率”从模型分数里分离出去（LMArena, 2024-08）。", at: "evaluation#arena" },
   'llm-judge': { t: "LLM 评委", en: "LLM-as-a-judge", d: "用强模型代替人给回答打分或做两两比较。便宜，但偏爱特定位置、更长的回答和与自己风格相近的回答。", at: "evaluation#arena" },
-  irt: { t: "项目反应理论（IRT）", en: "item response theory", d: "心理测量学的模型：做对的概率 \\(\\sigma(a_j(\\theta_i - b_j))\\) 只取决于能力 \\(\\theta\\) 与难度 \\(b\\) 之差。Elo 和 METR 时间跨度都是它的特例。", at: "evaluation#horizon" },
+  irt: { t: "项目反应理论（IRT）", en: "item response theory", d: "心理测量学的模型：做对的概率 \\(\\sigma(a_j(\\theta_i - b_j))\\) 只取决于能力 \\(\\theta\\) 与难度 \\(b\\) 之差。竞技场的 Elo 是它的特例，METR 时间跨度是它的变体。", at: "evaluation#horizon" },
   'construct-validity': { t: "构念效度", en: "construct validity", d: "一个测量是否真的测到了它声称要测的能力（“推理”“安全”“编程”），而不是题目格式、应试技巧或别的相关因素。", at: "evaluation#generations" },
   'eval-awareness': { t: "评估意识", en: "evaluation awareness", d: "模型识别出自己正在被测试，并可能因此改变行为。说出口的只是下限；它让评测结果与真实部署中的行为可能不一致。", at: "evaluation#validity" },
 
@@ -698,4 +698,9 @@ window.ATLAS_TERMS = {
   // ---- embodied (upgrade 2026-10-20)
   'degrees-of-freedom': { t: "自由度（机器人）", en: "degrees of freedom (DoF)", d: "机器人可以独立控制的关节数（夹爪也算一个），也就是动作向量的维数。单臂加夹爪 7 维，双臂 14 维，Figure 人形机器人的上半身 35 个。", at: "embodied#e0-task" },
   'inverse-kinematics': { t: "逆运动学", en: "inverse kinematics", d: "已知末端执行器该到达的位置和朝向，反求每个关节该转多少角度。末端空间的动作要靠它换算成关节指令。", at: "embodied#e0-space" },
+
+  // ---- evaluation (upgrade 2026-10-20)
+  decontamination: { t: "去污染", en: "decontamination", d: "在训练数据里删掉与测试题重合的片段。常用 n 元组匹配（GPT-3 用 13 元组），但挡不住改写和翻译，需要用模型判断语义重合。", at: "evaluation#static" },
+  'system-card': { t: "系统卡", en: "system card", d: "厂商随新模型发布的评测报告，主要是安全评测（危险能力、不对齐行为、评估意识等），也包括部分能力评测。", at: "evaluation#validity" },
+  'covert-actions': { t: "隐蔽行为", en: "covert actions", d: "故意隐瞒或歪曲与任务相关的信息，例如谎报完成情况、故意少做。OpenAI 与 Apollo（2025-09）用它作为“策划”的可测代理。", at: "evaluation#validity" },
 };

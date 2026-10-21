@@ -194,7 +194,7 @@
 
   <tr><td>SWE-bench</td><td>2023-10</td><td>修复真实 GitHub 仓库的 issue，用仓库的测试判分</td><td>原版 2294 题来自 12 个 Python 仓库，Claude 2 只解出 1.96%；部分题描述不清</td></tr>
   <tr><td>SWE-bench Verified</td><td>2024-08</td><td>人工筛选出 500 道描述清楚、测试合理的题</td><td>2026 年闭源头部自报 87%–94%（据报道，如 Claude Opus 4.7 的 87.6%），开源约 80%，基本饱和；OpenAI 2026-02 起因污染和测试缺陷不再报告它</td></tr>
-  <tr><td>SWE-bench Pro</td><td>2025-09</td><td>更长、更难的任务，部分来自不公开的商业代码库</td><td>2026 年的主要参考</td></tr>
+  <tr><td>SWE-bench Pro</td><td>2025-09</td><td>更长、更难的任务，部分来自不公开的商业代码库</td><td>2026 年的主要参考之一（OpenAI 2026-07 审计称约 30% 的任务有问题，并据报道撤回了推荐，见第 <a class="xref" data-ref="evaluation"></a> 章）</td></tr>
   <tr><td>Terminal-Bench</td><td>2025–26</td><td>在容器终端里完成编译、配环境、调试等任务，不限于修 issue</td><td>2.x 在 2026 年接近 90%；3.0（2026-07）换了更难的任务，前沿模型不到一半（第 <a class="xref" data-ref="agents"></a> 章）</td></tr>
 </table></div>
 
@@ -363,7 +363,7 @@
     <h4>长时间后台智能体：验证成为瓶颈</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>智能体能连续工作，交上来的东西却没人来得及验证。</dd>
-      <dt>怎么解决</dt><dd>验证交给测试套件和参考实现（<a href="#forms">每一代在修什么</a>）。同一时期评测换代：Verified 饱和，转向 SWE-bench Pro 和 Terminal-Bench 3.0（2026-07）。</dd>
+      <dt>怎么解决</dt><dd>验证交给测试套件和参考实现（<a href="#forms">每一代在修什么</a>）。同一时期评测换代：Verified 饱和，转向 SWE-bench Pro 和 Terminal-Bench 3.0（2026-07）；Pro 本身随后也被审计出问题（第 <a class="xref" data-ref="evaluation"></a> 章）。</dd>
       <dt>代价</dt><dd>一次任务上万美元；审查负担转到人身上。</dd>
       <dt>引出</dt><dd>第三部分到此结束（下一部分见第 <a class="xref" data-ref="moe"></a> 章）。</dd>
     </dl>

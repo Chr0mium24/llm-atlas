@@ -59,7 +59,7 @@ A.defineDemo('evaluation-arena', function (mount) {
   function simulate() {
     const o = perm();
     if (method === 'bt') {
-      const cps = checkpoints(Math.min(200, N), N, 40), W = [...Array(M)].map(() => new Array(M).fill(0)), out = [];
+      const cps = checkpoints(Math.min(200, Math.max(10, Math.round(N / 5))), N, 40), W = [...Array(M)].map(() => new Array(M).fill(0)), out = [];
       let t = 0, R = null;
       for (const cp of cps) {
         for (; t < cp; t++) { const s = o[t], i = BAT[3 * s], j = BAT[3 * s + 1]; if (BAT[3 * s + 2]) W[i][j]++; else W[j][i]++; }
@@ -117,7 +117,7 @@ A.defineDemo('evaluation-arena', function (mount) {
     const msg = {
       e32: 'K = 32 时，每场最多改动 32 分。分数很快离开起点，但之后一直在真实值附近上下跳，幅度约 ±50 分（推导里算出的约 9.3×√K），而且不会随对战增多而变小：前两名的顺序一直在换。点“打乱对战顺序”：同一批投票换个顺序，最终分数能差几十分。',
       e4: 'K = 4：抖动小了（约 ±19 分），代价是起步慢得多，前几百场里分数几乎没离开起点。抖动同样不随对战数缩小，15 分的差距依然分不清。在线 Elo 是为“水平会变的棋手”设计的，模型权重固定时，这种一直在追的更新反而是噪声。',
-      bt: '把到目前为止的全部对战一起拟合，结果与对战顺序无关（打乱顺序不会改变它）。阴影是 A 和 B 的 95% 区间，宽度按 1/√N 缩小。现在前两名之差的 95% 区间是 ±' + (1.96 * last.seAB).toFixed(0) + ' 分。6 个模型两两随机配对时，平均要约 1.1 万场，A 与 B 的区间才会分开，要有 80% 的把握约需 2.2 万场。榜首的模型常常只差十几分，这就是竞技场需要海量投票的原因。',
+      bt: '把到目前为止的全部对战一起拟合，结果与对战顺序无关（打乱顺序不会改变它）。阴影是 A 和 B 的 95% 区间，宽度按 1/√N 缩小。现在前两名之差的 95% 区间是 ±' + (1.96 * last.seAB).toFixed(0) + ' 分。6 个模型两两随机配对时，平均要约 1.1 万场，A 与 B 的区间才会分开，要有 80% 的把握约需 2.2 万场。这比正文推导里的约 2000 场多：那里算的是 A 与 B 直接对战，这里 15 种配对随机出现，A 对 B 只占一小部分。榜首的模型常常只差十几分，这就是竞技场需要海量投票的原因。',
     }[method];
     hint.innerHTML = msg;
     view.redraw();
