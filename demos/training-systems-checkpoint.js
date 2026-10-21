@@ -61,11 +61,13 @@ A.defineDemo('training-systems-checkpoint', function (mount) {
   function draw() {
     P = par();
     stats.innerHTML = '';
-    [['整个集群平均多久中断一次 M', fmtM(P.M)], ['每天中断', (1440 / P.M).toFixed(1) + ' 次'], ['Young 的最优间隔 √(2CM)', fmtM(P.Ty)], ['精确最优间隔', fmtM(P.bt)], ['最低浪费 → 有效训练时间', A.pct(P.bw, 1) + ' → ' + A.pct(1 - P.bw, 0)]]
+    const dead = P.bw >= 0.99;
+    [['整个集群平均多久中断一次 M', fmtM(P.M)], ['每天中断', (1440 / P.M).toFixed(1) + ' 次'], ['Young 的最优间隔 √(2CM)', fmtM(P.Ty)], ['精确最优间隔', dead ? '—' : fmtM(P.bt)], ['最低浪费 → 有效训练时间', dead ? '≈ 100% → 0%' : A.pct(P.bw, 1) + ' → ' + A.pct(1 - P.bw, 0)]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, v))));
     legend.innerHTML = [[cols[0], '浪费比例（精确期望）', ''], [cols[1], '存档开销 ≈ C/T', ''], [cols[2], '故障丢掉的工作 ≈ T/(2M)', ''], [cols[3], '重启 ≈ R/M', '']].map(([c, n]) => `<span><i class="line" style="background:${c}"></i>${n}</span>`).join('');
-    const sq = Math.sqrt(2 * P.C / P.M);
-    let msg = `存得太勤，时间都花在存档上（左边上翘）；存得太少，每次故障要从很久以前的检查点重来（右边上翘）。最优点附近两条虚线相交：存档开销和丢失的工作正好相等，合计约 √(2C/M) = ${A.pct(sq, 1)}，再加上重启的 R/M = ${A.pct(P.R / P.M, 1)}。`;
+    const sq = Math.sqrt(2 * P.C / P.M), cap = (x) => A.pct(Math.min(1, x), 1);
+    if (dead) { hint.innerHTML = '故障间隔 M = ' + fmtM(P.M) + '，已经和重启时间、存档时间同一量级甚至更短：无论多久存一次，几乎都在存档、重启和重做中度过，训练无法推进。只能减少同步的卡数，或者把 C 和 R 压到远小于 M。'; view.redraw(); return; }
+    let msg = `存得太勤，时间都花在存档上（左边上翘）；存得太少，每次故障要从很久以前的检查点重来（右边上翘）。最优点附近两条虚线相交：存档开销和丢失的工作正好相等，合计约 √(2C/M) = ${cap(sq)}，再加上重启的 R/M = ${cap(P.R / P.M)}。`;
     if (P.bw > 0.2) msg += ' 现在浪费已经超过 20%：故障太频繁，单靠调间隔救不回来，只能把 C 和 R 本身压下去（异步保存、从内存里的副本恢复、热备机器），或者减少同步的卡数。';
     else if (P.G >= 1e5) msg += ' 把 GPU 数从 1.6 万拉到 10 万以上，M 缩短到半小时以内，浪费按 √(1/M) 放大；保持 90% 有效时间，需要 C 和 R 随之缩短。';
     else msg += ' 试着把 GPU 数往右拉十倍，看最低浪费怎么变。';

@@ -294,7 +294,7 @@
     <dt data-sym="d">\(d\)</dt><dd>模型的隐藏维度</dd>
     <dt data-sym="BW">\(\text{BW}\)</dt><dd>每张卡单方向的通信带宽</dd>
   </dl>
-  <div class="fx-eg">H100（BF16 峰值 989 TFLOPS），\(d = 8192\)，\(t = 8\)：走 NVLink（每方向 450 GB/s），\(7\times2\times989\times10^{12}/(6\times8192\times450\times10^9)\approx 0.63\)，比值小于 1，配合切微批等重叠手段可以藏住大部分；换成 50 GB/s 的网卡是 5.6，通信是计算的 5 倍多。训练还要算反向：通信约为前向的 2 倍、计算约 3 倍，比值约为这里的 2/3；第 <a class="xref" data-ref="training-systems"></a> 章再把 \(t-1\) 粗略记作 \(t\)，得到 0.48 和 4.3。</div>
+  <div class="fx-eg">H100（BF16 峰值 989 TFLOPS），\(d = 8192\)，\(t = 8\)：走 NVLink（每方向 450 GB/s），\(7\times2\times989\times10^{12}/(6\times8192\times450\times10^9)\approx 0.63\)，比值小于 1，配合切微批等重叠手段可以藏住大部分；换成 50 GB/s 的网卡是 5.6，通信是计算的 5 倍多。训练还要算反向：通信约为前向的 2 倍、计算约 3 倍，比值约为这里的 2/3；第 <a class="xref" data-ref="training-systems"></a> 章把前向和反向一起算，比值约是这里的 2/3，即 0.42 和 3.8。</div>
 </div>
 <p>所以张量并行只放在一个 NVLink 域里，而且域变大对它帮助不大：比值随卡数 \(t\) 线性增长。B200 加 NVLink 5，\(t = 8\) 是 0.71，切到 \(t = 72\) 就是 7.2。即使在 NVL72 里，张量并行通常也只切到 8 卡左右。</p>
 <details class="deep"><summary>张量并行的通信占比：为什么与批大小无关</summary><div class="in">

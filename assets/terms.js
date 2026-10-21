@@ -225,12 +225,12 @@ window.ATLAS_TERMS = {
   'pd-disagg': { t: '预填充与解码分离', en: 'prefill/decode disaggregation', d: '把预填充和解码放在不同的 GPU 池，KV 缓存经高速网络传输，两类负载互不干扰、分别扩容。', at: 'serving#disagg' },
 
   // ---- training-systems (training-systems.html)
-  recompute: { t: '激活重算', en: 'activation recomputation', d: '前向时只保存少数层的输入，反向时重新计算中间激活，用约 30% 的额外计算换数倍的显存；选择性重算只重算便宜而占显存的部分。', at: 'training-systems#memory' },
+  recompute: { t: '激活重算', en: 'activation recomputation', d: '前向时只保存少数层的输入，反向时重新计算中间激活，用约 33% 的额外计算换数倍的显存；选择性重算只重算便宜而占显存的部分。', at: 'training-systems#memory' },
   'data-parallel': { t: '数据并行', en: 'data parallelism', d: '每张卡一份完整模型、处理不同数据，每步对梯度做全规约求平均。最简单，但每卡要装下整个模型与优化器状态。', at: 'training-systems#ts0-8' },
   'zero-fsdp': { t: 'ZeRO / FSDP', en: 'ZeRO / fully sharded data parallel', d: '在数据并行的卡之间依次切分优化器状态、梯度、参数（ZeRO-1/2/3），用到时再收集。状态显存约降为 1/n，通信增加。', at: 'training-systems#ts0-8' },
   'tensor-parallel': { t: '张量并行', en: 'tensor parallelism', d: '把每个矩阵乘法按行或列切到多张卡上，每层两次全规约；通信频繁，通常限于一个 NVLink 域内。', at: 'training-systems#parallel' },
   'pipeline-parallel': { t: '流水线并行', en: 'pipeline parallelism', d: String.raw`按层切成 \(p\) 段放在不同机器上，数据切成 \(m\) 个微批次流过；空闲“气泡”比例约 \((p-1)/(m+p-1)\)。`, at: 'training-systems#parallel' },
-  mfu: { t: 'MFU', en: 'model FLOPs utilization', d: String.raw`模型理论计算量（每 token \(6N\)）占硬件峰值算力的比例。大规模训练做到 40–50% 就算很好。`, at: 'training-systems#comm' },
+  mfu: { t: 'MFU', en: 'model FLOPs utilization', d: String.raw`模型理论计算量（每 token \(6N\)）占硬件峰值算力的比例。大规模训练做到 40–50% 就算很好。`, at: 'training-systems#mfu' },
 
   // ---- on-device (on-device.html)
   'unified-memory': { t: '统一内存', en: 'unified memory', d: 'CPU 与 GPU 共享同一块内存（Apple 芯片、DGX Spark 等）。容量大，能放下大模型；带宽与算力通常低于同价位的独立显卡。', at: 'on-device#mac' },
@@ -436,7 +436,7 @@ window.ATLAS_TERMS = {
   'sequence-parallel': { t: "序列并行", en: "sequence parallelism", d: "在张量并行之上，把 LayerNorm、dropout 等逐 token 的区域沿序列切成 \\(t\\) 份；全规约拆成全收集与规约散发，通信量不变，这部分激活降到 \\(1/t\\)（2022）。", at: "training-systems#tp" },
   'pipeline-bubble': { t: "流水线气泡", en: "pipeline bubble", d: "流水线灌满和排空时部分段空等的时间，占比 \\((p-1)/(m+p-1)\\)。交错调度降到约 \\(1/v\\)，零气泡调度把权重梯度的计算挪进空闲里。", at: "training-systems#pipeline" },
   'ring-allreduce': { t: "环形全规约", en: "ring all-reduce", d: "\\(k\\) 张卡排成环，先 \\(k-1\\) 步规约散发、再 \\(k-1\\) 步全收集，每卡收发 \\(2(k-1)S/k\\)，几乎与卡数无关，已达带宽下界；延迟随 \\(k\\) 线性增长。", at: "training-systems#comm" },
-  hfu: { t: "HFU", en: "hardware FLOPs utilization", d: "把激活重算等额外计算也算进去的硬件算力利用率，总是不低于 MFU。PaLM 540B：MFU 46.2%，HFU 57.8%。", at: "training-systems#comm" },
+  hfu: { t: "HFU", en: "hardware FLOPs utilization", d: "把激活重算等额外计算也算进去的硬件算力利用率，总是不低于 MFU。PaLM 540B：MFU 46.2%，HFU 57.8%。", at: 'training-systems#mfu' },
   'loss-scaling': { t: "损失缩放", en: "loss scaling", d: "把损失乘一个大数，让梯度落进 FP16 的可表示范围，更新前再除回去；溢出时把倍数减半并跳过这一步。BF16 范围与 FP32 相同，不再需要它。", at: "training-systems#precision" },
   'fine-grained-scaling': { t: "细粒度缩放", en: "fine-grained (tile/block-wise) scaling", d: "每一小块数据（如激活每 1×128、权重每 128×128）各用一个缩放因子再转成 FP8，块内动态范围小，不易下溢。DeepSeek-V3 靠它让所有张量都用 E4M3。", at: "training-systems#precision" },
   mtbf: { t: "平均故障间隔", en: "mean time between failures (MTBF)", d: "两次故障之间的平均时间 \\(M\\)。同步训练的故障率按卡数相加，\\(M\\) 与卡数成反比：Llama 3 在 1.6 万卡上约 3 小时。", at: "training-systems#faults" },

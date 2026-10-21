@@ -9,7 +9,7 @@ A.defineDemo('training-systems-step', function (mount) {
   let mk = '7B', lgN = 12, B = 1, mode = 'flash', k = 1;
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   A.seg(ctl, Object.keys(MODELS).map((m) => ({ v: m, t: m })), mk, (v) => { mk = v; draw(); }, '模型');
-  A.slider(ctl, { label: '序列长度 n', min: 10, max: 15, step: 1, value: lgN, fmt: (v) => A.human(Math.pow(2, v), 0) + ' token', on: (v) => { lgN = v; draw(); }, width: 170 });
+  A.slider(ctl, { label: '序列长度 n', min: 10, max: 15, step: 1, value: lgN, fmt: (v) => Math.pow(2, v - 10) + 'K token', on: (v) => { lgN = v; draw(); }, width: 170 });
   A.slider(ctl, { label: '微批次 B（每次同时算几条序列）', min: 1, max: 8, step: 1, value: B, fmt: (v) => v + ' 条', on: (v) => { B = v; draw(); }, width: 200 });
   const ctl2 = A.el('div', { class: 'controls' }); bd.append(ctl2);
   A.seg(ctl2, [{ v: 'none', t: '朴素注意力，不重算' }, { v: 'flash', t: 'FlashAttention（只重算注意力矩阵）' }, { v: 'full', t: '完整重算' }], mode, (v) => { mode = v; draw(); }, '激活怎么存');
@@ -46,7 +46,7 @@ A.defineDemo('training-systems-step', function (mount) {
     pts.push({ t, act: 0, g, ph: 'u' }); pts.push({ t: tu, act: 0, g, ph: 'u' });
     let peak = 0, pk = null;
     pts.forEach((p) => { const tot = w + opt + p.g + p.act; p.tot = tot; if (tot > peak + 1) { peak = tot; pk = p; } });
-    const extra = mode === 'full' ? 1 / 3 : mode === 'flash' ? n / (3 * (6 * M.d + n)) : 0;
+    const extra = mode === 'full' ? 1 / 3 : mode === 'flash' ? n / (6 * (6 * M.d + n)) : 0;
     return { M, n, per, inp, w, g, opt, pts, peak, pk, extra, Tend: tu, Lend: L, bwdEnd: t };
   }
   const copt = { aspect: 0.42 };
@@ -103,15 +103,15 @@ A.defineDemo('training-systems-step', function (mount) {
     const fits = P.peak <= CAP;
     stats.innerHTML = '';
     const actAll = (mode === 'full' ? P.inp * P.M.L + P.per : P.per * P.M.L);
-    [['每张卡的峰值显存', A.bytes(P.peak), fits ? 'var(--good-ink)' : 'var(--bad)'], ['其中与参数量成正比（16 字节/参数 ÷ ' + k + '）', A.bytes(P.w + P.g + P.opt)], ['激活的最大值', A.bytes(actAll)], ['每 token 的计算量', mode === 'full' ? '8N（多 33%）' : mode === 'flash' ? '6N + ' + A.pct(P.extra, 1) : '6N']]
+    [['每张卡的峰值显存', A.bytes(P.peak), fits ? 'var(--good-ink)' : 'var(--bad)'], ['权重 + 梯度 + 优化器状态（16 字节/参数 ÷ ' + k + '）', A.bytes(P.w + P.g + P.opt)], ['激活的最大值', A.bytes(actAll)], ['每 token 的计算量', mode === 'full' ? '8N（多 33%）' : mode === 'flash' ? '6N + ' + A.pct(P.extra, 1) : '6N']]
       .forEach(([kk, v, c]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, kk), A.el('div', { class: 'v', style: { fontSize: '17px', color: c || '' } }, v))));
     legend.innerHTML = LAYERS.map((o) => `<span><i style="background:${cols[o.c]}"></i>${o.n}</span>`).join('');
     let msg = '';
-    if (!fits && k === 1 && P.w + P.g + P.opt > CAP) msg = `光是与参数量成正比的部分（16 字节 × ${A.human(P.M.N, 1)}）就有 ${A.bytes(P.w + P.g + P.opt)}，超过一张卡的显存，激活还没算进去。数据并行救不了它：每张卡都要放一整份。试试把它切到 8 张卡上（ZeRO-3）。`;
+    if (!fits && P.w + P.g + P.opt > CAP) msg = `光是与参数量成正比的部分（16 字节 × ${A.human(P.M.N, 1)}${k > 1 ? ' ÷ ' + k : ''}）就有 ${A.bytes(P.w + P.g + P.opt)}，超过一张卡的显存，激活还没算进去。重算救不了它，普通数据并行也救不了它（每张卡都要放一整份）。试试用 ZeRO-3 把它切到更多卡上。`;
     else if (!fits && mode === 'none') msg = '朴素注意力要把每个头的 n × n 注意力矩阵存下来给反向用，这一项随 n² 增长，在长序列上远大于其它激活。切到 FlashAttention：它不存这个矩阵，反向时分块重算。';
     else if (!fits && mode !== 'full') msg = `激活随序列长度 n 和微批次 B 线性增长，峰值出现在前向刚结束、反向刚开始的时刻：所有层的激活都还留着。打开“完整重算”：只存每层的输入，反向时把每层的前向重算一遍，用多 33% 的计算换回显存。`;
     else if (!fits) msg = '完整重算之后还放不下：参数部分要切到更多卡上，或者把一条序列切到几张卡上（上下文并行），见后面几节。';
-    else msg = `放得下。注意形状：与参数成正比的部分是一条平台，激活在前向时一层层堆高、反向时一层层释放，梯度在反向时逐层出现。${mode === 'flash' ? 'FlashAttention 在反向时本来就要重算注意力矩阵，相当于自带了选择性重算：显存省下一大块，计算只多 ' + A.pct(P.extra, 1) + '。' : mode === 'full' ? '完整重算把激活压到很低，代价是每步多算一遍前向。' : ''}`;
+    else msg = `放得下。注意形状：权重和优化器状态（14 字节/参数）是一条平台；梯度（2 字节/参数）在反向时逐层出现；激活在前向时一层层堆高、反向时一层层释放，所以峰值约等于“14 字节/参数 + 全部激活”，出现在前向刚结束的时刻。${mode === 'flash' ? 'FlashAttention 在反向时本来就要重算注意力矩阵，相当于自带了选择性重算：显存省下一大块，计算只多 ' + A.pct(P.extra, 1) + '。' : mode === 'full' ? '完整重算把激活压到很低，代价是每步多算一遍前向。' : ''}`;
     hint.innerHTML = msg;
     view.redraw();
   }
