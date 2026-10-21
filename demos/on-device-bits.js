@@ -1,11 +1,11 @@
 /* on-device-bits — toy model for "same memory: bigger model at fewer bits, or smaller model at more bits?".
-   Reducible loss L(b) = A·N^(−α) + c·4^(−b), N = 8M/b (all memory to weights). A = 406.4, α = 0.34 (Chinchilla fit);
+   Reducible loss L(b) = A·N^(−α) + c·4^(−b), N = 8M/b (all memory to weights). A = 482, α = 0.348 (Chinchilla fit as corrected by the 2024 replication, same constants as scaling.html);
    c is illustrative: coarse PTQ 20, good PTQ 2, QAT 0.25; "overtrained" multiplies c by 4. */
 A.defineDemo('on-device-bits', function (mount) {
   const { bd } = A.demo(mount, '同样的内存：多大的模型配几位', '玩具模型：规模定律的参数项 + 量化误差项，系数是示意');
-  const A0 = 406.4, AL = 0.34;
+  const A0 = 482, AL = 0.348;
   const METH = { crude: ['粗糙的训练后量化（逐张量取整）', 20], good: ['好的训练后量化（分组 + 校准）', 2], qat: ['量化感知训练（QAT）', 0.25] };
-  const MARK = [[1.76, '三值'], [2.38, 'IQ2_XXS'], [4.89, 'Q4_K_M'], [8.5, 'Q8_0'], [16, 'BF16']];
+  const MARK = [[1.75, '三值'], [2.38, 'IQ2_XXS'], [4.89, 'Q4_K_M'], [8.5, 'Q8_0'], [16, 'BF16']];
   let me = 'good', over = false;
   const c1 = A.el('div', { class: 'controls' }); bd.append(c1);
   const mS = A.slider(c1, { label: '给权重的内存 M', min: 1, max: 64, log: true, step: 0.001, value: 6, fmt: (v) => (v < 10 ? v.toFixed(1) : v.toFixed(0)) + ' GB', on: draw, width: 220 });
@@ -20,7 +20,7 @@ A.defineDemo('on-device-bits', function (mount) {
 
   const cNow = () => METH[me][1] * (over ? 4 : 1);
   function L(M, b, c) { const N = (8 * M * 1e9) / b; const cap = A0 * Math.pow(N, -AL), q = c * Math.pow(4, -b); return { N, cap, q, t: cap + q }; }
-  function opt(M, c) { let best = null; for (let b = 1.5; b <= 16.0001; b += 0.01) { const r = L(M, b, c); if (!best || r.t < best.t) best = { b, ...r }; } return best; }
+  function opt(M, c) { let best = null; for (let i = 150; i <= 1600; i++) { const b = i / 100, r = L(M, b, c); if (!best || r.t < best.t) best = { b, ...r }; } return best; }
 
   let hx = null;
   const view = A.canvas(cv, { aspect: 0.48 }, (ctx, W, H) => {
@@ -56,18 +56,18 @@ A.defineDemo('on-device-bits', function (mount) {
 
   function draw() {
     const M = mS.value, c = cNow(), o = opt(M, c);
-    const q4 = L(M, 4.89, c), q8 = L(M, 8.5, c), t3 = L(M, 1.76, c);
+    const q4 = L(M, 4.89, c), q8 = L(M, 8.5, c), t3 = L(M, 1.75, c);
     stats.innerHTML = '';
     [['最优位数', o.b.toFixed(1) + ' 位'], ['能放下的参数', (o.N / 1e9).toFixed(1) + 'B'], ['最优点：量化项 / 参数项', A.pct(o.q / o.cap, 1)], ['Q4_K_M / Q8_0 / 三值', `${(q4.N / 1e9).toFixed(1)}B · ${(q8.N / 1e9).toFixed(1)}B · ${(t3.N / 1e9).toFixed(1)}B`]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' } }, v))));
     legend.innerHTML = `<span><i class="line" style="background:${CC}"></i>参数项：位数越高，放下的参数越少</span><span><i class="line" style="background:${CQ}"></i>量化项：每少一位约 ×4</span><span><i class="line" style="background:${A.css('--ink')}"></i>合计</span>`;
     const best = [['Q4_K_M', q4], ['Q8_0', q8], ['三值', t3]].sort((a, b) => a[1].t - b[1].t)[0][0];
     let msg = `${M < 10 ? M.toFixed(1) : M.toFixed(0)} GB 时，最优点在约 ${o.b.toFixed(1)} 位、${(o.N / 1e9).toFixed(1)}B 参数；三种常见格式里 ${best} 最好。`;
-    if (me === 'qat') msg += ' 这里把 QAT 的量化项系数取为好的训练后量化的 1/8（示意），最优点左移约 1.8 位：同样的内存放下大一倍多的模型。三值的 Bonsai 2 27B 用 6 GB 放下 27B，走的就是把量化项压低这条路（厂商自报）。';
+    if (me === 'qat') msg += ' 这里把 QAT 的量化项系数取为好的训练后量化的 1/8（示意），最优点左移约 1.8 位：同样的内存放下大一倍多的模型。三值的 Bonsai 2 27B 用 6 GB 放下 27B，方向与此一致（压低量化项），但它的训练细节未公开、成绩为厂商自报。';
     else if (me === 'crude') msg += ' 取整方法粗糙时量化项大，最优点右移到 6 位左右，大模型低位并不划算。';
-    else msg += ' 拖动内存滑块：内存大 10 倍，最优位数只增加约 0.6 位，所以从手机到服务器，训练后量化都停在 4 位左右。';
+    else msg += ' 拖动内存滑块：内存大 10 倍，最优位数只增加约 0.6 位，几乎不随设备变；停在几位由量化方法（系数 c_q）决定。';
     if (over) msg += ' 过度训练让量化项变大（示意 ×4），最优点右移约 1 位。';
-    hint.innerHTML = msg + ' 系数 c 是示意值，只用来展示两项竞争的结构；纵轴不能直接换算成评测分数。';
+    hint.innerHTML = msg + ' 系数 c_q 是示意值，只用来展示两项竞争的结构；纵轴不能直接换算成评测分数。';
     view.redraw();
   }
   draw();

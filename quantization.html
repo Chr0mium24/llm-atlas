@@ -113,7 +113,7 @@
   <tr><th>格式</th><th>生态</th><th>bpw</th><th>结构</th><th>用在哪</th></tr>
   <tr><td>Q8_0</td><td>GGUF / llama.cpp</td><td>8.5</td><td>32 个一组，FP16 缩放</td><td>几乎无损</td></tr>
   <tr><td>Q6_K</td><td>GGUF</td><td>6.56</td><td>超块 256 = 16×16，8 位子缩放</td><td>高质量本地部署</td></tr>
-  <tr><td>Q4_K_M</td><td>GGUF</td><td>≈4.8</td><td>以 Q4_K 为主，敏感层用 Q6_K</td><td>本地部署的默认选择</td></tr>
+  <tr><td>Q4_K_M</td><td>GGUF</td><td>≈4.9</td><td>以 Q4_K 为主，敏感层用 Q6_K</td><td>本地部署的默认选择</td></tr>
   <tr><td>Q3_K / Q2_K</td><td>GGUF</td><td>3.44 / 2.63</td><td>超块 256 = 16×16</td><td>显存紧张时；损失明显</td></tr>
   <tr><td>IQ2_XXS 等</td><td>GGUF</td><td>≈2.06</td><td>8 维格点码本（源自 QuIP#）+ imatrix</td><td>极限压缩</td></tr>
   <tr><td>GPTQ / AWQ INT4</td><td>vLLM、TensorRT-LLM 等</td><td>≈4.1–4.25</td><td>分组 128，W4A16</td><td>GPU 服务</td></tr>
@@ -123,7 +123,7 @@
   <tr><td>TQ1_0 / Q2_0（三值）</td><td>llama.cpp</td><td>1.69 / 2.06</td><td>\(\{-1, 0, 1\}\) 打包</td><td>BitNet b1.58 类模型</td></tr>
   <tr><td>PTQ1_0 / PQ2_0</td><td>PrismML 分支</td><td>1.76 / 2.16</td><td>三值，分组 128 + Hadamard 旋转</td><td>Ternary Bonsai 2</td></tr>
 </table></div>
-<p>只量化权重、计算时还原成 16 位，叫 W4A16，主要省带宽；权重和激活都用低位（W8A8、W4A4），才能用上低精度张量核心的算力，FP8 和 FP4 的硬件支持就是为此准备的。KV 缓存也可以量化成 FP8 或 4 位，对长上下文尤其重要（第 <a class="xref" data-ref="long-context"></a> 章）。</p>
+<p>只量化权重、计算时还原成 16 位，叫 W4A16，主要省带宽；权重和激活都用低位（W8A8、W4A4），才能用上低精度张量核心的算力，FP8 和 FP4 的硬件支持就是为此准备的。KV 缓存也可以量化成 FP8 或 4 位，对长上下文尤其重要（第 <a class="xref" data-ref="long-context"></a> 章；做法和代价见第 <a class="xref" data-ref="on-device"></a> 章<a href="on-device.html#od0-kv">「KV 量化」</a>）。</p>
 <aside class="dispute">
   <h4>量化后“评测几乎不掉点”，真的没有损失吗</h4>
   <dl>
@@ -184,7 +184,7 @@
 <h2 id="myths">常见误解</h2>
 <ul class="myths">
   <li><b class="m">4 位量化就是质量减半。</b>位数与质量不是线性关系；好的 4 位方法在多数任务上只损失很少，但推理、多语言、长上下文更敏感。</li>
-  <li><b class="m">“Q4”就是每权重 4 位。</b>加上缩放因子等开销，Q4_0 是 4.5 bpw，Q4_K_M 约 4.8；估算显存时要用实际的 bpw。</li>
+  <li><b class="m">“Q4”就是每权重 4 位。</b>加上缩放因子等开销，Q4_0 是 4.5 bpw，Q4_K_M 约 4.9；估算显存时要用实际的 bpw。</li>
   <li><b class="m">FP4 和 INT4 是一回事。</b>FP4 的格点在 0 附近更密、远处更疏，配合分块缩放；INT4 的格点等间隔。两者适合的分布不同，硬件支持也不同。</li>
   <li><b class="m">量化只影响速度，不影响模型行为。</b>量化可能改变模型在边缘情况下的行为，包括安全拒绝、多语言能力和长推理的稳定性。</li>
   <li><b class="m">同一个模型的不同量化文件都差不多。</b>是否用了校准数据（imatrix、GPTQ）、哪些层保留高精度、是否 QAT，都会造成明显差异。</li>

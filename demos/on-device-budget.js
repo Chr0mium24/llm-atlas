@@ -1,6 +1,6 @@
 /* on-device-budget — one device, one model: memory ledger (weights + n·κ + buffers vs usable memory) and decode / prefill estimates.
    decode ≈ η·BW / (W_read + n·κ); prefill ≈ (2·N_act·n + 2·L·d_q·n²) / P_eff. η and P_eff are back-computed from public llama.cpp
-   benchmarks (llama 7B Q4_0: tg128 × bytes, pp512 × 2N); MoE gets an extra 0.55 on η (RTX 3090 measured ≈ 37% of its bound). */
+   benchmarks (llama 7B Q4_0: tg128 × bytes, pp512 × 2N); the CPU-only laptop is an order-of-magnitude guess (60% of DDR5 bandwidth, ~1 TFLOPS); MoE gets an extra 0.55 on η (RTX 3090 measured ≈ 37% of its bound). */
 A.defineDemo('on-device-budget', function (mount) {
   const { bd } = A.demo(mount, '本地部署计算器：装得下吗、跑多快', '估算：η 与有效算力由 llama.cpp 公开跑分折算');
   const DEV = {
@@ -9,6 +9,7 @@ A.defineDemo('on-device-budget', function (mount) {
     c24: { n: 'RTX 4090 24 GB', cap: 24, buf: 1.0, bw: 1008, eta: 0.72, P: 195e12 },
     m3: { n: 'M3 Mac 16 GB', cap: 11, buf: 0.6, bw: 100, eta: 0.82, P: 2.47e12, mac: 1 },
     m4p: { n: 'M4 Pro Mac 48 GB', cap: 36, buf: 0.8, bw: 273, eta: 0.69, P: 4.8e12, mac: 1 },
+    cpu: { n: '只有 CPU 的笔记本 32 GB', cap: 26, buf: 0.5, bw: 96, eta: 0.6, P: 1e12, cpu: 1 },
   };
   // T: total params (B), R: params read per token (B, = active, embedding table excluded), L layers, kvh KV heads (d_h = 128), dq = h_q·d_h
   const MD = {
@@ -126,9 +127,10 @@ A.defineDemo('on-device-budget', function (mount) {
     else if (!m.fits) msg = `权重放得下，但 ${kfmt(n)} 的 KV（${A.bytes(m.kvB, 1)}）放不下：这个设置最长约 ${wan(m.nmax)} token。把 KV 换成 Q8_0 或 Q4_0，曲线的实线部分会向右延长。`;
     else {
       msg = `装得下。每生成一个 token 要读 ${A.bytes(m.Wr + n * m.kappa, 1)}，其中 KV 占 ${A.pct(kvShare, 0)}：上下文越长，KV 在分母里占得越多，生成越慢（曲线向右下降）。`;
-      if (m.pre > 20) msg += ` 读完 ${kfmt(n)} 的提示要约 ${fmtT(m.pre)}${m.D.mac ? '：Mac 的生成速度尚可，等首 token 才是主要的等待' : '：长提示时注意力的计算按 n² 增长'}。`;
+      if (m.pre > 20) msg += ` 读完 ${kfmt(n)} 的提示要约 ${fmtT(m.pre)}${m.D.mac || m.D.cpu ? '：生成速度尚可，等首 token 才是主要的等待' : '：长提示时注意力的计算按 n² 增长'}。`;
       if (MD[md].moe) msg += ' MoE 每个 token 只读约 30 亿个激活参数，所以比同样大小的稠密模型快得多；带宽利用率按实测打了 0.55 折。';
     }
+    if (m.D.cpu) msg += ' 只有 CPU 的机器按量级估算（内存带宽用到六成、有效算力约 1 TFLOPS），用 llama-bench 测一次自己的机器更准。';
     hint.innerHTML = msg;
     memView.redraw(); view.redraw();
   }

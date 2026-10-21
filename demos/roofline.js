@@ -2,7 +2,7 @@
 A.defineDemo('roofline', function (mount) {
   const { bd } = A.demo(mount, '推理速度估算器 + Roofline', '理想化估算：忽略内核效率、通信与调度开销');
   const HW = {
-    m3: { n: 'M3（16 GB）', bw: 100, tf: 3.6, mem: 16, fp8: 1, fp4: 1 },
+    m3: { n: 'M3（16 GB，GPU 可用约 11 GB）', bw: 100, tf: 3.6, mem: 12, fp8: 1, fp4: 1 },
     ultra: { n: 'M3 Ultra（512 GB）', bw: 819, tf: 28, mem: 512, fp8: 1, fp4: 1 },
     t4070: { n: 'RTX 4070 Ti（12 GB）', bw: 504, tf: 80, mem: 12, fp8: 2, fp4: 1 },
     t4090: { n: 'RTX 4090（24 GB）', bw: 1008, tf: 165, mem: 24, fp8: 2, fp4: 1 },
@@ -17,7 +17,7 @@ A.defineDemo('roofline', function (mount) {
     v4f: { n: 'DeepSeek V4-Flash', T: 284, Aa: 13, kv: 10e3, r: 8 / 256 },
     k3: { n: 'Kimi K3', T: 2800, Aa: 104, kv: 27.6e3, r: 16 / 896 },
   };
-  const FMTS = { bf16: { n: 'BF16', b: 16, c: 'bf16' }, fp8: { n: 'FP8', b: 8, c: 'fp8' }, q4: { n: '4-bit（W4A16）', b: 4.5, c: 'bf16' }, fp4: { n: 'FP4（W4A4）', b: 4.5, c: 'fp4' }, tern: { n: '三值 1.76 bpw', b: 1.76, c: 'bf16' } };
+  const FMTS = { bf16: { n: 'BF16', b: 16, c: 'bf16' }, fp8: { n: 'FP8', b: 8, c: 'fp8' }, q4: { n: '4-bit（W4A16）', b: 4.5, c: 'bf16' }, fp4: { n: 'FP4（W4A4）', b: 4.5, c: 'fp4' }, tern: { n: '三值 1.75 bpw', b: 1.75, c: 'bf16' } };
   let hw = 't4090', md = 'l8', fm = 'q4';
   const c1 = A.el('div', { class: 'controls' }); bd.append(c1);
   A.seg(c1, Object.entries(HW).map(([v, o]) => ({ v, t: o.n })), hw, (v) => { hw = v; calc(); }, '硬件');

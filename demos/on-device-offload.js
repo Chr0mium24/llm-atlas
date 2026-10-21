@@ -102,7 +102,7 @@ A.defineDemo('on-device-offload', function (mount) {
     const want = sS.value / 100;
     if (want > R.smax + 1e-9) msg = `显存最多放下 ${(R.smax * 100).toFixed(0)}% 的专家（还要放注意力、KV 和缓冲区），多出来的按 ${(R.smax * 100).toFixed(0)}% 算。`;
     else msg = '';
-    if (R.s > 0) msg += ` 内存只剩 ${ram - OS} GB 给专家（系统和其他程序按 ${OS} GB 留出），${A.pct(R.s, 0)} 的专家只能留在硬盘上：每个 token 平均要从硬盘读 ${A.bytes(R.s * EXa, R.s * EXa < 1e9 ? 0 : 2)}，按约 5 GB/s 要 ${(R.ts * 1e3).toFixed(0)} ms，占每个 token 时间的 ${A.pct(R.ts / R.t, 0)}。` + (R.ts > 0.5 * R.t ? '速度由硬盘决定：加内存比加显存更管用。' : '把滑块再往右拉，让显存多装一些专家，硬盘这一段就会消失。');
+    if (R.s > 0) msg += ` 内存只剩 ${ram - OS} GB 给专家（系统和其他程序按 ${OS} GB 留出），${A.pct(R.s, 0)} 的专家只能留在硬盘上：每个 token 平均要从硬盘读 ${A.bytes(R.s * EXa, R.s * EXa < 1e9 ? 0 : 2)}，按约 5 GB/s 要 ${(R.ts * 1e3).toFixed(0)} ms，占每个 token 时间的 ${A.pct(R.ts / R.t, 0)}。` + (R.g < R.smax - 1e-9 ? '先把显存装满专家：把滑块往右拉，落盘的专家改放进显存或腾出来的内存，硬盘这一段会消失。' : '显存已经装满，仍有专家落盘：这时加内存才是最管用的升级。');
     else if (mode === 'pcie') msg += ` 把专家经 PCIe（约 25 GB/s）搬到显卡，比让 CPU 直接从内存（约 58 GB/s）读着算更慢：生成时一批只有 1 个 token，搬过去的权重只用一次。`;
     else if (R.g < 0.05) msg += ` 全部专家放在内存里，由 CPU 计算：显卡只花 ${(R.tg * 1e3).toFixed(1)} ms，CPU 花 ${(R.tr * 1e3).toFixed(1)} ms。把滑块往右拉，用剩下的显存装专家，内存那一段会变短。`;
     else msg += ` 显存里每多放一些专家，就有更多的字节改走约 ${(ETA * GPU[gp].bw).toFixed(0)} GB/s 的显存（按 MoE 实测利用率 40% 计），而不是约 58 GB/s 的内存。两段时间相加，所以最慢的那一段决定速度。`;

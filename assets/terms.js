@@ -573,7 +573,7 @@ window.ATLAS_TERMS = {
   'expert-offload': { t: "专家卸载", en: "expert offloading", d: "MoE 放不进显存时，把专家权重放在 CPU 内存（或硬盘）里，注意力、KV 留在显卡上。生成时由 CPU 就地计算专家；每个 token 的时间是各层存储时间之和，由最慢的那一层决定。", at: "on-device#moe-local" },
   mmap: { t: "内存映射", en: "memory mapping (mmap)", d: "把文件直接映射成一段内存地址，用到哪一页才由操作系统从硬盘读入，内存紧张时再丢掉不常用的页。llama.cpp 默认这样加载模型，所以模型比内存大也能跑，但速度由硬盘决定。", at: "on-device#moe-local" },
   ple: { t: "逐层嵌入", en: "per-layer embeddings (PLE)", d: "Gemma 3n / Gemma 4 端侧版本的设计：每一层有自己的嵌入表，按 token 编号查表、不参与矩阵乘法，可以放在闪存或 CPU 内存里按需读取；常驻加速器内存的只有“有效参数”（E2B、E4B 中的 E）。", at: "on-device#phone" },
-  'thermal-throttling': { t: "热降频", en: "thermal throttling", d: "芯片温度接近上限时，系统主动降低频率和电压以减少发热。手机长时间运行时的速度 ≈ 能持续散掉的功率 ÷ 每个 token 的能量，常只有峰值的一半左右。", at: "on-device#phone-heat" },
+  'thermal-throttling': { t: "热降频", en: "thermal throttling", d: "芯片温度接近上限时，系统主动降低频率和电压以减少发热。手机长时间运行时的速度 ≈ 能持续散掉的功率 ÷ 每个 token 的能量，常只有峰值的五六成。", at: "on-device#phone-heat" },
   dvfs: { t: "动态调频调压", en: "dynamic voltage and frequency scaling (DVFS)", d: "同时调低频率和电压来省电。动态功耗 \\(\\propto CV^2f\\)，电压大致随频率变化时功耗 \\(\\propto f^3\\)；计算受限的任务降频时掉速少，访存为主的解码掉得多。", at: "on-device#phone-heat" },
   tops: { t: "TOPS", en: "tera operations per second", d: "每秒万亿次运算，NPU 的常用宣传指标，通常指 INT8，且常按 2:4 稀疏标注（稠密约为一半）。大模型解码受内存带宽限制，TOPS 与生成速度关系不大。", at: "on-device#embedded" },
   'device-cloud': { t: "端云协同", en: "device–cloud collaboration", d: "本地小模型处理简单、隐私敏感或离线的请求，必要时把复杂请求转给云端大模型。手机厂商的主流方案。", at: "on-device#cases" },
@@ -685,4 +685,7 @@ window.ATLAS_TERMS = {
 
   // ---- coding (upgrade 2026-10-20)
   'pull-request': { t: "拉取请求（PR）", en: "pull request", d: "把一个补丁提交给项目维护者审查、合并的请求。开源项目的修改大多以 PR 的形式进入仓库；SWE-bench 的题目就取自已合并的 PR。", at: "coding#c0-edit" },
+
+  // ---- on-device (upgrade 2026-10-20)
+  'kv-quant': { t: "KV 量化", en: "KV cache quantization", d: "把 KV 缓存里的 K、V 存成 8 位或 4 位，读出时再还原，用来在同样的内存里放下更长的上下文。K 有通道方向的离群值，比 V 难量化；Q8_0 基本无损，4 位在长上下文上有掉点报告。", at: "on-device#od0-kv" },
 };
