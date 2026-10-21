@@ -694,4 +694,8 @@ window.ATLAS_TERMS = {
 
   // ---- spatial (upgrade 2026-10-20)
   'novel-view-synthesis': { t: "新视角合成", en: "novel view synthesis", d: "从没有拍过的相机位置渲染出照片。评测时留出几张照片不参与训练，训练后从这些位置重新渲染、和真照片比（PSNR 等），以此检验学到的是三维而不是背下了照片。", at: "spatial#zero-inverse" },
+
+  // ---- embodied (upgrade 2026-10-20)
+  'degrees-of-freedom': { t: "自由度（机器人）", en: "degrees of freedom (DoF)", d: "机器人可以独立控制的关节数（夹爪也算一个），也就是动作向量的维数。单臂加夹爪 7 维，双臂 14 维，Figure 人形机器人的上半身 35 个。", at: "embodied#e0-task" },
+  'inverse-kinematics': { t: "逆运动学", en: "inverse kinematics", d: "已知末端执行器该到达的位置和朝向，反求每个关节该转多少角度。末端空间的动作要靠它换算成关节指令。", at: "embodied#e0-space" },
 };

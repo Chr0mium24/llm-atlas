@@ -4,7 +4,7 @@ A.defineDemo('bc-drift', function (mount) {
   let eps = 0.05, w = 0.1, seed = 4;
   const T = 120, RUNS = 20, FAIL = 1;
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
-  A.slider(ctl, { label: '每一步的小误差 ε', min: 0.005, max: 0.12, step: 0.005, value: eps, fmt: (v) => v.toFixed(3), on: (v) => { eps = v; draw(); }, width: 180 });
+  A.slider(ctl, { label: '每一步的噪声幅度 σ', min: 0.005, max: 0.12, step: 0.005, value: eps, fmt: (v) => v.toFixed(3), on: (v) => { eps = v; draw(); }, width: 180 });
   A.slider(ctl, { label: '专家示范覆盖的范围 |y| <', min: 0.05, max: 0.8, step: 0.01, value: w, fmt: (v) => v.toFixed(2), on: (v) => { w = v; draw(); }, width: 200 });
   ctl.append(A.el('button', { onclick: () => { seed = (seed * 7919 + 1) % 100003; draw(); } }, '重新试跑'));
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
@@ -21,7 +21,7 @@ A.defineDemo('bc-drift', function (mount) {
   }
   let bc, dg;
   const view = A.canvas(cv, { aspect: 0.42 }, (ctx, W, H) => {
-    const box = { x: 44, y: 14, w: W - 60, h: H - 50 };
+    const box = { x: 44, y: 26, w: W - 60, h: H - 62 };
     const ax = A.axes(ctx, box, { xmin: 0, xmax: T, ymin: -2, ymax: 2, yfmt: (v) => v.toFixed(0), xlabel: '时间步', ylabel: '偏离 y', ylabelOffset: 38 });
     ctx.fillStyle = A.alpha(cols[2], 0.12); ctx.fillRect(box.x, ax.Y(w), box.w, ax.Y(-w) - ax.Y(w));
     ctx.save(); ctx.strokeStyle = cols[7] || cols[6]; ctx.setLineDash([4, 4]); [FAIL, -FAIL].forEach((v) => { ctx.beginPath(); ctx.moveTo(box.x, ax.Y(v)); ctx.lineTo(box.x + box.w, ax.Y(v)); ctx.stroke(); }); ctx.restore();
