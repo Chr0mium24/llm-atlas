@@ -55,10 +55,9 @@ A.defineDemo('attn-lookup', function (mount) {
     // output = weighted mix of value colors
     const rgb = [0, 0, 0];
     w.forEach((wi, i) => { const c = A.hex2rgb(cols[i + 1]); rgb[0] += wi * c[0]; rgb[1] += wi * c[1]; rgb[2] += wi * c[2]; });
-    const ent = -w.reduce((s, p) => s + (p > 0 ? p * Math.log2(p) : 0), 0);
     right.append(A.el('div', { class: 'flex', style: { marginTop: '14px' } },
       A.el('div', { style: { width: '56px', height: '56px', borderRadius: '10px', background: `rgb(${rgb.map(Math.round)})`, border: '1px solid var(--border)' } }),
-      A.el('div', { class: 'small' }, A.el('div', null, '输出 = Σ 权重 × value'), A.el('div', { class: 'muted' }, '把每个 value 看成一种颜色，输出是按权重混合后的颜色'), A.el('div', { class: 'muted' }, '权重分布的熵：' + ent.toFixed(2) + ' bit（最大 ' + Math.log2(5).toFixed(2) + '）'))));
+      A.el('div', { class: 'small' }, A.el('div', null, '输出 = Σ 权重 × value'), A.el('div', { class: 'muted' }, '这里把每个 value 画成一种颜色（只是示意，与正文玩具的“颜色”维无关），输出是按权重混合后的颜色'), A.el('div', { class: 'muted' }, '最大权重：' + (Math.max(...w) * 100).toFixed(1) + '%（τ 越小越接近 100%）'))));
   }
   function hit(p) {
     const pts = [q, ...keys];
