@@ -22,7 +22,7 @@ A.defineDemo('moe-toy', function (mount) {
   const DROP = SEL.map((s) => s.map((i) => (used[i]++ >= CAP)));
   const f3 = (x) => x.toFixed(3), f2 = (x) => x.toFixed(2);
   const STEPS = [
-    { t: '路由器打分', tex: String.raw`z_{t,i} = \mathbf x_t\,W_r\ \ (\text{第 } t \text{ 个 token 给第 } i \text{ 个专家的分数})`, say: '路由器是一个 d×4 的线性层，给每个 token 算 4 个分数。为了好算，这里每个 token 的分数都是 2、1、0、0 的某种排列：token 1 最喜欢专家 1，其次专家 2。注意 6 个 token 里有 4 个把专家 1 排在第一或第二。' },
+    { t: '路由器打分', tex: String.raw`z_{t,i} = \mathbf x_t\,W_r\ \ (\text{第 } t \text{ 个 token 给第 } i \text{ 个专家的分数})`, say: '路由器是一个 d×4 的线性层，给每个 token 算 4 个分数。为了好算，这里每个 token 的分数都是 2、1、0、0 的某种排列：token 1 最喜欢专家 1，其次专家 2。注意 6 个 token 里有 5 个把专家 1 排在第一或第二。' },
     { t: 'softmax', tex: String.raw`p_{t,i} = \frac{e^{z_{t,i}}}{\sum_j e^{z_{t,j}}} = \frac{(7.39,\ 2.72,\ 1,\ 1)}{12.11} = (0.610,\ 0.225,\ 0.083,\ 0.083)`, say: '把分数变成和为 1 的概率。因为每行都是 2、1、0、0 的排列，每行的概率也都是 0.610、0.225、0.083、0.083 的排列。' },
     { t: '选 top-2', tex: String.raw`S_t = \operatorname{TopK}(\mathbf p_t,\ 2)`, say: '每个 token 只保留概率最高的 2 个专家（蓝底）。其余两个专家对这个 token 完全不计算：它们的参数在，但这一次不用。' },
     { t: '重新归一化', tex: String.raw`g_{t,i} = \frac{p_{t,i}}{\sum_{j\in S_t} p_{t,j}} = \frac{0.610}{0.610+0.225} = 0.731,\quad \frac{0.225}{0.835} = 0.269`, say: '被选中的两个概率再除以它们的和，变成门控权重，加起来等于 1。0.731 恰好是 e/(1+e)：两个分数差 1，权重比就是 e 倍。' },
@@ -42,7 +42,7 @@ A.defineDemo('moe-toy', function (mount) {
   slider.oninput = () => go(+slider.value);
   const dots = A.el('div', { class: 'gs-dots' });
   const dotEls = STEPS.map((s, i) => { const d = A.el('button', { class: 'gs-dot', onclick: () => go(i) }, (i + 1) + ' ' + s.t); dots.append(d); return d; });
-  const fx = A.el('div', { class: 'gs-fx' }), say = A.el('p', { class: 'gs-say' });
+  const fx = A.el('div', { class: 'gs-fx', style: { overflowX: 'auto', maxWidth: '100%' } }), say = A.el('p', { class: 'gs-say' });
   const cv = A.el('canvas', { class: 'cv' });
   const legend = A.el('div', { class: 'legend' });
   bd.append(bar, slider, dots, fx, say, cv, legend);

@@ -1,7 +1,7 @@
 /* moe-ep — expert parallelism time budget per MoE layer: reading expert weights vs computing vs all-to-all, as a function of tokens per GPU, granularity and network */
 A.defineDemo('moe-ep', function (mount) {
-  const { bd } = A.demo(mount, '专家并行的时间账：一个 MoE 层，每个 token 花多少时间', '按 DeepSeek-V3 的层配置估算；32 张卡组成一个专家并行组，单卡 989 TFLOPS、HBM 3.35 TB/s；理想化的上限估计');
-  const D = 7168, DE = 2048, E0 = 256, K0 = 8, G = 32, FLOPS = 989e12, HBM = 3.35e12, BW_W = 1, BD = 1, BC = 2;
+  const { bd } = A.demo(mount, '专家并行的时间账：一个 MoE 层，每个 token 花多少时间', '按 DeepSeek-V3 的层配置估算；32 张卡组成一个专家并行组；专家矩阵乘与权重都按 FP8 计（单卡峰值 1979 TFLOPS），HBM 3.35 TB/s；理想化的上限估计');
+  const D = 7168, DE = 2048, E0 = 256, K0 = 8, G = 32, FLOPS = 1979e12, HBM = 3.35e12, BW_W = 1, BD = 1, BC = 2;
   let ng = 64, gran = 1, net = 50e9, overlap = false;
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const sn = A.slider(ctl, { label: '每张卡一步处理的 token 数', min: 1, max: 8192, log: true, value: ng, fmt: (v) => Math.round(v), on: (v) => { ng = Math.round(v); draw(); }, width: 230 });
@@ -27,7 +27,7 @@ A.defineDemo('moe-ep', function (mount) {
   const us = (s) => (s * 1e6 < 10 ? (s * 1e6).toFixed(2) : (s * 1e6).toFixed(0)) + ' μs';
   let ax = null;
   const view = A.canvas(cv, { aspect: 0.48 }, (ctx, W, H) => {
-    const box = { x: 58, y: 24, w: W - 76, h: H - 62 };
+    const box = { x: 58, y: 26, w: W - 76, h: H - 64 };
     ax = A.axes(ctx, box, { xmin: 1, xmax: 8192, xlog: true, ymin: 0.01, ymax: 200, ylog: true, xticks: [1, 4, 16, 64, 256, 1024, 4096], yticks: [0.01, 0.1, 1, 10, 100], xfmt: (v) => v, yfmt: (v) => (v >= 1 ? v : v), xlabel: '每张卡一步处理的 token 数（对数轴）', ylabel: '每个 token 的时间（μs，对数轴）', ylabelOffset: 52 });
     const cols = A.series();
     const curves = [['tW', cols[1], 2], ['tC', cols[2], 2], ['tN', cols[6], 2], ['tot', A.css('--ink'), 2.6]];
@@ -41,7 +41,7 @@ A.defineDemo('moe-ep', function (mount) {
     const nStar = (lamStar * E0 * gran) / (K0 * gran * G);
     ctx.save(); ctx.setLineDash([4, 4]); ctx.strokeStyle = A.css('--axis');
     ctx.beginPath(); ctx.moveTo(ax.X(nStar), box.y); ctx.lineTo(ax.X(nStar), box.y + box.h); ctx.stroke(); ctx.restore();
-    A.text(ctx, `每个专家分到约 ${Math.round(lamStar)} 个 token：读权重 = 计算 →`, ax.X(nStar) - 6, box.y + 8, { size: 11, align: 'right', color: A.css('--muted') });
+    if (W >= 560) A.text(ctx, `每个专家分到约 ${Math.round(lamStar)} 个 token：读权重 = 计算 →`, ax.X(nStar) - 6, 10, { size: 11, align: 'right', color: A.css('--muted') });
     const m = model(ng);
     ctx.fillStyle = A.css('--ink'); ctx.beginPath(); ctx.arc(ax.X(ng), ax.Y(A.clamp((m.tot / ng) * 1e6, 0.01, 200)), 5, 0, 7); ctx.fill();
   });
@@ -58,7 +58,7 @@ A.defineDemo('moe-ep', function (mount) {
     [['配置', `${m.E} 个专家选 ${m.k} 个，专家中间维度 ${m.de}`], ['每个专家分到的 token', m.lam.toFixed(1) + ' 个'], ['这一层用时（每卡）', `读权重 ${us(m.tW)} · 计算 ${us(m.tC)} · 通信 ${us(m.tN)}`], ['合计', us(m.tot) + (overlap ? '（重叠：取最大）' : '（不重叠：专家部分 + 通信）')], ['瓶颈', worst]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '14.5px' } }, v))));
     const ratio = (6 * (DE / gran)) / (BD + BC), need = FLOPS / net;
-    hint.innerHTML = `每个 token 在一层里要把 d = 7168 维的向量发给 k 个专家、再收回来，共 k·d·3 字节；专家对它做 k·6·d·d<sub>e</sub> 次运算。两者之比 = 6d<sub>e</sub>/3 = <b>${ratio.toFixed(0)} FLOP/字节</b>，与批大小、k、d 都无关。要让通信藏在计算后面，这个比值得超过“峰值算力 ÷ 网络带宽” = <b>${need.toFixed(0)} FLOP/字节</b>。${ratio < need ? '现在达不到，所以通信是硬瓶颈：' : '现在达得到：'}把细粒度调高，d<sub>e</sub> 变小，比值同比下降。读权重的那条线随 token 数增加按 1/n 下降，直到每个专家分到约 148 个 token：整个专家并行组一步要凑够约 ${Math.round(148 * 32)} 个 token，是同样条件下稠密模型所需批大小的 E/k = 32 倍。`;
+    hint.innerHTML = `每个 token 在一层里要把 d = 7168 维的向量发给 k 个专家、再收回来，共 k·d·3 字节；专家对它做 k·6·d·d<sub>e</sub> 次运算。两者之比 = 6d<sub>e</sub>/3 = <b>${ratio.toFixed(0)} FLOP/字节</b>，与批大小、k、d 都无关。要让通信藏在计算后面，这个比值得超过“峰值算力 ÷ 网络带宽” = <b>${need.toFixed(0)} FLOP/字节</b>。${ratio < need ? '现在达不到，所以通信是硬瓶颈：' : '现在达得到：'}把细粒度调高，d<sub>e</sub> 变小，比值同比下降。读权重的那条线随 token 数增加按 1/n 下降，在每个专家分到约 ${Math.round(FLOPS / HBM / 2)} 个 token 时降到和计算一样：整个专家并行组一步要凑够约 ${Math.round(FLOPS / HBM / 2) * 32} 个 token，是同样条件下稠密模型所需批大小的 E/k = 32 倍。`;
     view.redraw();
   }
   draw();

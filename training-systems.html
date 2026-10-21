@@ -148,7 +148,7 @@
   <li><b><dfn data-t="tensor-parallel">张量并行</dfn></b>（TP，Megatron，2019）：把每个矩阵乘法按行或列切到多张卡上，每层前向两次、反向两次全规约。通信极频繁，通常只在一个 NVLink 域内使用（8 张卡；GB200 NVL72 机柜可到 72 张）。</li>
   <li><b><dfn data-t="pipeline-parallel">流水线并行</dfn></b>（PP，GPipe，2018）：按层切成几段，放在不同的服务器上，数据像流水线一样流过。只在段与段之间传激活，通信量小，但有“气泡”（下一节）。</li>
   <li><b><dfn data-t="context-parallel">上下文并行</dfn></b>（CP）：把一条长序列切成几段分给几张卡。注意力要看到整条序列的 K、V，要么让 K/V 块沿环轮转（环形注意力，第 <a class="xref" data-ref="long-context"></a> 章），要么先全收集 K、V（Llama 3 的做法，便于支持各种注意力掩码）。</li>
-  <li><b><dfn data-t="expert-parallel">专家并行</dfn></b>（EP）：MoE 的专家分布在不同的卡上，每层两次全对全通信，把 token 发给专家所在的卡、再取回来（第 <a class="xref" data-ref="moe"></a> 章）。</li>
+  <li><b><span class="term" data-t="expert-parallel">专家并行</span></b>（EP）：MoE 的专家分布在不同的卡上，每层两次全对全通信，把 token 发给专家所在的卡、再取回来（第 <a class="xref" data-ref="moe"></a> 章）。</li>
 </ul>
 <p>前沿训练把它们组合起来，按带宽需求从内到外排：张量并行放在服务器内，流水线跨服务器，最外层是数据并行，长序列阶段再加上下文并行。Llama 3 405B 用的是张量 8 × 上下文 1 × 流水线 16 × 数据 128 = 16,384 张卡；128K 长上下文阶段改成上下文 16、数据 8。这叫 4D 并行，再加专家并行就是 5D。DeepSeek-V3 则是另一种组合：流水线 16 路、专家并行 64 路（跨 8 台服务器）、ZeRO-1 数据并行，完全不用张量并行（原因见下）。</p>
 

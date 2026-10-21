@@ -17,7 +17,7 @@ A.defineDemo('moe-balance', function (mount) {
   grid.append(cv2, cv3); bd.append(grid);
   bd.append(A.el('div', { class: 'legend', html: '<span><i class="line" style="background:var(--s8)"></i>不加约束</span><span><i class="line" style="background:var(--s4)"></i>辅助损失</span><span><i class="line" style="background:var(--s1)"></i>偏置控制器</span>' }));
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
-  bd.append(A.el('p', { class: 'hint', html: '模型：每个 token 对每个专家有一个固定的“亲和度”（随机数，前几个专家整体高一些）。专家的熟练度随它最近收到的 token 数增长，路由器眼里的分数 = 亲和度 + log(熟练度)。这就是正反馈：收到越多 → 越熟练 → 分数越高 → 收到更多。<b>辅助损失</b>：路由器按梯度学习，主任务把它拉向这个分数，辅助损失 α·EΣf<sub>i</sub>P<sub>i</sub> 把它推向均匀。<b>偏置控制器</b>：路由器的分数不动，只在选 top-2 时加偏置 b<sub>i</sub>，每步按 b<sub>i</sub> ← b<sub>i</sub> + γ·sign(平均负载 − 负载<sub>i</sub>) 调整。“路由质量”= 被处理的分配的平均亲和度（门控加权，被丢弃的记 0），越高越好；“门控偏差”= 实际门控权重与按真实分数算的门控权重之间的 KL 散度。' }));
+  bd.append(A.el('p', { class: 'hint', html: '模型：每个 token 对每个专家有一个固定的“亲和度”（随机数，前几个专家整体高一些）。专家的熟练度随它最近收到的 token 数增长，路由器眼里的分数 = 亲和度 + log(熟练度)。这就是正反馈：收到越多 → 越熟练 → 分数越高 → 收到更多。<b>辅助损失</b>：路由器按梯度学习，主任务把它拉向这个分数，辅助损失 α·EΣf<sub>i</sub>P<sub>i</sub> 把它推向均匀。<b>偏置控制器</b>：路由器的分数不动，只在选 top-2 时加偏置 b<sub>i</sub>，每步按 b<sub>i</sub> ← b<sub>i</sub> + γ·sign(平均负载 − 负载<sub>i</sub>) 调整。“路由质量”= 被处理的分配的平均亲和度（门控加权，被丢弃的记 0），越高越好；“门控偏差”= 实际门控权重与按真实分数算的门控权重之间的 KL 散度。玩具里每个 token 的 logit 单独更新、梯度没有除以 T，所以这里的 α 和真实模型里的系数（Switch 用 0.01）量级不可比。把“天生受欢迎的程度”拉到 1，换几批随机数可以看到偏置控制器失手：某个专家长时间收不到 token，偏置一直累加（积分饱和），它的熟练度也跌到底；等它终于抢到 token，就冲过头。' }));
   const MODES = [{ m: 'none', n: '不加约束', c: '--s8' }, { m: 'aux', n: '辅助损失', c: '--s4' }, { m: 'bias', n: '偏置控制器', c: '--s1' }];
   let R = null;
   function run(mode, alpha, gamma, skew, sd) {
