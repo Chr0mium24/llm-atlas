@@ -283,7 +283,12 @@
 <p><b>这个推导告诉我们：</b>只要知道参数量和训练 token 数，就能估算训练成本，这是规模定律（第 <a class="xref" data-ref="scaling"></a> 章）的基础。</p>
 </div></details>
 
+<p>下面的计算器按真实配置算出各部分的参数量。注意两点：嵌入层在小模型里占比显著（GPT-2 small 约三成），在大模型里可以忽略；GQA 让 K、V 矩阵变小，注意力的占比低于 \(1/3\)。</p>
+<div data-demo="param-calc"></div>
+
 <h2 id="modern" data-short="原版与今天">放回时间轴：2017 年的块和今天差在哪</h2>
+<p>点击下图中的组件查看说明。这是 2023 年以后的“现代标准块”（Llama 风格）：Pre-RMSNorm、RoPE、GQA、SwiGLU，各部件前面几节都已讲过。</p>
+<div data-demo="block-diagram"></div>
 <p>到这里，块里每个部件都讲完了。2017 年的原版和今天的 Llama 类模型只差下面几处；最后一列是 2024 年以后少数前沿模型的新做法，未在本章讲的给了章节。</p>
 <div class="tablewrap"><table>
   <tr><th>组件</th><th>原版（2017）</th><th>现代标准（2023 起）</th><th>2024–26 的新做法</th></tr>
@@ -444,6 +449,9 @@
 <details class="quiz"><summary>1. Llama 3 8B：\(d = 4096\)，32 层，32 个 Q 头、8 个 KV 头（每头 128 维），SwiGLU 中间维度 14336，词表 128256，输入输出嵌入不共享。估算总参数量。</summary><div class="ans">每层注意力：\(W_Q\) 与 \(W_O\) 各 \(4096^2\approx 16.8\)M；8 个 KV 头共 \(8\times128 = 1024\) 维，\(W_K, W_V\) 各 \(4096\times 1024\approx 4.2\)M；合计约 41.9M。每层 MLP：\(3\times 4096\times 14336\approx 176.2\)M。每层约 218M，32 层约 6.98B。嵌入和输出层：\(2\times 128256\times 4096\approx 1.05\)B。总计约 8.03B。</div></details>
 <details class="quiz"><summary>2. RoPE 为什么只旋转 query 和 key，不旋转 value？</summary><div class="ans">位置只需要影响“看谁”，也就是注意力分数 \(\mathbf q\cdot\mathbf k\)；旋转 q、k 正好让分数只依赖相对位置。value 是被搬运的内容，如果也按位置旋转，输出里就混入了绝对位置，不同位置搬来的内容方向各异，后续层更难使用，也失去了“只依赖相对位置”的性质。</div></details>
 <details class="quiz"><summary>3. 把「从零开始」的玩具块从 Pre-Norm 换成 Post-Norm，嵌入向量 \(\mathbf x_0 = (2, 0, -1, 1)\) 还会原样留在这个块的输出里吗？堆 48 层之后呢？</summary><div class="ans">不会。Post-Norm 每个子层之后都对整个向量归一化：第一个子层就把 \(\mathbf x + \mathbf a\) 整体除以 1.31，\(\mathbf x\) 只以缩小后的形式存在。若每层写入与残差流大小相当，嵌入的占比每个子层约缩小 \(1/\sqrt 2\)，48 层（96 个子层）后约 \(2^{-48}\)，几乎被冲掉。Pre-Norm 下残差流只做加法，\(\mathbf x_0\) 原样留到最后，输出层读到的是 \(\mathbf x_0 + \sum\Delta_j\)；它的绝对大小不变，只是相对份额随残差流变长而下降。</div></details>
+
+<details class="quiz"><summary>4. 一个 7B 的稠密模型在 2 万亿 token 上训练，大约需要多少 FLOPs？如果一块 GPU 实际能跑 400 TFLOPS，需要多少 GPU·天？</summary><div class="ans">\(6\times 7\times 10^9\times 2\times 10^{12} = 8.4\times 10^{22}\) FLOPs。单卡每天 \(4\times 10^{14}\times 86400\approx 3.5\times 10^{19}\) FLOPs，约需 \(8.4\times 10^{22}/3.5\times 10^{19}\approx 2400\) GPU·天，例如 256 块 GPU 跑约 9 天。</div></details>
+<details class="quiz"><summary>5. 动手算：用 SwiGLU 的“参数量不变”规则，估算 Llama 2 13B（\(d = 5120\)）的 MLP 中间维度（向上取到 256 的倍数），并比较它每层 MLP 的参数量与原版 \(4d\) 的两矩阵 MLP。</summary><div class="ans">\(\tfrac83\times 5120\approx 13653\)，\(13653/256\approx 53.3\)，向上取整到 54，\(54\times 256 = 13824\)，与 Llama 2 13B 的实际配置一致。SwiGLU：\(3\times 5120\times 13824\approx 2.12\) 亿；原版：\(2\times 5120\times 20480\approx 2.10\) 亿。取整只多了约 1%。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
