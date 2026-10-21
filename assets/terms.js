@@ -256,9 +256,9 @@ window.ATLAS_TERMS = {
   'latent-diffusion': { t: '潜空间扩散', en: 'latent diffusion', d: '先用 VAE 把图像压缩成潜图，在潜图上做扩散，最后解码成像素（Stable Diffusion, 2022）。计算量减少数十倍。', at: 'image#latent' },
   dit: { t: 'DiT', en: 'Diffusion Transformer', d: '用 Transformer 处理潜图 patch 的去噪网络，时间步和条件经 adaLN 注入。扩展性好，是 Sora 之后大型图像与视频模型的基础。', at: 'image#backbone' },
   mmdit: { t: 'MMDiT', en: 'multimodal DiT', d: '文本 token 与图像 token 拼成一条序列做联合注意力、两种模态各有权重的 DiT（SD3, 2024）。FLUX、Qwen-Image 沿用。', at: 'image#backbone' },
-  sdedit: { t: 'SDEdit（图生图）', en: 'SDEdit', d: '把输入图加噪到中间时刻 s，再从那里去噪。强度 s 越大，保留原图越少、越自由。', at: 'image#control' },
+  sdedit: { t: 'SDEdit（图生图）', en: 'SDEdit', d: '把输入图加噪到中间时刻 s，再从那里去噪。强度 s 越大，保留原图越少、越自由。', at: 'image#strength' },
   controlnet: { t: 'ControlNet', en: 'ControlNet', d: '复制去噪网络的编码器接收边缘、深度、姿态等控制信号，经零初始化的卷积注入冻结的主网络，训练初期不破坏原能力。', at: 'image#control' },
-  'unified-model': { t: '理解与生成统一模型', en: 'unified understanding & generation', d: '同一个模型既能看图也能画图，常由语言模型负责理解与规划、扩散或自回归头负责生成像素（GPT-4o、BAGEL 等）。', at: 'image#unified' },
+  'unified-model': { t: '理解与生成统一模型', en: 'unified understanding & generation', d: '同一个模型既能看图也能画图，多数在语言模型内部直接做扩散（Transfusion、BAGEL、HunyuanImage 3.0），也有全部用离散图像 token 的（Chameleon、Janus）。', at: 'image#unified' },
 
   // ---- video (video.html)
   'spacetime-patch': { t: '时空 patch', en: 'spacetime patch', d: '把潜视频沿时间和空间切成的小块（常为 1×2×2），每块一个 token；任意时长、分辨率的视频都变成一串 token（Sora, 2024）。', at: 'video#zero-patch' },
@@ -409,7 +409,7 @@ window.ATLAS_TERMS = {
 
   // ---- image (upgrade 2026-10-20)
   'text-encoder': { t: "文本编码器", en: "text encoder", d: "把提示词变成一串向量（每个 token 一个）的预训练语言网络，通常冻结、每张图只跑一次。从 CLIP（77 个 token）到 T5，再到 2025 年后的多模态大模型，决定了模型能听懂多复杂的提示。", at: "image#img0-text" },
-  'timestep-shift': { t: "时间步偏移（分辨率相关）", en: "resolution-dependent timestep shift", d: "图越大，同一噪声水平破坏的信息越少，所以把时间步往噪声一侧挪：\\(t_m = \\alpha t_n/(1 + (\\alpha-1)t_n)\\)，\\(\\alpha = \\sqrt{m/n}\\)（\\(m, n\\) 为像素数）。SD3 在 1024² 上取 \\(\\alpha = 3\\)。", at: "image#img0-shift" },
+  'timestep-shift': { t: "时间步偏移（分辨率相关）", en: "resolution-dependent timestep shift", d: "图越大，同一噪声水平破坏的信息越少，所以把时间步往噪声一侧挪：\\(t_m = \\alpha t_n/(1 + (\\alpha-1)t_n)\\)，\\(\\alpha = \\sqrt{P_m/P_n}\\)（\\(P_m, P_n\\) 为两种分辨率的像素数）。SD3 在 1024² 上取 \\(\\alpha = 3\\)。", at: "image#img0-shift" },
   'joint-attention': { t: "联合注意力", en: "joint attention", d: "把文本 token 与图像 token 拼成一条序列做一次自注意力，两种模态各用一套投影权重（MMDiT）。对图像 token 相当于自注意力与交叉注意力的自适应混合；文本表示也随画面逐层更新。", at: "image#backbone" },
   inpainting: { t: "局部重绘", en: "inpainting", d: "只重新生成掩码内的区域：每一步把掩码外换回原图加噪到当前水平的版本 \\(\\mathbf m\\odot\\mathbf x_t + (1-\\mathbf m)\\odot(a_t\\mathbf x_{\\text{原图}} + b_t\\boldsymbol\\varepsilon)\\)，或训练以掩码和原图为额外输入的专门模型。", at: "image#control" },
   'in-context-editing': { t: "上下文内编辑", en: "in-context image editing", d: "把参考图编码成 token，与目标图 token 拼进同一条序列，靠联合注意力直接参照参考图生成或修改，不需要额外的控制网络（FLUX.1 Kontext、Qwen-Image-Edit, 2025）。", at: "image#control" },
@@ -688,4 +688,7 @@ window.ATLAS_TERMS = {
 
   // ---- on-device (upgrade 2026-10-20)
   'kv-quant': { t: "KV 量化", en: "KV cache quantization", d: "把 KV 缓存里的 K、V 存成 8 位或 4 位，读出时再还原，用来在同样的内存里放下更长的上下文。K 有通道方向的离群值，比 V 难量化；Q8_0 基本无损，4 位在长上下文上有掉点报告。", at: "on-device#od0-kv" },
+
+  // ---- image (upgrade 2026-10-20)
+  'consistency-model': { t: "一致性模型", en: "consistency model", d: "学一个函数 \\(f_\\theta(\\mathbf x_t, t)\\approx\\mathbf x_0\\)，把概率流 ODE 轨迹上任何一点直接映射到终点。训练目标是自一致性：同一轨迹上相邻两点的输出相同，再把 \\(t\\to 0\\) 一端钉住；于是一步就能生成（Song 等, 2023；LCM 把它用到潜空间扩散）。", at: "image#fast" },
 };

@@ -79,7 +79,7 @@ A.defineDemo('image-sdedit', function (mount) {
   const grid = A.el('div', { class: 'cols' }); bd.append(grid);
   const cvL = A.el('canvas', { class: 'cv' }), cvR = A.el('canvas', { class: 'cv' });
   grid.append(A.el('div', null, A.el('div', { class: 'small', style: { fontWeight: 600 } }, '每个尺度保留多少草图：λ(k)'), cvL),
-    A.el('div', null, A.el('div', { class: 'small', style: { fontWeight: 600 } }, '权衡曲线：s 从 0 走到 1'), cvR));
+    A.el('div', null, A.el('div', { class: 'small', style: { fontWeight: 600 } }, '权衡曲线：s 从 0 走到 1（期望值，按高斯后验解析计算）'), cvR));
   const hint = A.el('p', { class: 'hint' }); bd.append(hint);
   const cols = A.series();
   function paint(cv, x) {
@@ -137,12 +137,11 @@ A.defineDemo('image-sdedit', function (mount) {
     ctx.strokeStyle = cols[2]; ctx.lineWidth = 2.5; ctx.beginPath();
     cu.forEach((p, i) => { const x = ax.X(p.f), y = ax.Y(p.d); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
     ctx.stroke();
-    [0, 20, 40, 60, 100].forEach((i) => { const p = cu[i], x = ax.X(p.f), y = ax.Y(p.d); ctx.fillStyle = cols[2]; ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); A.text(ctx, 's=' + p.s.toFixed(1), i === 100 ? x - 4 : x + 6, y - 10, { size: 11, align: i === 100 ? 'right' : 'left', color: A.css('--ink-2') }); });
+    [0, 20, 40, 60, 100].forEach((i) => { const p = cu[i], x = ax.X(p.f), y = ax.Y(p.d); ctx.fillStyle = cols[2]; ctx.beginPath(); ctx.arc(x, y, 3, 0, 7); ctx.fill(); A.text(ctx, 's=' + p.s.toFixed(1), i === 100 ? x - 4 : x + 6, i === 100 ? y - 24 : y - 10, { size: 11, align: i === 100 ? 'right' : 'left', color: A.css('--ink-2') }); });
     const s = S.value, p = expected(sketch(sk).X, s), px = ax.X(p.f), py = ax.Y(p.d);
     ctx.fillStyle = cols[1]; ctx.beginPath(); ctx.arc(px, py, 6.5, 0, 7); ctx.fill();
     const up = py > box.y + box.h * 0.35;
     A.text(ctx, '当前 s = ' + s.toFixed(2), px + (px > box.x + box.w * 0.7 ? -10 : 10), up ? py - 24 : py + 16, { size: 12, weight: 700, color: cols[1], align: px > box.x + box.w * 0.7 ? 'right' : 'left' });
-    A.text(ctx, '期望值，按高斯后验解析计算', box.x + box.w, box.y - 8, { size: 11, align: 'right', color: A.css('--muted'), base: 'bottom' });
     viewR.ax = ax; viewR.cu = cu;
   });
   cvL.addEventListener('pointermove', (e) => { const p = A.pos(cvL, e); hoverL = p; viewL.redraw(); if (!viewL.ax) return; const k = A.clamp(viewL.ax.invX(p.x), kmin, kmax); A.tip.show(`频率 k = ${k.toFixed(1)} 周期 / 图<br>保留比例 λ = ${lam(S.value, Pk(k)).toFixed(2)}<br><span class="muted">λ 接近 1：照抄草图；接近 0：重新生成</span>`, e.clientX, e.clientY); });
@@ -168,7 +167,9 @@ A.defineDemo('image-sdedit', function (mount) {
       ? '强度很小：只有最细的纹理被噪声淹没、重新生成，草图的平涂色块和硬边几乎原样保留。结果“忠实”，但一眼能看出是草图：真实图像在每个尺度上都有细节，草图没有。'
       : s < 0.5
         ? '中等强度：截止频率之上（笔画边缘、纹理）按“真实图像”的统计重画，截止之下（大色块的位置和明暗）从草图抄过来。草图的构图保住了，质感变得像真图。字母 A 这样的细笔画比圆盘更早被抹掉：它的信息集中在更高的频率上。'
-        : s < 0.85
+        : s < 0.74
+          ? '中等偏大：截止移到每幅图约 2–6 个周期，笔画、小物体和硬边都被重画，大色块的位置和明暗仍基本保留（2 个周期的保留比例还在 0.5 以上）。'
+          : s < 0.88
           ? '强度很大：连大色块的尺度也被噪声淹没，只剩最粗的明暗布局。三个结果彼此差别很大，和草图越来越不像，但统计上已经和真实图像一样。'
           : '强度接近 1：起点几乎是纯噪声，草图的信息只剩一个整体亮度，等于从头生成。右图里的点走到了权衡曲线的右下端。';
     viewL.redraw(); viewR.redraw();

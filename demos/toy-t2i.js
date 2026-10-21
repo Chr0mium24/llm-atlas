@@ -79,11 +79,11 @@ A.defineDemo('toy-t2i', function (mount) {
     ctx.putImageData(id, 0, 0); cv.classList.add('pixel');
   }
   // ---- UI
-  let tab = 't2i';
+  let tab = 'i2i';
   const tabs = A.el('div', { class: 'controls' }); bd.append(tabs);
   A.seg(tabs, [{ v: 't2i', t: '文生图' }, { v: 'i2i', t: '图生图（画草图）' }, { v: 'data', t: '看训练集' }], tab, (v) => { tab = v; show(); }, '模式');
   const promptIn = A.el('input', { type: 'text', style: { width: '100%', fontSize: '15px' } });
-  promptIn.value = '夜晚的一颗黄色星星';
+  promptIn.value = '一张图';
   const chips = A.el('div', { class: 'chips' });
   ['夜晚的一颗黄色星星', '蓝天下红色的爱心', '左上角的绿色三角', '紫色方块', '圆', '一张图'].forEach((p) => chips.append(A.el('button', { class: 'chip', onclick: () => { promptIn.value = p; run(); } }, p)));
   const parsed = A.el('div', { class: 'small', style: { margin: '4px 0 8px' } });
@@ -91,7 +91,7 @@ A.defineDemo('toy-t2i', function (mount) {
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const stepsS = A.slider(ctl, { label: '采样步数', min: 1, max: 50, step: 1, value: 20, fmt: (v) => v, on: A.debounce(() => run(), 150) });
   const wS = A.slider(ctl, { label: 'CFG 引导强度', min: 0, max: 8, step: 0.1, value: 3, fmt: (v) => v.toFixed(1), on: A.debounce(() => run(), 150) });
-  const strS = A.slider(ctl, { label: '图生图强度（加噪到 t）', min: 0.05, max: 1, step: 0.01, value: 0.6, fmt: (v) => v.toFixed(2), on: A.debounce(() => run(), 150) });
+  const strS = A.slider(ctl, { label: '图生图强度（加噪到 t）', min: 0.05, max: 1, step: 0.01, value: 0.35, fmt: (v) => v.toFixed(2), on: A.debounce(() => run(), 150) });
   let seed = 1;
   ctl.append(A.el('button', { class: 'primary', onclick: () => { seed++; run(); } }, '换随机种子生成'));
   const panT2I = A.el('div'), panI2I = A.el('div'), panData = A.el('div');

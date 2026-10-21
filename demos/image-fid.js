@@ -97,8 +97,8 @@ A.defineDemo('image-fid', function (mount) {
     ctx.closePath(); ctx.fill();
     ctx.strokeStyle = cols[1]; ctx.lineWidth = 2.5; ctx.beginPath(); cu.forEach((p, i) => { const x = ax.X(p.n), y = ax.Y(p.m); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); ctx.stroke();
     ctx.save(); ctx.strokeStyle = A.css('--ink-2'); ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(box.x, ax.Y(pop)); ctx.lineTo(box.x + box.w, ax.Y(pop)); ctx.stroke(); ctx.restore();
-    { const lab = '虚线：总体 FID（N → ∞）= ' + pop.toFixed(3); if (pop > ymax * 0.12) A.text(ctx, lab, box.x + box.w - 4, ax.Y(pop) + 12, { size: 11.5, align: 'right', color: A.css('--ink-2') }); else A.text(ctx, lab, box.x + 6, ax.Y(pop) - 9, { size: 11.5, color: A.css('--ink-2') }); }
-    if (cur) { ctx.fillStyle = cols[0]; ctx.beginPath(); ctx.arc(ax.X(cur.n), ax.Y(Math.min(ymax, cur.f.all)), 6, 0, 7); ctx.fill(); { const px = ax.X(cur.n), py = ax.Y(Math.min(ymax, cur.f.all)), right = px > box.x + box.w * 0.75; A.text(ctx, '这次抽样', px + (right ? -8 : 8), py - 22, { size: 11.5, weight: 700, color: cols[0], align: right ? 'right' : 'left' }); } }
+    let popLabY; { const lab = '虚线：总体 FID（N → ∞）= ' + pop.toFixed(3); if (pop > ymax * 0.12) { popLabY = ax.Y(pop) + 12; A.text(ctx, lab, box.x + box.w - 4, popLabY, { size: 11.5, align: 'right', color: A.css('--ink-2') }); } else { popLabY = ax.Y(pop) - 9; A.text(ctx, lab, box.x + 6, popLabY, { size: 11.5, color: A.css('--ink-2') }); } }
+    if (cur) { ctx.fillStyle = cols[0]; ctx.beginPath(); ctx.arc(ax.X(cur.n), ax.Y(Math.min(ymax, cur.f.all)), 6, 0, 7); ctx.fill(); { const px = ax.X(cur.n), py = ax.Y(Math.min(ymax, cur.f.all)), right = px > box.x + box.w * 0.75; let ly = py - 22; if (Math.abs(ly - popLabY) < 16) ly = (py + 22 < box.y + box.h) ? py + 22 : py - 40; A.text(ctx, '这次抽样', px + (right ? -8 : 8), ly, { size: 11.5, weight: 700, color: cols[0], align: right ? 'right' : 'left' }); } }
     if (hoverR) { const p = hoverR; ctx.strokeStyle = A.css('--axis'); ctx.beginPath(); ctx.moveTo(ax.X(p.n), box.y); ctx.lineTo(ax.X(p.n), box.y + box.h); ctx.stroke(); }
     viewR.ax = ax; viewR.cu = cu;
   });

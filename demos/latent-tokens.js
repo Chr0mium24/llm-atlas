@@ -20,18 +20,19 @@ A.defineDemo('latent-tokens', function (mount) {
   A.check(ctl2, 'CFG（每步跑两遍）', cfg, (v) => { cfg = v; draw(); });
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const note = A.el('p', { class: 'hint' }); bd.append(note);
+  const dur = (sec) => sec < 120 ? sec.toFixed(1) + ' 秒' : sec < 7200 ? (sec / 60).toFixed(0) + ' 分钟' : sec < 172800 ? (sec / 3600).toFixed(1) + ' 小时' : (sec / 86400).toFixed(0) + ' 天';
   function draw() {
-    const r = R.value, lat = r / f, tok = Math.pow(lat / p, 2), m = M[model];
+    const r = R.value, lat = r / f, side = Math.ceil(lat / p), tok = side * side, m = M[model];
     const n = tok + nt;
     const step = 2 * m.act * n + 4 * m.L * n * n * m.d, passes = Math.round(K.value) * (cfg ? 2 : 1), total = step * passes;
     const attnShare = (4 * m.L * n * n * m.d) / step;
     stats.innerHTML = '';
     [['像素数', A.human(r * r * 3, 1)], ['潜图', `${lat}×${lat}×${ch}（少 ${((r * r * 3) / (lat * lat * ch)).toFixed(0)} 倍）`], ['图像 token', tok.toLocaleString()], ['序列总长（+ 文本）', n.toLocaleString()],
-      ['每步计算量', A.sci(step) + ' FLOP'], ['注意力占每步', A.pct(attnShare, 0)], ['整张图', (total / 1e15).toFixed(total < 1e15 ? 2 : 1) + ' PFLOP'], ['H100 满载（989 TFLOP/s）', (total / 9.89e14).toFixed(1) + ' 秒']]
+      ['每步计算量', A.sci(step) + ' FLOP'], ['注意力占每步', A.pct(attnShare, 0)], ['整张图', total < 1e18 ? (total / 1e15).toFixed(total < 1e15 ? 2 : 1) + ' PFLOP' : A.sci(total) + ' FLOP'], ['H100 满载（989 TFLOP/s）', dur(total / 9.89e14)]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
     note.innerHTML = `${m.t}：总参数 ${A.human(m.N, 1)}，但每个 token 只经过约 ${A.human(m.act, 2)}（文本和图像各走一套权重；adaLN 的调制权重只作用于时间步向量，不随 token 数增长）。` +
-      (r >= 2048 ? '分辨率翻倍，token 数变成 4 倍，线性层计算量 4 倍、注意力 16 倍：高分辨率时注意力开始占大头。' : '把边长拉到 2048 或 4096，看注意力的占比怎样上升；把 VAE 换成 32× 压缩，同样的分辨率 token 数降到 1/16。') +
-      ' 实际利用率达不到满载，真实耗时更长；少步蒸馏把 28 步压到 1–4 步，是降低成本最直接的一项。';
+      (lat % p ? `潜图边长 ${lat} 不能被 patch 整除，按补边算成 ${side}×${side} 个 token。` : '') + (r >= 2048 ? '分辨率翻倍，token 数变成 4 倍，线性层计算量 4 倍、注意力 16 倍：高分辨率时注意力开始占大头。' : '把边长拉到 2048 或 4096，看注意力的占比怎样上升；把 VAE 换成 32× 压缩，同样的分辨率 token 数降到 1/16。') +
+      '潜通道数只改变每个 patch 拉平后的长度（投影到宽度 d 之前），不改变 token 数，对计算量几乎没有影响；它影响的是重建质量（见「潜空间的取舍」）。实际利用率达不到满载，真实耗时更长；少步蒸馏把 28 步压到 1–4 步，是降低成本最直接的一项。';
   }
   draw();
 });
