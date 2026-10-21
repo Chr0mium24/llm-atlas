@@ -427,7 +427,7 @@ pre.code { background: var(--code-bg); border-radius: 10px; padding: 12px 16px; 
 .hero h1 { font-size: 40px; margin-bottom: 8px; }
 .partname { margin: 30px 0 4px; font-weight: 700; color: var(--ink-2); font-size: 14px; letter-spacing: .04em; }
 .card .st { float: right; font-size: 11px; padding: 0 6px; border-radius: 4px; border: 1px solid var(--axis); color: var(--muted); font-weight: 500; }
-.card .st-new { border-color: var(--s3); color: var(--good-ink); }
+.card .st-brief, #side a.ch .st-brief { border-style: dashed; }
 .card .st-todo { border-style: dashed; }
 .card.todo { opacity: .78; }
 .demos { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height: 1.6; }

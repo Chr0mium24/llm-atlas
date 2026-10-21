@@ -86,18 +86,18 @@ document.addEventListener('DOMContentLoaded', () => {
   };
   const box = document.getElementById('cards');
   let grid = null;
-  const cnt = { new: 0, old: 0, todo: 0 };
+  let nch = 0;
   A.CHAPTERS.forEach((c) => {
     if (c.home) return;
     if (c.part) { box.append(A.el('div', { class: 'partname' }, c.part)); grid = A.el('div', { class: 'grid-cards', style: { marginTop: '8px' } }); box.append(grid); return; }
     if (!grid) { grid = A.el('div', { class: 'grid-cards' }); box.append(grid); }
-    cnt[c.st]++;
+    nch++;
     grid.append(A.el('a', { class: 'card' + (c.st === 'todo' ? ' todo' : ''), href: c.f },
-      A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]),
+      c.st ? A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]) : null,
       A.el('div', { class: 'n' }, A.chLabel(c)), A.el('div', { class: 't' }, c.t), A.el('div', { class: 'd' }, INFO[c.s] || '')));
   });
   const pg = document.getElementById('progress');
-  [['章节', cnt.new + cnt.old + cnt.todo], ['交互演示', 130], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
+  [['章节', nch], ['交互演示', 130], ['术语', Object.keys(window.ATLAS_TERMS || {}).length || '—']].forEach(([k, v]) =>
     pg.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v' }, String(v)))));
   const setTerms = () => { const v = pg.querySelectorAll('.stat .v')[2]; const n = Object.keys(window.ATLAS_TERMS || {}).length; if (v && n) v.textContent = String(n); };
   if (window.ATLAS_TERMS) setTerms(); else { const sc = document.createElement('script'); sc.src = 'assets/terms.js'; sc.onload = setTerms; document.head.append(sc); }

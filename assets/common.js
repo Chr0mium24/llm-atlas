@@ -1,56 +1,56 @@
 /* LLM Atlas — shared helpers: chapter registry, nav, page components, demo loader, theme, canvas, controls, math, plotting. */
 (function () {
   /* ---------- chapter registry ----------
-     s: file slug (s + '.html'); t: title; st: 'new' (rewritten) | 'old' (pre-restructure text) | 'todo' (placeholder)
+     s: file slug (s + '.html'); t: title; st: omitted = full chapter (upgraded / reviewed) | 'brief' (first-version chapter, not yet deepened or reviewed) | 'old' (pre-restructure text) | 'todo' (placeholder)
      n: fixed label (序 / 附); otherwise chapters are numbered 1..N in order. */
   const CHAPTERS = [
     { s: 'index', t: '总览', home: true },
-    { s: 'prologue', t: '九年简史', n: '序', st: 'new' },
+    { s: 'prologue', t: '九年简史', n: '序' },
     { part: '一 · Transformer 怎么工作' },
-    { s: 'tokens', t: '分词与嵌入', st: 'new' },
-    { s: 'attention', t: '注意力机制', st: 'new' },
-    { s: 'transformer', t: 'Transformer 结构与位置编码', st: 'new' },
-    { s: 'generation', t: '自回归生成与采样', st: 'new' },
+    { s: 'tokens', t: '分词与嵌入' },
+    { s: 'attention', t: '注意力机制' },
+    { s: 'transformer', t: 'Transformer 结构与位置编码' },
+    { s: 'generation', t: '自回归生成与采样' },
     { part: '二 · 预训练' },
-    { s: 'data', t: '预训练数据', st: 'new' },
-    { s: 'scaling', t: '规模定律与优化器', st: 'new' },
+    { s: 'data', t: '预训练数据', st: 'brief' },
+    { s: 'scaling', t: '规模定律与优化器' },
     { part: '三 · 后训练' },
-    { s: 'sft', t: 'SFT 与偏好优化', st: 'new' },
-    { s: 'rl', t: '强化学习', st: 'new' },
-    { s: 'distillation', t: '蒸馏与能力整合', st: 'new' },
-    { s: 'reasoning', t: '推理模型与推理时算力', st: 'new' },
-    { s: 'agents', t: '智能体', st: 'new' },
-    { s: 'coding', t: 'AI 编程', st: 'new' },
+    { s: 'sft', t: 'SFT 与偏好优化' },
+    { s: 'rl', t: '强化学习' },
+    { s: 'distillation', t: '蒸馏与能力整合', st: 'brief' },
+    { s: 'reasoning', t: '推理模型与推理时算力', st: 'brief' },
+    { s: 'agents', t: '智能体' },
+    { s: 'coding', t: 'AI 编程' },
     { part: '四 · 架构演进' },
-    { s: 'moe', t: '混合专家 MoE', st: 'new' },
-    { s: 'long-context', t: '长上下文与注意力变体', st: 'new' },
+    { s: 'moe', t: '混合专家 MoE' },
+    { s: 'long-context', t: '长上下文与注意力变体', st: 'brief' },
     { part: '五 · 硬件与部署' },
-    { s: 'hardware', t: '芯片、内核与编译器', st: 'new' },
-    { s: 'quantization', t: '量化', st: 'new' },
-    { s: 'serving', t: '推理系统', st: 'new' },
-    { s: 'training-systems', t: '训练系统', st: 'new' },
-    { s: 'on-device', t: '本地与端侧部署', st: 'new' },
+    { s: 'hardware', t: '芯片、内核与编译器' },
+    { s: 'quantization', t: '量化', st: 'brief' },
+    { s: 'serving', t: '推理系统' },
+    { s: 'training-systems', t: '训练系统' },
+    { s: 'on-device', t: '本地与端侧部署' },
     { part: '六 · 多模态' },
-    { s: 'vlm', t: '多模态理解', st: 'new' },
-    { s: 'diffusion', t: '扩散与流匹配', st: 'new' },
-    { s: 'image', t: '文生图与图生图', st: 'new' },
-    { s: 'video', t: '视频生成', st: 'new' },
-    { s: 'audio', t: '语音、音频与音乐', st: 'new' },
-    { s: 'spatial', t: '3D 与空间智能', st: 'new' },
-    { s: 'world-models', t: '世界模型', st: 'new' },
-    { s: 'embodied', t: '具身智能与 VLA', st: 'new' },
+    { s: 'vlm', t: '多模态理解', st: 'brief' },
+    { s: 'diffusion', t: '扩散与流匹配', st: 'brief' },
+    { s: 'image', t: '文生图与图生图' },
+    { s: 'video', t: '视频生成' },
+    { s: 'audio', t: '语音、音频与音乐' },
+    { s: 'spatial', t: '3D 与空间智能' },
+    { s: 'world-models', t: '世界模型' },
+    { s: 'embodied', t: '具身智能与 VLA' },
     { part: '七 · 理解与评判' },
-    { s: 'interpretability', t: '可解释性', st: 'new' },
-    { s: 'evaluation', t: '评测', st: 'new' },
-    { s: 'alignment', t: '对齐', st: 'new' },
-    { s: 'jailbreak', t: '越狱与防御', st: 'new' },
+    { s: 'interpretability', t: '可解释性', st: 'brief' },
+    { s: 'evaluation', t: '评测' },
+    { s: 'alignment', t: '对齐', st: 'brief' },
+    { s: 'jailbreak', t: '越狱与防御', st: 'brief' },
     { part: '八 · 应用与社会' },
-    { s: 'science', t: 'AI for Science 与数学', st: 'new' },
-    { s: 'industry', t: '产业、算力经济与治理', st: 'new' },
+    { s: 'science', t: 'AI for Science 与数学', st: 'brief' },
+    { s: 'industry', t: '产业、算力经济与治理', st: 'brief' },
     { part: '收尾' },
-    { s: 'frontier', t: '前沿地图与开放问题', st: 'new' },
+    { s: 'frontier', t: '前沿地图与开放问题' },
     { part: '附录' },
-    { s: 'nn-basics', t: '神经网络与数学速成', n: '附', st: 'new' },
+    { s: 'nn-basics', t: '神经网络与数学速成', n: '附' },
   ];
   // assign numbers, part names, file names
   {
@@ -70,7 +70,7 @@
   A.ch = (slug) => CHAPTERS.find((c) => c.s === slug);
   A.chLabel = (c) => (c.n === '序' ? '序章' : c.n === '附' ? '附录' : c.home ? '' : '第 ' + c.n + ' 章');
   A.cref = (slug) => { const c = A.ch(slug); return c ? A.chLabel(c) : ''; };
-  A.STATUS = { new: '新版', old: '旧版', todo: '待写' };
+  A.STATUS = { brief: '简版', old: '旧版', todo: '待写' };
 
   /* ---------- DOM ---------- */
   A.$ = (s, r = document) => r.querySelector(s);
@@ -134,7 +134,7 @@
     CHAPTERS.forEach((c) => {
       if (c.part) { side.append(A.el('div', { class: 'part' }, c.part)); return; }
       const on = c.s === here;
-      const badge = c.st && c.st !== 'new' ? A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]) : null;
+      const badge = c.st ? A.el('span', { class: 'st st-' + c.st }, A.STATUS[c.st]) : null;
       side.append(A.el('a', { class: 'ch' + (on ? ' on' : '') + (c.st === 'todo' ? ' todo' : ''), href: c.f }, A.el('span', { class: 'n' }, c.home ? '' : c.n), A.el('span', { class: 'tt' }, c.t), badge));
       if (on) {
         idx = flat.indexOf(c);
@@ -157,6 +157,7 @@
     if (kick && cur && !kick.textContent.trim()) kick.textContent = [A.chLabel(cur), cur.partName].filter((x, i, a) => x && a.indexOf(x) === i).join(' · ');
     // status banner for old / placeholder chapters
     const hdr = A.$('main header');
+    if (hdr && cur && cur.st === 'brief') hdr.after(A.el('div', { class: 'callout status-note', html: '<b>简版。</b>这一章还是初版：篇幅和推导较少，也还没有经过独立的事实与内容审查。之后会按样章（第 <a class="xref" data-ref="rl"></a> 章）的深度重写。' }));
     if (hdr && cur && cur.st === 'old') hdr.after(A.el('div', { class: 'callout warn status-note', html: '<b>旧版内容。</b>这一章还是改版前的文字：正文较简略，历史只有列表。它会按新模板重写（推导折叠块、“主干 + 支线”的历史、争议与反直觉框）。演示是可用的。' }));
     // pager
     const pager = document.getElementById('pager');
@@ -202,7 +203,7 @@
       const defHref = (id) => {
         const slug = ((T[id] && T[id].at) || '').split('#')[0], c = A.ch(slug);
         if (slug === here && document.getElementById('t-' + id)) return '#t-' + id;
-        if (c && c.st === 'new' && slug !== here) return c.f + '#t-' + id;
+        if (c && c.st !== 'old' && c.st !== 'todo' && slug !== here) return c.f + '#t-' + id;
         return null;
       };
       const glossHref = (id) => (here === 'glossary' ? '' : 'glossary.html') + '#t-' + id;
