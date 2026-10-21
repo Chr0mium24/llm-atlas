@@ -598,9 +598,9 @@ window.ATLAS_TERMS = {
   densification: { t: "自适应密度控制", en: "adaptive density control", d: "3DGS 训练中按位置梯度增删高斯：小的复制、大的拆分、几乎透明的删除，数量从 SfM 的几万个长到几百万个。", at: "spatial#gs" },
   'janus-problem': { t: "雅努斯问题", en: "Janus problem", d: "用 SDS 生成的三维物体从每个角度看都长出一张正脸：每个视角各自被推向二维模型的众数，而二维模型不知道视角。", at: "spatial#gen" },
   'multiview-diffusion': { t: "多视角扩散模型", en: "multi-view diffusion model", d: "同时生成同一物体多个视角的扩散模型，各视角一起去噪、彼此一致（MVDream, 2023），用来缓解雅努斯问题或给前馈重建提供输入。", at: "spatial#gen" },
-  lrm: { t: "大型重建模型（LRM）", en: "large reconstruction model", d: "一个 Transformer 读入一张或几张图，直接输出 NeRF 或高斯泼溅（LRM, 2023-11：5 亿参数、约 5 秒）；看不见的部分靠回归，常偏模糊。", at: "spatial#feedforward" },
-  pointmap: { t: "点图", en: "pointmap", d: "每个像素对应一个三维坐标、都表示在同一台相机坐标系里的图（DUSt3R）。从中可以解出深度、焦距和相对位姿，取代特征匹配与三角化。", at: "spatial#feedforward" },
-  'structured-latent': { t: "结构化三维潜空间", en: "structured 3D latent", d: "只在物体表面附近的稀疏体素上放潜向量的三维潜空间；先生成哪些体素有东西，再生成潜向量，可解码成辐射场、高斯泼溅或网格（TRELLIS）。", at: "spatial#feedforward" },
+  lrm: { t: "大型重建模型（LRM）", en: "large reconstruction model", d: "一个 Transformer 读入一张或几张图，直接输出 NeRF 或高斯泼溅（LRM, 2023-11：5 亿参数、约 5 秒）；看不见的部分靠回归，常偏模糊。", at: 'spatial#ff-gen' },
+  pointmap: { t: "点图", en: "pointmap", d: "每个像素对应一个三维坐标、都表示在同一台相机坐标系里的图（DUSt3R）。从中可以解出深度、焦距和相对位姿，取代特征匹配与三角化。", at: 'spatial#ff-geo' },
+  'structured-latent': { t: "结构化三维潜空间", en: "structured 3D latent", d: "只在物体表面附近的稀疏体素上放潜向量的三维潜空间；先生成哪些体素有东西，再生成潜向量，可解码成辐射场、高斯泼溅或网格（TRELLIS）。", at: 'spatial#ff-gen' },
   'cognitive-map': { t: "认知地图", en: "cognitive map", d: "把看到的东西放进一张统一的空间平面图的内部表示。VSI-Bench 发现多模态模型的空间推理瓶颈主要在这里，显式画出它能提高距离题成绩。", at: "spatial#reasoning" },
 
   // ---- generation (upgrade 2026-10-20)
@@ -691,4 +691,7 @@ window.ATLAS_TERMS = {
 
   // ---- image (upgrade 2026-10-20)
   'consistency-model': { t: "一致性模型", en: "consistency model", d: "学一个函数 \\(f_\\theta(\\mathbf x_t, t)\\approx\\mathbf x_0\\)，把概率流 ODE 轨迹上任何一点直接映射到终点。训练目标是自一致性：同一轨迹上相邻两点的输出相同，再把 \\(t\\to 0\\) 一端钉住；于是一步就能生成（Song 等, 2023；LCM 把它用到潜空间扩散）。", at: "image#fast" },
+
+  // ---- spatial (upgrade 2026-10-20)
+  'novel-view-synthesis': { t: "新视角合成", en: "novel view synthesis", d: "从没有拍过的相机位置渲染出照片。评测时留出几张照片不参与训练，训练后从这些位置重新渲染、和真照片比（PSNR 等），以此检验学到的是三维而不是背下了照片。", at: "spatial#zero-inverse" },
 };

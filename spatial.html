@@ -13,10 +13,10 @@
 <header>
   <div class="kicker"></div>
   <h1>3D 与空间智能：从照片到可以走进去的场景</h1>
-  <p class="lede">图像和视频是三维世界在二维平面上的投影。要生成可以从任意角度观看的物体、可以走进去的场景，或者让模型真正说清“桌子在椅子左边一米”，需要三维的表示。这一章先用一台针孔相机和一个玩具场景，把投影、光线和颜色累加从零算一遍；再沿着 SfM → NeRF → Instant-NGP → 3D 高斯泼溅讲清重建的每一代在修什么，推导体渲染公式、位置编码为什么必要、三维高斯怎样投影成椭圆；然后是借二维扩散模型生成三维的 SDS 和它的“多脸”问题、一秒钟完成的前馈重建，最后是 2025–26 年的世界生成和多模态模型仍然很弱的空间推理。</p>
+  <p class="lede">图像、视频和声音都是三维世界的投影。这一章回答三个问题：怎样从一组照片找回三维；照片不够、只有一张图或一句话时怎样生成三维；不做重建，多模态模型能不能直接说清“沙发离电视多远”。三个问题共用同一套几何：一台针孔相机怎样把三维变成照片。</p>
 </header>
 
-<div class="bridge">前几章的模型都在二维平面上工作：图像是像素网格，视频是一叠网格。它们能画出逼真的画面，却不保证不同角度看到的是同一个物体，也说不清物体之间的距离。这一章把第三个维度加回来。</div>
+<div class="bridge">上一章的声音和前几章的图像、视频一样，都是世界的投影：图像是像素网格，视频是一叠网格，声音是一条波形。生成模型能画出逼真的画面，却不保证不同角度看到的是同一个物体，也说不清物体之间的距离。这一章把第三个维度加回来。</div>
 
 <div class="prereq">
   <ul>
@@ -28,16 +28,17 @@
 </div>
 
 <h2 id="repr">三维怎样表示</h2>
-<p>传统图形学用<b>网格</b>（三角形拼成的表面）、<b>点云</b>、<b>体素</b>（三维像素）表示形状。它们各有短处：网格难以表示头发、烟雾这类没有清晰表面的东西；体素的存储随分辨率的三次方增长，\(512^3\) 的格子就有 1.3 亿个；点云不知道点与点之间是什么。深度学习带来了两种新表示：一种把场景存在一个神经网络里，输入坐标、输出该点的密度和颜色（隐式表示）；另一种用大量可优化的小基元拼出场景（显式表示）。两者渲染成图像时用的是同一个来自光学的公式。要讲清这个公式，先得讲清一台相机怎样把三维变成二维。</p>
+<p>传统图形学用<b>网格</b>（三角形拼成的表面）、<b>点云</b>、<b>体素</b>（三维像素）表示形状。网格难以表示头发、烟雾这类没有清晰表面的东西，而且每个物体的拓扑（几个洞、几块）都不同；体素的存储随分辨率的三次方增长，\(512^3\) 的格子就有 1.3 亿个；点云不知道点与点之间是什么。深度学习带来了两种新表示：把场景存在一个神经网络里，输入坐标、输出该点的密度和颜色（隐式表示）；或者用大量可优化的小基元拼出场景（显式表示）。</p>
+<p>全章按三个问题展开，后一个依赖前一个。<b>一，怎样从照片得到三维。</b>选一种表示作为未知数 \(\theta\)（一个网络，或几百万个小椭球），用一个可微的渲染公式把它变成照片，再改 \(\theta\)，让渲染和真照片对得上；从 SfM 到 NeRF、高斯泼溅都是这个思路，靠的是“所有视角必须同时对得上”。<b>二，照片不够时怎么办。</b>借二维扩散模型的先验（SDS），或者训练一个网络直接学“照片 → 三维”，把逐场景的优化摊进一次前向（LRM、TRELLIS、VGGT）。<b>三，不重建，只问多模态模型</b>“沙发离电视多远”，它们答得出吗？大多答不好，原因就在第一个问题里：一张照片丢掉了深度，要靠多个视角对上号才找得回来，而多模态模型没有这一步（最后一节）。下面先把“一台相机怎样把三维变成照片”算一遍。</p>
 
 <h2 id="basics" data-short="3D 从零开始">从零开始：一台针孔相机和一个玩具场景</h2>
-<p>这一节不涉及神经网络。用一个贯穿全章的玩具场景把后面要用的几何讲一遍：<b>一个红球放在相机正前方偏右下 2 米深处，后面 4 米深处是一面蓝墙</b>，相机拍出 640×480 的照片。先算红球落在哪个像素；再反过来，从一个像素出发沿光线累加颜色；最后看“从照片反推三维”是怎样一个优化问题。</p>
+<p>这一节不涉及神经网络。用一个贯穿全章的玩具场景把后面要用的几何讲一遍：<b>一个红球放在相机正前方偏右下 2 米深处，后面 4 米深处是一面蓝墙</b>，相机拍出 640×480 的照片。先算红球落在哪个像素；再反过来，从一个像素出发沿光线累加颜色；最后看“从照片反推三维”是怎样一个优化问题。本章的 \(R\) 一律表示旋转（不是第 <a class="xref" data-ref="rl"></a> 章的奖励）。</p>
 
 <h3 id="zero-pinhole">针孔相机：三维点怎样落到像素上</h3>
-<p><dfn data-t="pinhole-camera">针孔相机模型</dfn>（pinhole camera）假设所有光线都穿过一个点（光心），落到它后面的成像平面上。以光心为原点、视线方向为 \(z\) 轴、向右为 \(x\)、向下为 \(y\)，这叫相机坐标系。由相似三角形，点 \((X, Y, Z)\) 在成像平面上的位置正比于 \(X/Z\) 和 \(Y/Z\)：越远的东西越靠近画面中心、看起来越小。换算成像素，还要乘以像素为单位的焦距 \(f\)、加上画面中心 \((c_x, c_y)\)。这几个只和相机本身有关的数叫<dfn data-t="camera-intrinsics">内参</dfn>（intrinsics），写成矩阵 \(K\)。相机放在哪、朝哪看，由旋转 \(R\) 和平移 \(\mathbf t\) 描述，叫<dfn data-t="camera-extrinsics">外参</dfn>（extrinsics），也叫相机位姿（pose）。合起来：</p>
+<p><dfn data-t="pinhole-camera">针孔相机模型</dfn>（pinhole camera）假设所有光线都穿过一个点（光心），落到它后面的成像平面上。以光心为原点、视线方向为 \(z\) 轴、向右为 \(x\)、向下为 \(y\)，这叫相机坐标系。由相似三角形，点 \((X, Y, Z)\) 在成像平面上的位置正比于 \(X/Z\) 和 \(Y/Z\)：越远的东西越靠近画面中心、看起来越小。换算成像素，还要乘以像素为单位的焦距 \(f\)、加上画面中心 \((c_x, c_y)\)。这几个只和相机本身有关的数叫<dfn data-t="camera-intrinsics">内参</dfn>（intrinsics），写成矩阵 \(K\)。相机放在哪、朝哪看，由旋转 \(R\) 和平移 \(\mathbf t\) 描述，叫<dfn data-t="camera-extrinsics">外参</dfn>（extrinsics），也叫相机位姿（pose）。合起来是三步：用外参把点转到相机坐标，除以深度，乘焦距再加画面中心。写成矩阵：</p>
 <div class="fx">
 \[ \htmlClass{sym-Z}{Z}\begin{pmatrix}u\\ v\\ 1\end{pmatrix} = \htmlClass{sym-K}{K}\,\big(\htmlClass{sym-R}{R}\,\htmlClass{sym-X}{\mathbf X_w} + \htmlClass{sym-t}{\mathbf t}\big),\qquad \htmlClass{sym-K}{K} = \begin{pmatrix} f & 0 & c_x\\ 0 & f & c_y\\ 0 & 0 & 1\end{pmatrix} \]
-  <div class="fx-read">先用外参把世界坐标里的点 \(\mathbf X_w\) 转成相机坐标 \(\mathbf X_c = R\mathbf X_w + \mathbf t\)，再用内参乘焦距、加画面中心；左边的 \(Z\) 表示最后要把结果除以它的第三个分量（深度），得到像素 \((u, v)\)。</div>
+  <div class="fx-read">先用外参把世界坐标里的点 \(\mathbf X_w\) 转成相机坐标 \(\mathbf X_c = R\mathbf X_w + \mathbf t\)，再用内参乘焦距、加画面中心；左边的 \(Z\) 表示最后要把结果除以它的第三个分量（深度），得到像素 \((u, v)\)。外参也常写成光心位置 \(C\) 加旋转：\(\mathbf X_c = R(\mathbf X_w - C)\)，两种写法的关系是 \(\mathbf t = -RC\)。</div>
   <dl class="fx-syms">
     <dt data-sym="Z">\(Z\)</dt><dd>点在相机坐标里的深度（沿视线的距离）</dd>
     <dt data-sym="K">\(K\)</dt><dd>内参矩阵：焦距 \(f\)（以像素计）和画面中心 \((c_x, c_y)\)</dd>
@@ -60,15 +61,15 @@
 <p>红球那个像素：\(K^{-1}(445, 302.5, 1)^\top = \big((445-320)/500,\ (302.5-240)/500,\ 1\big) = (0.25,\ 0.125,\ 1)\)。\(s = 2\) 时到达红球，\(s = 4\) 时到达墙上的 \((1, 0.5, 4)\)（这里 \(\mathbf d\) 的第三个分量是 1，\(s\) 恰好就是深度）。渲染一张 640×480 的图，就是对 30.7 万条光线各问一次：沿着你看过去，看到什么颜色？</p>
 
 <h3 id="zero-composite">沿光线累加颜色：透过率与 alpha 合成</h3>
-<p>如果红球不透明，答案就是红色。但要处理玻璃、烟雾、头发和物体的边缘，需要允许半透明。设红球是一块挡住 60% 光的红玻璃（不透明度 \(\alpha_1 = 0.6\)），墙挡住 90%（\(\alpha_2 = 0.9\)），墙后是白色背景。从相机沿光线往前看：</p>
+<p>如果红球不透明，答案就是红色。但要处理烟雾、头发和物体的边缘，需要允许半透明。假设红球是一层红色的薄雾，挡住 60% 的光（不透明度 \(\alpha_1 = 0.6\)），墙是一块挡住 90% 的蓝幕（\(\alpha_2 = 0.9\)），墙后是白色背景。这里的“挡住”是说每一层吸收一部分光、同时发出自己的颜色，不是滤色玻璃那种只让某些颜色通过。从相机沿光线往前看：</p>
 <ul>
-  <li>红玻璃贡献 0.6 份红色，剩下 \(1 - 0.6 = 0.4\) 的光继续往前；</li>
-  <li>墙从这 0.4 里挡住 90%，贡献 \(0.4\times 0.9 = 0.36\) 份蓝色，剩下 \(0.4\times 0.1 = 0.04\)；</li>
+  <li>红雾贡献 0.6 份红色，剩下 \(1 - 0.6 = 0.4\) 的光继续往前；</li>
+  <li>蓝幕从这 0.4 里挡住 90%，贡献 \(0.4\times 0.9 = 0.36\) 份蓝色，剩下 \(0.4\times 0.1 = 0.04\)；</li>
   <li>背景得到最后的 0.04 份。</li>
 </ul>
 <p>走到第 \(i\) 层时还剩下的光的比例叫<dfn data-t="transmittance">透过率</dfn>（transmittance）\(T_i\)。按从近到远的顺序这样叠起来，就是图形学里用了四十年的<dfn data-t="alpha-compositing">alpha 合成</dfn>（alpha compositing，Porter 与 Duff, 1984）：</p>
 <div class="fx">
-\[ C = \sum_{i=1}^{N} \htmlClass{sym-T}{T_i}\,\htmlClass{c-adv}{\htmlClass{sym-al}{\alpha_i}}\,\htmlClass{sym-c}{\mathbf c_i} + T_{N+1}\,\htmlClass{sym-bg}{\mathbf c_{\text{bg}}},\qquad \htmlClass{sym-T}{T_i} = \prod_{j&lt;i}(1 - \alpha_j) \]
+\[ C = \sum_{i=1}^{N} \htmlClass{sym-T}{T_i}\,\htmlClass{sym-al}{\alpha_i}\,\htmlClass{sym-c}{\mathbf c_i} + T_{N+1}\,\htmlClass{sym-bg}{\mathbf c_{\text{bg}}},\qquad \htmlClass{sym-T}{T_i} = \prod_{j&lt;i}(1 - \alpha_j) \]
   <div class="fx-read">从近到远，第 \(i\) 层<span style="color:var(--s2)">挡住比例 \(\alpha_i\) 的光</span>并贡献自己的颜色；能走到这一层的光只剩前面各层都没挡住的比例 \(T_i\)。走完所有层还剩的 \(T_{N+1}\) 留给背景。</div>
   <dl class="fx-syms">
     <dt data-sym="T">\(T_i\)</dt><dd>透过率：光从相机走到第 \(i\) 层时还剩多少，\(T_1 = 1\)</dd>
@@ -76,21 +77,31 @@
     <dt data-sym="c">\(\mathbf c_i\)</dt><dd>第 \(i\) 层的颜色（红绿蓝三个数）</dd>
     <dt data-sym="bg">\(\mathbf c_{\text{bg}}\)</dt><dd>背景色</dd>
   </dl>
-  <div class="fx-eg">红 \(= (1,0,0)\)、蓝 \(= (0,0,1)\)、白 \(= (1,1,1)\)：\(C = 0.6\,(1,0,0) + 0.36\,(0,0,1) + 0.04\,(1,1,1) = (0.64,\ 0.04,\ 0.40)\)，偏紫的红色。把玻璃和墙的顺序对调：蓝色权重 0.9，红色只剩 \(0.1\times 0.6 = 0.06\)，\(C = (0.10,\ 0.04,\ 0.94)\)。不透明度一样，顺序不同，颜色完全不同。</div>
+  <div class="fx-eg">红 \(= (1,0,0)\)、蓝 \(= (0,0,1)\)、白 \(= (1,1,1)\)：\(C = 0.6\,(1,0,0) + 0.36\,(0,0,1) + 0.04\,(1,1,1) = (0.64,\ 0.04,\ 0.40)\)，偏紫的红色。把红雾和蓝幕的顺序对调：蓝色权重 0.9，红色只剩 \(0.1\times 0.6 = 0.06\)，\(C = (0.10,\ 0.04,\ 0.94)\)。不透明度一样，顺序不同，颜色完全不同。</div>
 </div>
 <p>后面的 NeRF 和 3D 高斯泼溅渲染一个像素用的都是这个公式，区别只在每一层的 \(\alpha_i\) 和颜色从哪来：NeRF 在光线上等距采样、问一个神经网络；高斯泼溅把落在这个像素上的高斯椭球按深度排好序。</p>
 
 <h3 id="zero-inverse">从照片反推三维：把渲染倒过来优化</h3>
-<p>渲染是“已知场景，算像素”。三维重建反过来：已知很多张照片和拍摄时的相机，求场景。办法是把场景的所有未知数记作 \(\theta\)，先随便猜一个，渲染出每张照片的每个像素，和真实照片比，再用梯度下降修改 \(\theta\)：</p>
-\[ \min_\theta\ \sum_{\text{照片}}\ \sum_{\text{像素}}\ \big\|\,C(\mathbf r;\ \theta) - C_{\text{照片}}(\mathbf r)\,\big\|^2 \]
-<p>这要求渲染结果对 \(\theta\) 可以求导，叫<dfn data-t="differentiable-rendering">可微渲染</dfn>（differentiable rendering）。上面的合成公式只有乘法和加法，天然可导。在玩具上算一步：假设只有红玻璃的不透明度 \(a\) 未知，墙的 0.9 已知。像素的红色通道是 \(C_R(a) = a + (1-a)\times 0.1 = 0.1 + 0.9a\)（玻璃自己贡献 \(a\)，墙后的白色背景贡献 \((1-a)\times 0.1\)），照片上测到 0.64。从 \(a = 0.2\) 出发：\(C_R = 0.28\)，误差 \(-0.36\)；损失 \((C_R - 0.64)^2\) 对 \(a\) 的导数是 \(2\times(-0.36)\times 0.9 = -0.648\)；学习率取 0.5，\(a\) 变成 \(0.2 + 0.324 = 0.524\)，误差缩小到 \(-0.068\)。每一步误差乘以 0.19，几步之后 \(a\to 0.6\)。</p>
-<p>一张照片不够：红色的东西放在这条光线上 2 米处还是 3 米处，这张照片里一模一样。换一台向右挪了 1 米的相机：放在 2 米处，它出现在第二张照片的 \(u = 195\)；放在 3 米处（点 \((0.75, 0.375, 3)\)），出现在 \(u \approx 278\)。只有一种摆法能同时解释两张照片。几十张不同角度的照片放在一起，这种“所有视角都对得上”的约束就把整个三维场景钉住了。后面每一种重建方法都是这个思路，区别在于 \(\theta\) 是什么、渲染怎么算、相机从哪来。</p>
+<p>渲染是“已知场景，算像素”。三维重建反过来：已知很多张照片和拍摄时的相机，求场景。办法是把场景的所有未知数记作 \(\theta\)，先随便猜一个，渲染出每张照片的每个像素，和真实照片比，再用梯度下降修改 \(\theta\)。这要求渲染结果对 \(\theta\) 可以求导，叫<dfn data-t="differentiable-rendering">可微渲染</dfn>（differentiable rendering）。上面的合成公式只有乘法和加法，天然可导。</p>
+<div class="fx">
+\[ \min_{\htmlClass{sym-th}{\theta}}\ \sum_{\text{照片}}\ \sum_{\text{像素}}\ \big\|\,\htmlClass{sym-Cr}{C(\mathbf r;\ \theta)} - \htmlClass{sym-Cp}{C_{\text{照片}}(\mathbf r)}\,\big\|^2 \]
+  <div class="fx-read">对每张照片的每个像素，用当前猜的 \(\theta\) 渲染出颜色，和照片上的颜色比；误差平方加起来，改 \(\theta\) 让它变小。</div>
+  <dl class="fx-syms">
+    <dt data-sym="th">\(\theta\)</dt><dd>场景的全部未知数：每层的不透明度和颜色，或者一个网络的权重</dd>
+    <dt data-sym="Cr">\(C(\mathbf r;\theta)\)</dt><dd>按当前的 \(\theta\) 沿光线 \(\mathbf r\) 渲染出的颜色</dd>
+    <dt data-sym="Cp">\(C_{\text{照片}}(\mathbf r)\)</dt><dd>照片上这个像素的颜色</dd>
+  </dl>
+  <div class="fx-eg">只让红雾的不透明度 \(a\) 未知，蓝幕的 0.9 已知。像素的红色通道是 \(C_R(a) = a + (1-a)\times 0.1 = 0.1 + 0.9a\)（红雾自己贡献 \(a\)，蓝幕后的白色背景贡献 \((1-a)\times 0.1\)），照片上测到 0.64。从 \(a = 0.2\) 出发：\(C_R = 0.28\)，误差 \(-0.36\)；损失 \((C_R - 0.64)^2\) 对 \(a\) 的导数是 \(2\times(-0.36)\times 0.9 = -0.648\)；学习率取 0.5，\(a\) 变成 \(0.2 + 0.324 = 0.524\)，误差缩小到 \(-0.068\)。</div>
+</div>
+<p>在玩具上算一步（卡片里的例子）：只让红雾的不透明度未知，从 0.2 出发，一次梯度步就把红色通道的误差从 \(-0.36\) 缩到 \(-0.07\)；每一步误差乘以 0.19，几步之后就回到真值 0.6。</p>
+<p>一张照片不够：红色的东西放在这条光线上 2 米处还是 3 米处，这张照片里一模一样。换一台向右挪了 1 米的相机：放在 2 米处，它出现在第二张照片的 \(u = 195\)；放在 3 米处（点 \((0.75, 0.375, 3)\)），出现在 \(u \approx 278\)。只有一种摆法能同时解释两张照片。几十张不同角度的照片放在一起，这种“所有视角都对得上”的约束就把整个三维场景钉住了。后面的 NeRF 和高斯泼溅都是这个思路，区别在于 \(\theta\) 是什么、渲染怎么算；下一节的 SfM 也套得进这个框架，只是 \(\theta\) 是相机和点，“渲染”是投影，“照片”是检测到的特征点位置。</p>
+<p>重建好的场景拿来做什么，又怎样知道它对不对？最直接的用途是<dfn data-t="novel-view-synthesis">新视角合成</dfn>（novel view synthesis）：从没有拍过的位置渲染出照片。评测也这样做：训练时留出几张照片不用，训练后从这几台相机的位置重新渲染，和真照片比。比得上，才说明学到的是三维，而不是把训练照片背了下来；后面表格里的 PSNR 都是在这些留出的视角上量的。</p>
 
 <h2 id="sfm">第一代：从照片恢复相机和点云</h2>
 <p>上一节假设相机已知。实际拍照时，没人知道每张照片是在哪、朝哪拍的。<dfn data-t="sfm">运动恢复结构</dfn>（structure from motion，SfM）同时求相机和场景：</p>
 <ol>
   <li>在每张照片里找特征点（角点、有纹理的小块），在照片之间匹配同一个点。</li>
-  <li>由匹配点求出两台相机的相对位姿，再做<dfn data-t="triangulation">三角化</dfn>（triangulation）：从两台相机各引一条光线，交点就是这个点的三维位置。最简单的情形是视差公式：两台相机平移 \(B\)、焦距 \(f\)、视差 \(d\) 像素，深度 \(Z = fB/d\)。红球：\(500\times 1/250 = 2\) 米。</li>
+  <li>由匹配点求相机的相对位姿，再做三角化。这里像是先有鸡还是先有蛋：位姿要靠三维点算，三维点又要靠位姿求。打破循环的是<b>对极约束</b>（epipolar constraint）：同一个三维点在两张照片里的像素位置，必须满足一个只和两台相机的相对旋转、平移有关的方程，不需要知道点在哪；五对匹配点就能解出相对位姿，实际用几百对再剔除错配。有了位姿，就能做<dfn data-t="triangulation">三角化</dfn>（triangulation）：从两台相机各引一条光线，交点就是这个点的三维位置。最简单的情形是视差公式：两台相机平移 \(B\)、焦距 \(f\)、视差 \(d\) 像素，深度 \(Z = fB/d\)。红球：\(500\times 1/250 = 2\) 米。但有一处解不掉的含糊：把整个场景和相机间距一起放大一倍，所有照片一模一样，所以只靠照片只能恢复到“差一个整体缩放”。红球算出 2 米，是因为我们事先知道两台相机相距 1 米；不知道的话，只能说“红球的深度是相机间距的 2 倍”。</li>
   <li>把所有相机和所有三维点放在一起微调，使每个点投影回每张照片时，离它实际被观察到的位置最近。这一步叫<dfn data-t="bundle-adjustment">光束法平差</dfn>（bundle adjustment）：</li>
 </ol>
 <div class="fx">
@@ -108,7 +119,7 @@
 <h2 id="nerf">NeRF：一个记住了整个场景的网络</h2>
 <p><dfn data-t="nerf">神经辐射场</dfn>（NeRF，Mildenhall 等, 2020-03）把场景的未知数 \(\theta\) 换成一个 MLP 的权重：输入空间中一点的坐标 \(\mathbf x\) 和观察方向 \(\mathbf d\)，输出这一点的密度 \(\sigma\)（单位长度上挡住多少光）和颜色 \(\mathbf c\)。密度只取决于位置，颜色还取决于方向，同一个点从不同角度看才能有不同的高光。原文的网络 8 层、每层 256 个神经元，相机由 COLMAP 给出。渲染一个像素，就沿它的光线采样许多点，把每一段的密度换成不透明度，再用上一节的合成公式累加。这就是<dfn data-t="volume-rendering">体渲染</dfn>：</p>
 <div class="fx">
-\[ C = \sum_{i=1}^{N} \htmlClass{sym-T}{T_i}\,\htmlClass{c-adv}{\alpha_i}\,\mathbf c_i,\qquad \htmlClass{c-adv}{\alpha_i} = 1 - e^{-\htmlClass{sym-s}{\sigma_i}\,\htmlClass{sym-d}{\delta_i}},\qquad \htmlClass{sym-T}{T_i} = \exp\Big(-\sum_{j&lt;i}\sigma_j\delta_j\Big) \]
+\[ C = \sum_{i=1}^{N} \htmlClass{sym-T}{T_i}\,\alpha_i\,\mathbf c_i,\qquad \alpha_i = 1 - e^{-\htmlClass{sym-s}{\sigma_i}\,\htmlClass{sym-d}{\delta_i}},\qquad \htmlClass{sym-T}{T_i} = \exp\Big(-\sum_{j&lt;i}\sigma_j\delta_j\Big) \]
   <div class="fx-read">和 alpha 合成是同一个式子，只是不透明度不再直接给出，而是由密度和这一段的长度算出：<span style="color:var(--s2)">密度越大、这一段越长，挡住的光越多</span>。透过率是前面所有段吸收的累积。</div>
   <dl class="fx-syms">
     <dt data-sym="s">\(\sigma_i\)</dt><dd>第 \(i\) 个采样点的密度（单位长度上被吸收的比例），由网络输出</dd>
@@ -126,14 +137,13 @@
 <p>走出这一段时剩下 \(T_{i+1} = T_i\,e^{-\sigma_i\delta_i} = T_i(1-\alpha_i)\)，连乘起来就是 \(T_i = \prod_{j&lt;i}(1-\alpha_j)\)。除了“每段内不变”，没有别的近似。</p>
 <p><b>第 3 步，权重是一个概率分布。</b>记 \(w_i = T_i\alpha_i = T_i - T_{i+1}\)，求和时中间项全部抵消：\(\sum_{i=1}^N w_i = T_1 - T_{N+1} = 1 - T_{N+1}\)。各段权重加上留给背景的 \(T_{N+1}\) 恰好为 1，可以读成“光线停在第 \(i\) 段的概率”。NeRF 用它做两件事：先用 64 个粗采样点算出这个分布，再按分布在权重大的地方补采 128 个点；深度图就是 \(\sum_i w_i s_i\)。</p>
 <p><b>第 4 步，就是 alpha 合成。</b>把求和从后往前写：\(C_{i:N} = \alpha_i\mathbf c_i + (1-\alpha_i)\,C_{i+1:N}\)，即“这一层的颜色盖在后面所有层的合成结果上”，正是 Porter 与 Duff 的 over 运算。</p>
-<p><b>这个推导告诉我们：</b>NeRF 用的不是新发明的公式，而是物理上的吸收模型，离散化以后与图形学的 alpha 合成完全相同。它只有乘法、加法和指数，对每个点的密度和颜色都可导，所以可以用照片误差训练。高斯泼溅换掉的只是“\(\alpha\) 从哪来”，公式原样保留。</p>
+<p><b>这个推导告诉我们：</b>NeRF 用的不是新发明的公式，而是物理上的吸收模型，离散化以后与图形学的 alpha 合成完全相同。它只有乘法、加法和指数，对每个点的密度和颜色都可导，所以可以用照片误差训练。高斯泼溅保留了这个公式的形式，换掉的是“\(\alpha\) 从哪来”，排序也改成了近似的做法（见演进史里的争论）。</p>
 </div></details>
-<p>拖动下面的演示，看密度、顺序和采样点数怎样影响一个像素的颜色：</p>
+<p>这个公式不是新发明：它是物理上的吸收模型（比尔-朗伯定律），离散化以后和 alpha 合成完全相同，只有乘法、加法和指数，所以能用照片误差训练（推导见上面的折叠）。各段的权重 \(T_i\alpha_i\) 加起来不超过 1，可以读成“光线停在第 \(i\) 段的概率”。NeRF 用它做分层采样：先在光线上均匀取 64 个粗采样点算出这个分布，再在权重大的地方补采 128 个点。拖动下面的演示，看密度、顺序和采样点数怎样影响一个像素的颜色（演示用红、绿、蓝三团雾，比玩具场景多一层）：</p>
 <div data-demo="ray-render"></div>
-<p>NeRF 训练时每批取 4096 条光线，每条 64 + 128 个采样点，在一块 V100 上要 10–30 万步、1–2 天（原文数据）。渲染也慢：800×800 的图有 64 万条光线，每条要过网络 256 次（粗、细两个网络），每次约 60 万次乘加，一张图约 \(10^{14}\) 次乘加，即使按 V100 的峰值算力也要十几秒（估算）。慢在两处：每个采样点都要过一次大网络；光线上大部分采样点落在空气里，白算。</p>
 
 <h3 id="nerf-pe">为什么要位置编码：频谱偏置</h3>
-<p>NeRF 有一个看起来不起眼的细节：坐标不是直接喂给网络的，而是先变成一串不同频率的正弦和余弦。去掉这一步，重建出的场景会糊成一片。原因是<dfn data-t="spectral-bias">频谱偏置</dfn>（spectral bias，Rahaman 等, 2019）：用梯度下降训练的普通 MLP 先学会函数里变化缓慢的低频部分，变化剧烈的高频部分学得极慢。场景的颜色和密度在边缘和纹理处沿空间变化得很快，恰恰是高频。NeRF 的办法是把每个坐标先映射成<dfn data-t="fourier-features">傅里叶特征</dfn>（Fourier features，原文也叫位置编码）：</p>
+<p>NeRF 有一个看起来不起眼的细节：坐标不是直接喂给网络的，而是先变成一串不同频率的正弦和余弦。去掉这一步，重建出的场景会糊成一片。原因是<dfn data-t="spectral-bias">频谱偏置</dfn>（spectral bias，Rahaman 等, 2019）：用梯度下降训练的普通 MLP 先学会函数里变化缓慢的低频部分，变化剧烈的高频部分学得极慢。直观地说：相邻两个输入的梯度几乎一样，一次更新只能把它们一起抬高或压低；要让相邻两点往相反方向动，只能靠梯度里差别很小的那一部分，所以慢。场景的颜色和密度在边缘和纹理处沿空间变化得很快，恰恰是高频。NeRF 的办法是把每个坐标先映射成<dfn data-t="fourier-features">傅里叶特征</dfn>（Fourier features，原文也叫位置编码）：</p>
 <div class="fx">
 \[ \htmlClass{sym-g}{\gamma}(p) = \big(\sin(2^0\pi p),\ \cos(2^0\pi p),\ \dots,\ \sin(2^{\htmlClass{sym-L}{L}-1}\pi p),\ \cos(2^{\htmlClass{sym-L}{L}-1}\pi p)\big) \]
   <div class="fx-read">一个坐标变成 \(2L\) 个数，频率从 \(\pi\) 开始每次翻倍。低频的几项告诉网络“大概在哪”，高频的几项把挨得很近的两个点区分开。</div>
@@ -146,34 +156,33 @@
 <details class="deep"><summary>推导：为什么梯度下降先学低频（神经正切核的视角）</summary><div class="in">
 <p><b>第 1 步，线性化。</b>网络很宽时，训练中参数变化很小，可以把网络在初始参数 \(\theta_0\) 附近展开：\(f(x;\theta)\approx f(x;\theta_0) + \nabla_\theta f(x;\theta_0)^\top(\theta-\theta_0)\)。</p>
 <p><b>第 2 步，残差怎样变化。</b>在训练点 \(x_1,\dots,x_n\) 上用平方损失 \(\tfrac12\sum_i (f(x_i) - y_i)^2\) 做梯度下降（学习率 \(\eta\)，取连续时间）。由链式法则，残差 \(r_i = f(x_i) - y_i\) 满足</p>
-\[ \frac{d\mathbf r}{dt} = -\eta\,K\,\mathbf r,\qquad K_{ij} = \nabla_\theta f(x_i)^\top\nabla_\theta f(x_j) \]
-<p>\(K\) 叫神经正切核（neural tangent kernel，NTK），衡量两个输入的梯度有多相似：改动参数让 \(f(x_j)\) 变化时，\(f(x_i)\) 跟着变多少。</p>
-<p><b>第 3 步，按特征向量分解。</b>\(K\) 对称半正定，写成 \(K = \sum_k\lambda_k\mathbf v_k\mathbf v_k^\top\)，则 \(\mathbf r(t) = \sum_k e^{-\eta\lambda_k t}(\mathbf v_k^\top\mathbf r(0))\,\mathbf v_k\)。特征值大的方向几步就学会；特征值小的方向要 \(1/(\eta\lambda_k)\) 量级的时间。</p>
-<p><b>第 4 步，特征向量就是频率。</b>训练点均匀分布、\(K\) 只依赖 \(x - x'\) 时，\(K\) 的特征向量是傅里叶模式 \(\sin(2\pi kx)\)、\(\cos(2\pi kx)\)，特征值是核函数在频率 \(k\) 处的傅里叶系数。直接输入坐标的 ReLU 网络，核函数很平滑，傅里叶系数随频率迅速变小：数据在圆周上时可以算出，频率为 \(k\) 的分量大约要 \(k^2\) 倍的时间才能学会（Basri 等, 2019）。下面演示里条纹的频率是 12，比整体起伏（频率 1）慢约 144 倍。</p>
+\[ \frac{d\mathbf r}{dt} = -\eta\,\mathcal K\,\mathbf r,\qquad \mathcal K_{ij} = \nabla_\theta f(x_i)^\top\nabla_\theta f(x_j) \]
+<p>\(\mathcal K\) 叫神经正切核（neural tangent kernel，NTK），衡量两个输入的梯度有多相似：改动参数让 \(f(x_j)\) 变化时，\(f(x_i)\) 跟着变多少。</p>
+<p><b>第 3 步，按特征向量分解。</b>\(\mathcal K\) 对称半正定，写成 \(\mathcal K = \sum_k\lambda_k\mathbf v_k\mathbf v_k^\top\)，则 \(\mathbf r(t) = \sum_k e^{-\eta\lambda_k t}(\mathbf v_k^\top\mathbf r(0))\,\mathbf v_k\)。特征值大的方向几步就学会；特征值小的方向要 \(1/(\eta\lambda_k)\) 量级的时间。</p>
+<p><b>第 4 步，特征向量就是频率。</b>训练点均匀分布、\(\mathcal K\) 只依赖 \(x - x'\) 时，\(\mathcal K\) 的特征向量是傅里叶模式 \(\sin(2\pi kx)\)、\(\cos(2\pi kx)\)，特征值是核函数在频率 \(k\) 处的傅里叶系数。直接输入坐标的 ReLU 网络，核函数很平滑，傅里叶系数随频率迅速变小：数据在圆周上时可以算出，频率为 \(k\) 的分量大约要 \(k^2\) 倍的时间才能学会（Basri 等, 2019）。按这个规律粗估，下面演示里频率 12 的条纹比整体起伏（频率 1）慢约 144 倍。演示用的是 Adam 和两个隐层的网络，不满足这个推导的假设，只能定性对照：1500 步内条纹几乎没被学出来。</p>
 <p><b>第 5 步，傅里叶特征改了核。</b>输入换成 \(\gamma(x)\) 以后，两个输入的内积是 \(\gamma(x)^\top\gamma(x') = \sum_k\big[\sin a_kx\sin a_kx' + \cos a_kx\cos a_kx'\big] = \sum_k\cos\big(a_k(x - x')\big)\)，\(a_k = 2^k\pi\)：只依赖距离，并且在所选的频率上有能量。网络的核随之变成一个“带宽”由最高频率决定的核，高频方向的特征值不再小到可以忽略（Tancik 等, 2020）。反过来，最高频率太高时核变得太窄，相邻训练点之间互不约束，网络就在点与点之间乱晃。</p>
 <p><b>这个推导告诉我们：</b>网络不是表示不了高频，而是梯度下降学得太慢，慢到实际训练里等于学不会。位置编码不改变网络能表示什么，改变的是先学什么；它的频率上限要和数据能支撑的细节相匹配。Instant-NGP 把这个思路推到了头：高频细节干脆存进按位置查找的表里。</p>
 </div></details>
-<p>下面的演示在浏览器里实际训练两个一模一样的小网络，一个吃原始坐标，一个吃傅里叶特征：</p>
+<p>推导的结论是：网络不是表示不了高频，而是梯度下降学得太慢，慢到实际训练里等于学不会；位置编码不改变网络能表示什么，改变的是先学什么，它的频率上限要和数据能支撑的细节匹配。下面的演示在浏览器里实际训练两个一模一样的小网络，一个吃原始坐标，一个吃傅里叶特征。点“第 50 步”和“第 1500 步”对比：橙线 50 步就学出了中间的条纹；蓝线到 1500 步，条纹那一档的误差也只降了约三分之一（从 0.017 到 0.011）。</p>
 <div data-demo="spatial-fourier" class="bleed"></div>
 
 <h3 id="nerf-ngp">Instant-NGP：把容量从网络搬进哈希表</h3>
-<p>NeRF 的大网络既要记住场景，又要把坐标变成细节，每次查询都要算 60 万次乘加。Instant-NGP（Müller 等, 2022-01）换了分工：细节存进一组可训练的表，网络只负责把查表结果翻译成密度和颜色。这叫<dfn data-t="hash-encoding">多分辨率哈希编码</dfn>（multiresolution hash encoding）：</p>
-<div class="fx">
-\[ \mathbf h(\mathbf x) = \operatorname*{concat}_{l=1}^{16}\ \sum_{\mathbf v\in\mathcal V_l(\mathbf x)} w_{\mathbf v}(\mathbf x)\,\htmlClass{sym-tab}{\Theta_l}\big[\htmlClass{sym-hash}{\operatorname{hash}}(\mathbf v)\big],\qquad \htmlClass{sym-hash}{\operatorname{hash}}(\mathbf v) = \Big(\bigoplus_{i=1}^{3} v_i\,\pi_i\Big)\bmod \htmlClass{sym-T2}{T} \]
-  <div class="fx-read">把空间同时切成 16 种粗细的网格，从每边 16 格到每边几百、几千格。在每一层找到包围 \(\mathbf x\) 的 8 个格点 \(\mathcal V_l(\mathbf x)\)，把格点坐标哈希成表里的行号，取出那里存的 2 维特征，按 \(\mathbf x\) 离各格点的远近（权重 \(w_{\mathbf v}\)）插值。16 层拼起来是 32 维，交给一个很小的 MLP。</div>
-  <dl class="fx-syms">
-    <dt data-sym="tab">\(\Theta_l\)</dt><dd>第 \(l\) 层的特征表：最多 \(T\) 行，每行 2 个可训练的数</dd>
-    <dt data-sym="hash">\(\operatorname{hash}\)</dt><dd>把整数格点坐标分别乘上三个大质数 \(\pi_i\)、按位异或（\(\oplus\)），再对 \(T\) 取余</dd>
-    <dt data-sym="T2">\(T\)</dt><dd>每层表的大小，原文取 \(2^{14}\) 到 \(2^{24}\)</dd>
-  </dl>
-  <div class="fx-eg">取 \(T = 2^{19}\approx 52\) 万。最粗一层 \(16^3 = 4096\) 个格点，每个独占一行；最细一层若是 \(512^3\approx 1.3\) 亿个格点，平均 256 个格点共用一行。冲突不做任何处理，靠梯度平均：空气里的格点几乎没有梯度，表里的那一行基本归有内容的格点所有。每次查询读 \(16\times 8 = 128\) 行，再过两个宽 64 的小网络，约 1 万次乘加，比 NeRF 少约 60 倍（估算）。</div>
-</div>
-<p>原文报告训练 15 秒就达到 NeRF 的质量，1–5 分钟达到当时最好的 mip-NeRF（它们都要训练几小时以上）。另一半提速来自工程：整个流程写成融合的 CUDA 内核，并用一个粗糙的占据网格跳过空气。但渲染仍然是“沿每条光线采样、逐点查询”，高分辨率下难以实时。</p>
+<p>位置编码让 NeRF 画得出细节，代价是这些细节全靠一个 8 层、256 宽的网络记住。原文训练时每批取 4096 条光线，在一块 V100 上要 10–30 万步、1–2 天。渲染也慢：800×800 的图有 64 万条光线，粗网络在每条光线的 64 个点上各查一次，细网络在全部 192 个点（64 + 128）上再查一次，共 256 次；每次约 60 万次乘加，一张图约 \(10^{14}\) 次乘加，按 V100 的峰值算力也要十几秒（估算）。慢在两处：每个采样点都要过一次大网络；光线上大部分采样点落在空气里，白算。</p>
+<p>Instant-NGP（Müller 等, 2022-01）换了分工：细节存进一组可训练的表，网络只负责把查表结果翻译成密度和颜色。这叫<dfn data-t="hash-encoding">多分辨率哈希编码</dfn>（multiresolution hash encoding）：把空间同时切成 16 种粗细的网格，在每一层找到包围查询点的 8 个格点，把格点坐标哈希成表里的行号，取出那里存的 2 个可训练的数，按距离插值；16 层拼起来是 32 维，交给一个很小的网络。查一次表只读几行内存，小网络每次约 1 万次乘加，比 NeRF 少约 60 倍（估算）。细的网格比表大得多，几个格点会撞到同一行；这不做任何处理，靠梯度平均：空气里的格点几乎没有梯度，那一行基本归有内容的格点所有。</p>
+<details class="deep"><summary>哈希编码的细节：公式、表的大小和工程上的另一半提速</summary><div class="in">
+<p><b>公式。</b>第 \(l\) 层包围 \(\mathbf x\) 的 8 个格点记作 \(\mathcal V_l(\mathbf x)\)，\(w_{\mathbf v}(\mathbf x)\) 是三线性插值的权重，\(\Theta_l\) 是第 \(l\) 层的特征表（最多 \(T_{\text{hash}}\) 行，每行 2 个数）：</p>
+\[ \mathbf h(\mathbf x) = \operatorname*{concat}_{l=1}^{16}\ \sum_{\mathbf v\in\mathcal V_l(\mathbf x)} w_{\mathbf v}(\mathbf x)\,\Theta_l\big[\operatorname{hash}(\mathbf v)\big],\qquad \operatorname{hash}(\mathbf v) = \Big(\bigoplus_{i=1}^{3} v_i\,\pi_i\Big)\bmod T_{\text{hash}} \]
+<p>\(\oplus\) 是按位异或。原文取 \(\pi_1 = 1\)（第一维不打乱，读内存更连续），\(\pi_2 = 2654435761\)，\(\pi_3 = 805459861\)；\(T_{\text{hash}}\) 在 \(2^{14}\) 到 \(2^{24}\) 之间。</p>
+<p><b>代入数字。</b>取 \(T_{\text{hash}} = 2^{19}\approx 52\) 万。最粗一层每边 16 格，有 \(17^3\approx 4900\) 个格点，每个独占一行；最细一层若是 \(512^3\approx 1.3\) 亿个格点，平均约 256 个格点共用一行。每次查询读 \(16\times 8 = 128\) 行，再过两个宽 64 的小网络，约 1 万次乘加。</p>
+<p><b>工程。</b>另一半提速来自实现：整个流程写成融合的 CUDA 内核；再用一个粗糙的占据网格记下哪里是空气，采样时直接跳过。</p>
+<p><b>这个推导告诉我们：</b>细节的容量从网络的权重搬进了表里。查表的代价和场景多复杂无关，网络只剩下“把特征翻译成密度和颜色”这件小事；哈希冲突靠梯度自然解决，不需要额外的数据结构。</p>
+</div></details>
+<p>原文报告，在合成场景上训练 15 秒就达到 NeRF 的质量，1–5 分钟达到 mip-NeRF（NeRF 的抗锯齿加强版，当时质量最高；它们都要训练几小时以上）。但渲染仍然是“沿每条光线采样、逐点查询”，高分辨率下难以实时。</p>
 <aside class="dispute">
   <h4>NeRF 里的“神经网络”是关键吗</h4>
   <dl>
     <dt>主张</dt><dd>NeRF 的成功来自神经网络：几 MB 的权重就能平滑地表示整个场景，并在照片之间合理地插值。原文的网络权重约 5 MB。</dd>
-    <dt>反证</dt><dd>Plenoxels（2021-12）完全不用神经网络：稀疏体素格子，每个格点直接存密度和球谐颜色系数，用同样的体渲染和梯度下降优化，质量相当，优化快两个数量级。Instant-NGP 只留了一个很小的网络，3D 高斯泼溅一个都没有。</dd>
+    <dt>反证</dt><dd>Plenoxels（2021-12）完全不用神经网络：稀疏体素格子，每个格点直接存密度和球谐颜色系数（球谐：球面上的傅里叶基，用来表示随方向变化的颜色，下一节细讲），用同样的体渲染和梯度下降优化。在合成场景上质量与 NeRF 相当、优化快两个数量级；在无界的真实场景上比 Mip-NeRF 360 低约 4.6 dB（见下一节的表）。Instant-NGP 只留了一个很小的网络，3D 高斯泼溅一个都没有。</dd>
     <dt>代价</dt><dd>不用网络就要存显式的数据：Plenoxels 一个场景 2.1 GB，3DGS 几百 MB，而 Mip-NeRF 360 只有 8.6 MB。</dd>
     <dt>现在怎么看</dt><dd>真正起作用的是可微的体渲染和多视角一致的约束，表示可以换。神经网络的价值在压缩和先验：在需要跨场景泛化的前馈模型里（后面的 LRM、VGGT），网络又回来了，只是角色从“表示一个场景”变成了“从照片推出场景”。</dd>
   </dl>
@@ -183,11 +192,12 @@
 <p>NeRF 慢在“从像素出发，沿光线找东西”。<dfn data-t="gaussian-splatting">3D 高斯泼溅</dfn>（3DGS，Kerbl 等, 2023-08）反过来，从东西出发，把它们“画”到屏幕上。场景由一两百万到五百万个三维高斯椭球组成，每个高斯存 59 个数：</p>
 <ul>
   <li>中心位置 \(\boldsymbol\mu\)（3 个数）。</li>
-  <li>形状：一个旋转（四元数，4 个数）和三个轴的缩放 \(S\)（3 个数），协方差 \(\Sigma = RSS^\top R^\top\)。这正是附录里<span class="term" data-t="covariance">协方差矩阵</span>“旋转 × 缩放² × 旋转回来”的分解。直接优化 \(\Sigma\) 的 6 个数，梯度下降很容易把它推成不合法的矩阵（出现负方差），这样参数化就不会。</li>
+  <li>形状：一个旋转（四元数：用 4 个数表示一个三维旋转的方式，归一化后总是合法的旋转）和三个轴的缩放 \(S\)（3 个数），协方差 \(\Sigma = RSS^\top R^\top\)。这正是附录里<span class="term" data-t="covariance">协方差矩阵</span>“旋转 × 缩放² × 旋转回来”的分解。直接优化 \(\Sigma\) 的 6 个数，梯度下降很容易把它推成不合法的矩阵（出现负方差），这样参数化就不会。</li>
   <li>不透明度 \(o\)（1 个数）。</li>
   <li>颜色：用<dfn data-t="spherical-harmonics">球谐函数</dfn>（spherical harmonics）表示“从不同方向看是什么颜色”，相当于球面上的傅里叶级数。取到 3 阶，每个颜色通道 16 个系数，共 48 个数。</li>
 </ul>
-<p>59 个 32 位浮点数是 236 字节，一百万个高斯约 236 MB。初始的高斯来自 SfM 的稀疏点云。渲染时先把每个高斯投影成屏幕上的二维椭圆：</p>
+<p>59 个 32 位浮点数是 236 字节，一百万个高斯约 236 MB。训练循环和 NeRF 一样：初始的高斯来自 SfM 的稀疏点云；每一步取一张训练照片，从它的相机渲染出图，和照片比，把误差的梯度传回每个高斯的 59 个参数。另外还有一步是<dfn data-t="densification">自适应密度控制</dfn>（adaptive density control）：每 100 步检查一次每个高斯的位置梯度。梯度大，说明这里没表示好：小高斯复制一份去补空缺，大高斯一分为二；几乎透明的高斯删掉。高斯的数量因此从 SfM 的几万个点长到几百万个。</p>
+<p>渲染时先把每个高斯投影成屏幕上的二维椭圆：</p>
 <div class="fx">
 \[ \Sigma' = \htmlClass{sym-J}{J}\,\htmlClass{sym-W}{W}\,\htmlClass{sym-Sig}{\Sigma}\,W^\top J^\top,\qquad \htmlClass{sym-J}{J} = \begin{pmatrix} f/z & 0 & -f x/z^2\\ 0 & f/z & -f y/z^2\end{pmatrix} \]
   <div class="fx-read">三维协方差 \(\Sigma\) 先经过相机的旋转 \(W\) 转到相机坐标，再用透视投影在椭球中心处的线性近似 \(J\) 压成二维，得到屏幕上的椭圆 \(\Sigma'\)（2×2）。每个高斯每帧只算一次。</div>
@@ -203,7 +213,7 @@
 </div>
 <p>每个高斯在某个像素处有多不透明，由这个二维椭圆决定；覆盖这个像素的所有高斯按深度排好序，再用和 NeRF 完全相同的合成公式累加：</p>
 <div class="fx">
-\[ \htmlClass{c-adv}{\alpha_i(\mathbf p)} = \htmlClass{sym-o}{o_i}\,\exp\Big(-\tfrac12(\mathbf p - \htmlClass{sym-mu}{\boldsymbol\mu_i'})^\top\Sigma_i'^{-1}(\mathbf p - \htmlClass{sym-mu}{\boldsymbol\mu_i'})\Big),\qquad C(\mathbf p) = \sum_i \mathbf c_i\,\alpha_i(\mathbf p)\prod_{j&lt;i}\big(1 - \alpha_j(\mathbf p)\big) \]
+\[ \alpha_i(\mathbf p) = \htmlClass{sym-o}{o_i}\,\exp\Big(-\tfrac12(\mathbf p - \htmlClass{sym-mu}{\boldsymbol\mu_i'})^\top\Sigma_i'^{-1}(\mathbf p - \htmlClass{sym-mu}{\boldsymbol\mu_i'})\Big),\qquad C(\mathbf p) = \sum_i \mathbf c_i\,\alpha_i(\mathbf p)\prod_{j&lt;i}\big(1 - \alpha_j(\mathbf p)\big) \]
   <div class="fx-read">第 \(i\) 个高斯在像素 \(\mathbf p\) 处的不透明度，是它的总不透明度乘上二维高斯在这里的值：离椭圆中心越远越透明。</div>
   <dl class="fx-syms">
     <dt data-sym="o">\(o_i\)</dt><dd>第 \(i\) 个高斯的不透明度，0 到 1，可训练</dd>
@@ -218,17 +228,18 @@
 <p><b>第 3 步，透视投影不是线性的。</b>\(\phi(x, y, z) = (fx/z,\ fy/z)\) 里有除法。在椭球中心 \(\boldsymbol\mu_c\) 处一阶泰勒展开：\(\phi(\mathbf x_c)\approx\phi(\boldsymbol\mu_c) + J(\mathbf x_c - \boldsymbol\mu_c)\)，\(J\) 是 2×3 的雅可比矩阵：</p>
 \[ J = \begin{pmatrix} \partial(fx/z)/\partial x & \partial(fx/z)/\partial y & \partial(fx/z)/\partial z\\ \partial(fy/z)/\partial x & \partial(fy/z)/\partial y & \partial(fy/z)/\partial z\end{pmatrix} = \begin{pmatrix} f/z & 0 & -fx/z^2\\ 0 & f/z & -fy/z^2\end{pmatrix} \]
 <p><b>第 4 步，代回第 1 步。</b>在这个近似下投影是线性的，屏幕上的形状就是 \(\mathcal N\big(\phi(\boldsymbol\mu_c),\ JW\Sigma W^\top J^\top\big)\)。这一做法来自 2001 年的 EWA splatting（Zwicker 等），3DGS 原样沿用。</p>
-<p><b>第 5 步，什么时候近似变差。</b>一阶近似忽略了 \(1/z\) 在椭球内部的变化。椭球沿视线方向伸展 \(\pm\sigma_z\) 时，前后两端的放大倍数之比约为 \((z+\sigma_z)/(z-\sigma_z)\)：\(\sigma_z = 0.5\) 米、\(z = 3\) 米时是 1.4 倍，\(z = 1.2\) 米时是 2.4 倍。近的一端被放大得多，投影出来是“梨形”，不再是椭圆。下面的演示里，默认设置（深度 3 米）长轴的误差约 2%；深度拖到 1.5 米约 14%，1.2 米约 29%。</p>
+<p><b>第 5 步，什么时候近似变差。</b>一阶近似忽略了 \(1/z\) 在椭球内部的变化。椭球沿视线方向伸展 \(\pm\sigma_z\) 时，前后两端的放大倍数之比约为 \((z+\sigma_z)/(z-\sigma_z)\)：\(\sigma_z = 0.5\) 米、\(z = 3\) 米时是 1.4 倍，\(z = 1.2\) 米时是 2.4 倍。近的一端被放大得多，投影出来是“梨形”，不再是椭圆。下面的演示用数值积分算出真实投影的形状：默认设置（深度 3 米）长轴的误差约 3%；深度拖到 1.5 米约 16%，1.2 米约 34%。</p>
 <p><b>这个推导告诉我们：</b>每个高斯投影到屏幕上只需要一次 2×3 的矩阵乘法，之后它就是一个普通的二维椭圆，可以像画三角形一样画上去，这是实时渲染的前提。代价是一个近似：高斯相对于它离相机的距离必须足够小。3DGS 的优化会自动把大高斯拆小（下面的密度控制），所以实际中这个近似通常够用。</p>
 </div></details>
+<p>这个投影是一阶近似：高斯越大、离相机越近，误差越大（推导第 5 步）。下面的演示里，默认设置的误差约 3%，深度拉到 1.5 米约 16%，1.2 米约 34%；训练中的密度控制会把大高斯拆小，所以实际中这个近似通常够用。</p>
 <div data-demo="spatial-splat" class="bleed"></div>
-<p>为什么能实时？NeRF 对每个像素沿光线问上百次网络，大部分问的是空气。3DGS 从高斯出发：</p>
+<p>为什么能实时？NeRF 用的是光线追踪的思路：从每个像素出发，沿光线找东西，对每个像素问上百次网络，大部分问的是空气。3DGS 用的是<b>光栅化</b>（rasterization）：先把每个图元（三角形、椭圆）投到屏幕上，再填它覆盖的那些像素，游戏引擎画三角形就是这样做的。具体分三步：</p>
 <ol>
   <li>把每个高斯投影成屏幕上的椭圆，扔掉不在视野里的。</li>
   <li>把屏幕切成 16×16 像素的小块，每个椭圆复制到它覆盖的每个小块，以“小块编号 + 深度”为键，在 GPU 上做一次全局的基数排序。</li>
   <li>每个小块交给一组线程，按排好的顺序从近到远合成；透过率降到约万分之一以下就停下，后面的高斯不再看。</li>
 </ol>
-<p>这叫<dfn data-t="tile-rasterization">分块光栅化</dfn>（tile-based rasterization），和游戏引擎画三角形是同一类做法：计算只花在真正有东西的地方，每个像素只处理覆盖它的那些高斯。原文在 Mip-NeRF 360 数据集上的对比（PSNR 是峰值信噪比，以分贝计，越高越接近真实照片）：</p>
+<p>这叫<dfn data-t="tile-rasterization">分块光栅化</dfn>（tile-based rasterization）：计算只花在真正有东西的地方，每个像素只处理覆盖它的那些高斯。原文在 Mip-NeRF 360 数据集上的对比（PSNR 是峰值信噪比，以分贝计，越高越接近真实照片；在留出的测试视角上量）：</p>
 <div class="tablewrap"><table>
   <tr><th>方法</th><th>PSNR</th><th>训练时间</th><th>渲染速度</th><th>存储</th></tr>
   <tr><td>Mip-NeRF 360（2022）</td><td>27.69</td><td>48 小时</td><td>0.06 帧/秒</td><td>8.6 MB</td></tr>
@@ -236,48 +247,51 @@
   <tr><td>Plenoxels</td><td>23.08</td><td>26 分钟</td><td>6.8 帧/秒</td><td>2.1 GB</td></tr>
   <tr><td>3DGS（3 万步）</td><td>27.21</td><td>42 分钟</td><td>134 帧/秒</td><td>734 MB</td></tr>
 </table></div>
-<p>还有一步是<dfn data-t="densification">自适应密度控制</dfn>（adaptive density control）：训练中定期检查每个高斯的位置梯度。梯度大，说明这里没表示好：小高斯复制一份去补空缺，大高斯一分为二；几乎透明的高斯删掉。高斯的数量因此从 SfM 的几万个点长到几百万个。</p>
-<p>高斯泼溅很快成为三维重建的主流：实时、可编辑、训练快。它也进入了工业标准：2026-02，Khronos 发布了 glTF 高斯泼溅扩展的候选版；2026-03 的 OpenUSD 26.03 加入了原生的高斯泼溅图元。文件也在变小：据报道，Niantic 开源的 SPZ 格式能把原始文件压小约 90%。</p>
+<p>画质接近当时最好的 NeRF（27.21 对 27.69 dB），渲染快三个数量级以上（134 对 0.06 帧/秒），代价是存储大了约 85 倍（734 MB 对 8.6 MB）。高斯泼溅因此很快成为三维重建的主流：实时、可编辑、训练快；2026 年它被写进了 glTF 和 OpenUSD 两个工业标准（见演进史）。</p>
 
 <h2 id="gen">用二维扩散模型生成三维</h2>
-<p>上面的方法都需要真实的照片。只有一句话“一只柯基犬”时怎么办？三维训练数据又极少：最大的公开三维数据集 Objaverse-XL 约 1000 万个物体，而图文对有几十亿。DreamFusion（Poole 等, 2022-09）想出一个办法：不用三维数据，借一个训练好的二维文生图扩散模型当“老师”。随机初始化一个 NeRF，从随机角度渲染出一张图，给它加噪，让扩散模型预测噪声；扩散模型认为这张图“哪里不像提示词”，就沿相应的方向更新 NeRF 的参数。这叫<dfn data-t="sds">分数蒸馏采样</dfn>（score distillation sampling，SDS）：</p>
+<p>上面的方法都需要真实的照片。只有一句话“一只柯基犬”时怎么办？三维训练数据又极少：最大的公开三维数据集 Objaverse-XL 约 1000 万个物体，而图文对有几十亿。DreamFusion（Poole 等, 2022-09，建在 NeRF 上，比 3DGS 早）想出一个办法：不用三维数据，借一个训练好的二维文生图扩散模型当“老师”。随机初始化一个 NeRF，从随机角度渲染出一张图，给它加噪，让扩散模型预测噪声；预测的噪声和实际加入的噪声之差，就是“这张图哪里不像提示词”，沿这个方向更新 NeRF 的参数。这叫<dfn data-t="sds">分数蒸馏采样</dfn>（score distillation sampling，SDS）：</p>
 <div class="fx">
-\[ \nabla_\theta\mathcal L_{\text{SDS}} = \mathbb E_{t,\boldsymbol\varepsilon}\Big[w(t)\,\big(\htmlClass{c-adv}{\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t;\ y,\ t)} - \boldsymbol\varepsilon\big)\,\htmlClass{sym-dx}{\frac{\partial\mathbf x}{\partial\theta}}\Big],\qquad \mathbf x_t = a_t\,\mathbf x + b_t\,\boldsymbol\varepsilon \]
+\[ \nabla_\theta\mathcal L_{\text{SDS}} = \mathbb E_{t,\boldsymbol\varepsilon}\Big[w(t)\,\htmlClass{c-adv}{\big(\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t;\ y,\ t) - \boldsymbol\varepsilon\big)}\,\htmlClass{sym-dx}{\frac{\partial\mathbf x}{\partial\theta}}\Big],\qquad \mathbf x_t = a_t\,\mathbf x + b_t\,\boldsymbol\varepsilon \]
   <div class="fx-read">\(\mathbf x\) 是三维表示 \(\theta\) 从某个随机视角渲染出的图。扩散模型预测的噪声与实际加入的噪声之差，就是扩散模型认为“这张图应该往哪个方向改才更像提示词 \(y\)”（第 <a class="xref" data-ref="diffusion"></a> 章的<span class="term" data-t="score">分数</span>）。把这个方向通过渲染器传回三维参数。</div>
   <dl class="fx-syms">
     <dt data-sym="dx">\(\partial\mathbf x/\partial\theta\)</dt><dd>渲染图对三维参数的导数，由可微渲染器给出</dd>
   </dl>
-  <div class="fx-eg">提示词“一只柯基犬”。第一千步时，从正面渲染的图还是一团模糊的橙色，扩散模型推它更像狗；从侧面、背面渲染的图也各自被推着更像狗。DreamFusion 用 64×64 的 Imagen 基础模型当老师，每个提示词优化 15000 步，在 4 块 TPUv4 芯片上约 1.5 小时；引导强度取 100，而普通文生图常用 3–8。</div>
+  <div class="fx-eg">DreamFusion 用 64×64 的 Imagen 基础模型当老师，每个提示词优化 15000 步，在 4 块 TPUv4 芯片上约 1.5 小时。</div>
   <div class="fx-step" data-tex="\mathcal L(\theta) = \mathbb E_{t,\boldsymbol\varepsilon}\big[w(t)\,\|\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t;\ y,\ t) - \boldsymbol\varepsilon\|^2\big],\quad \htmlClass{c-new}{\mathbf x = \operatorname{render}(\theta)}"><b>第 1 步：把渲染图当成训练样本。</b>这是扩散模型的训练损失（第 <a class="xref" data-ref="diffusion"></a> 章），只是图像换成了渲染图。扩散模型的参数 \(\phi\) 冻结，要优化的是 \(\theta\)。</div>
   <div class="fx-step" data-tex="\nabla_\theta\mathcal L = \mathbb E\Big[w(t)\,(\hat{\boldsymbol\varepsilon}_\phi - \boldsymbol\varepsilon)\,\htmlClass{c-new}{\frac{\partial\hat{\boldsymbol\varepsilon}_\phi}{\partial\mathbf x_t}}\,a_t\,\frac{\partial\mathbf x}{\partial\theta}\Big]"><b>第 2 步：链式法则。</b>中间那项是扩散网络对输入的雅可比矩阵，要对整个 U-Net 反向传播，很贵（系数 2 并入 \(w\)）。</div>
-  <div class="fx-step" data-tex="\nabla_\theta\mathcal L_{\text{SDS}} = \mathbb E\Big[w(t)\,(\hat{\boldsymbol\varepsilon}_\phi - \boldsymbol\varepsilon)\,\frac{\partial\mathbf x}{\partial\theta}\Big]"><b>第 3 步：扔掉雅可比项。</b>DreamFusion 发现这样效果反而更好，也便宜得多（\(a_t\) 并入 \(w\)）。为什么它仍指向一个合理的方向，见下面的推导。</div>
+  <div class="fx-step" data-tex="\nabla_\theta\mathcal L_{\text{SDS}} = \mathbb E\Big[w(t)\,(\hat{\boldsymbol\varepsilon}_\phi - \boldsymbol\varepsilon)\,\frac{\partial\mathbf x}{\partial\theta}\Big]"><b>第 3 步：扔掉雅可比项。</b>这一项既贵，在噪声小时又病态；DreamFusion 发现去掉它仍然得到有效的更新方向，而且便宜得多（\(a_t\) 并入 \(w\)）。为什么它仍指向一个合理的方向，见下面的推导。</div>
 </div>
 <details class="deep"><summary>推导：SDS 为什么有效，又为什么会“求众数”</summary><div class="in">
 <p><b>第 1 步，减去 \(\boldsymbol\varepsilon\) 不改变期望。</b>\(\boldsymbol\varepsilon\) 是随机抽的噪声，与 \(\theta\) 无关、均值为 0，所以 \(\mathbb E_{\boldsymbol\varepsilon}\big[\boldsymbol\varepsilon\,\partial\mathbf x/\partial\theta\big] = 0\)。它和强化学习里的<span class="term" data-t="baseline">基线</span>一样，只降低方差（第 <a class="xref" data-ref="rl"></a> 章）。期望的更新方向是 \(\mathbb E\big[w(t)\,\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t; y, t)\,\partial\mathbf x/\partial\theta\big]\)。</p>
 <p><b>第 2 步，噪声预测就是分数。</b>由 Tweedie 公式（第 <a class="xref" data-ref="diffusion"></a> 章），\(\hat{\boldsymbol\varepsilon}_\phi(\mathbf x_t; y, t)\approx -b_t\,\nabla_{\mathbf x_t}\log p_t(\mathbf x_t\mid y)\)。沿负梯度走一步：</p>
 \[ \Delta\theta \propto -\,\mathbb E\Big[w(t)\,\hat{\boldsymbol\varepsilon}_\phi\,\frac{\partial\mathbf x}{\partial\theta}\Big] \approx \mathbb E\Big[w(t)\,b_t\,\nabla_{\mathbf x_t}\log p_t(\mathbf x_t\mid y)\,\frac{\partial\mathbf x}{\partial\theta}\Big] \]
 <p>又因为 \(\mathbf x_t = a_t\mathbf x + b_t\boldsymbol\varepsilon\)，\(\partial\mathbf x_t/\partial\theta = a_t\,\partial\mathbf x/\partial\theta\)，所以这一步是在按 \(w(t)b_t/a_t\) 加权地增大 \(\log p_t(a_t\mathbf x + b_t\boldsymbol\varepsilon\mid y)\)：让每个视角的渲染图加噪以后，在扩散模型看来更像提示词。DreamFusion 原文把它写成一个 KL 散度的梯度，结论相同。</p>
-<p><b>第 3 步，这是爬坡，不是采样。</b>第 <a class="xref" data-ref="diffusion"></a> 章的采样从噪声出发、沿分数走完一整条轨迹，得到分布里的一个样本；SDS 是让一个点不断往对数密度高的地方爬，它会停在众数附近，也就是“最典型的那张图”。为了让爬坡足够有力，DreamFusion 把 CFG 的引导强度设到 100：按第 <a class="xref" data-ref="diffusion"></a> 章的推导，目标分布变成 \(p(\mathbf x)\,p(y\mid\mathbf x)^{100}\)，被锐化到了极点。颜色过饱和、细节被抹平，是这样做的代价。</p>
+<p><b>第 3 步，这是爬坡，不是采样。</b>第 <a class="xref" data-ref="diffusion"></a> 章的采样从噪声出发、沿分数走完一整条轨迹，得到分布里的一个样本；SDS 是让一个点不断往对数密度高的地方爬，它会停在众数附近，也就是“最典型的那张图”。为了让爬坡足够有力，DreamFusion 把 CFG 的引导强度拉到约 100（原文按 Imagen 的写法记作 \(\omega = 100\)，换成第 <a class="xref" data-ref="diffusion"></a> 章 \(\hat{\boldsymbol\varepsilon}_u + w(\hat{\boldsymbol\varepsilon}_c - \hat{\boldsymbol\varepsilon}_u)\) 的写法是 \(w = 101\)）：按那一章的推导，目标分布变成 \(p(\mathbf x)\,p(y\mid\mathbf x)^{101}\)，被锐化到了极点。颜色过饱和、细节被抹平，是这样做的代价。</p>
 <p><b>第 4 步，视角之间没有联系。</b>目标是对随机视角求平均，每个视角各自被推向二维模型的众数。二维模型不知道“这是背面”，于是每个视角的众数都是一张正脸。</p>
 <p><b>这个推导告诉我们：</b>SDS 把扩散模型当成打分器而不是生成器来用，过饱和、过度平滑和多脸都是“求众数”的直接后果，不是实现上的小毛病。ProlificDreamer（2023-05）提出的变分分数蒸馏（VSD）把 \(-\boldsymbol\varepsilon\) 换成另一个小扩散模型对“当前渲染图分布”的噪声预测，相当于减去当前分布自己的分数，于是能用正常的 7.5 引导强度，结果更细、更多样。</p>
 </div></details>
+<p>主线要记住两点。第一，SDS 是爬坡，不是采样：它让一个三维物体不断往“二维模型认为最可能”的地方爬，最后停在众数附近，也就是最典型的样子。第二，为了让爬坡足够有力，DreamFusion 把引导强度拉到约 100（按本书的写法 \(w = 101\)），而普通的图像采样常用 \(w\) 在个位数到二三十之间（Stable Diffusion 默认 7.5）。代价是颜色过饱和、细节被抹平，以及下面的多脸问题。SDS 在 2022–23 年是文生三维的主要办法，因为没有足够的三维数据，只能借二维模型打分；它退出主流，是因为每个提示词都要优化一个多小时，“求众数”的毛病也修不干净。有了大规模三维数据和多视角扩散模型以后，直接训练一个“输入 → 三维”的网络更快，效果也更好（下一节）。</p>
 <aside class="dispute surprise">
   <h4>意外：生成的三维物体从每个角度看都是正面</h4>
   <dl>
     <dt>原以为</dt><dd>二维扩散模型从每个角度都把渲染图推向“像提示词”，最终就能得到一致的三维物体。</dd>
     <dt>实际发现</dt><dd>SDS 生成的人物、动物常常长出好几张脸，背面也是一张脸，像罗马神话中两面的雅努斯。这叫<dfn data-t="janus-problem">雅努斯问题</dfn>（Janus problem）。</dd>
-    <dt>为什么</dt><dd>二维模型训练用的照片绝大多数是正面照，“一只柯基犬”最典型的样子就是正脸。每个角度独立地被推向最典型的样子，没有任何东西告诉它“这是背面，应该看到尾巴”。这与第 <a class="xref" data-ref="diffusion"></a> 章 <span class="term" data-t="cfg">CFG</span> 推向“最典型”的机制一样，而 SDS 用的引导强度大得多。DreamFusion 在提示词后面加“正面”“侧面”“背面”，只能部分缓解。</dd>
+    <dt>为什么</dt><dd>二维模型训练用的照片绝大多数是正面照，“一只柯基犬”最典型的样子就是正脸。每个角度独立地被推向最典型的样子，没有任何东西告诉它“这是背面，应该看到尾巴”。这与第 <a class="xref" data-ref="diffusion"></a> 章 <span class="term" data-t="cfg">CFG</span> 推向“最典型”的机制一样，而 SDS 的引导强度是普通采样的十几倍。DreamFusion 在提示词后面加“正面”“侧面”“背面”，只能部分缓解。</dd>
     <dt>现在怎么看</dt><dd>解法是让二维老师知道视角：Zero-1-to-3（2023-03）微调扩散模型，输入一张图和相机的旋转，生成那个角度看到的样子；MVDream（2023-08）训练<dfn data-t="multiview-diffusion">多视角扩散模型</dfn>（multi-view diffusion），同一物体的几个视角一起去噪、彼此一致。之后的趋势是干脆不做逐个提示词的优化，直接训练三维生成模型（下一节）。</dd>
   </dl>
 </aside>
 
-<h2 id="feedforward">一秒钟重建：前馈的三维模型</h2>
-<p>NeRF、3DGS 和 SDS 都要为每个场景、每个提示词单独优化几分钟到几小时。2023 年起的思路是训练一个大模型，学会“照片 → 三维”这个映射本身，之后对新输入只需一次前向。这条线上的每一代也在修上一代的问题：</p>
-<ul>
-  <li><b>从一张图到三维：LRM（2023-11）。</b>卡在逐场景优化太慢，而且要几十张照片。<dfn data-t="lrm">大型重建模型</dfn>（large reconstruction model）用一个 5 亿参数的 Transformer 读入一张图，直接输出一个 NeRF，在约 100 万个物体的多视角数据上训练，5 秒出结果。代价是看不见的背面靠“回归”：均方误差的最优解是所有可能背面的平均（第 <a class="xref" data-ref="diffusion"></a> 章“去噪器只能学到平均”的同一个道理），所以背面往往是糊的。常见的组合于是变成先用多视角扩散模型“生成”几个视角，再交给 LRM 类模型重建；GS-LRM 等把输出换成了高斯泼溅。</li>
-  <li><b>不要相机：DUSt3R（2023-12）。</b>卡在所有方法都假设相机已知，而真实照片的相机要靠 COLMAP 先算，纹理少、照片少时经常失败。DUSt3R 不估相机，让网络对两张图的每个像素直接输出一个三维坐标，都表示在第一台相机的坐标系里，叫<dfn data-t="pointmap">点图</dfn>（pointmap）。相机反过来从点图里解出来（见下面的卡片）；多于两张图时，再把两两的点图对齐到同一个坐标系。</li>
-  <li><b>一次看几百张：VGGT（2025-03，CVPR 2025 最佳论文）。</b>卡在 DUSt3R 一次只看两张，图一多就要两两配对再全局对齐。VGGT 是一个约 12 亿参数的 Transformer：每张图切成 <span class="term" data-t="patch">patch</span>，在“帧内注意力”和“所有帧之间的全局注意力”之间交替 24 轮，一次前向同时输出每张图的相机参数、深度图、点图和点在帧间的轨迹。在 H100 上处理 10 张图 0.14 秒、100 张 3.1 秒，精度超过需要后处理优化的方法。之后的 π³（2025-07）去掉了“以第一张图为参考”的设定，MapAnything（Meta, 2025-09）输出带真实尺度的几何，Depth Anything 3（字节, 2025-11）用一个普通 Transformer 只预测深度和光线，就超过了 VGGT。</li>
-</ul>
+<h2 id="feedforward" data-short="前馈生成与重建">前馈：把逐场景优化摊进一个网络</h2>
+<p>NeRF、3DGS 和 SDS 都要为每个场景、每个提示词单独优化几分钟到几小时。2023 年起，两条平行的线都改成训练一个大网络，学会映射本身，之后对新输入只需一次前向。它们修的不是同一个问题：<b>生成线</b>从一张图或一句话出发，要补出看不见的部分，接的是上一节的 SDS；<b>几何线</b>从一组照片出发，要算出相机和几何，回到的是第一代 SfM 的老问题。两条线同一时期发展，VGGT 不是 LRM 的改进版。</p>
+
+<h3 id="ff-gen">生成线：从回归到三维潜空间</h3>
+<p><b>LRM（2023-11）。</b><dfn data-t="lrm">大型重建模型</dfn>（large reconstruction model）用一个 5 亿参数的 Transformer 读入一张图，直接输出一个 NeRF，在约 100 万个物体的多视角数据上训练，5 秒出结果。代价是看不见的背面靠“回归”：均方误差的最优解是所有可能背面的平均（第 <a class="xref" data-ref="diffusion"></a> 章“去噪器只能学到平均”的同一个道理），所以背面往往是糊的。</p>
+<p><b>先生成视角，再重建。</b>回归给不出看不见的东西，就要“生成”。常见的组合是先用上一节的多视角扩散模型生成同一物体的几个视角，再交给 LRM 类模型重建；GS-LRM 等把输出换成了高斯泼溅。</p>
+<p><b>直接在三维潜空间里生成：TRELLIS（2024-12）。</b>思路和第 <a class="xref" data-ref="image"></a> 章的<span class="term" data-t="latent-diffusion">潜空间扩散</span>一样：先把三维资产压进一个潜空间，再在里面做扩散或流匹配。难点是三维的潜空间该长什么样。稠密体素随分辨率立方增长（第一节的 \(512^3\)），网格的拓扑每个物体都不同，网络都不好处理。微软的 TRELLIS 用<dfn data-t="structured-latent">结构化三维潜空间</dfn>（structured latent）：在 \(64^3\) 的格子里只保留与物体表面相交的体素，平均约 2 万个，不到全部格子的 8%；每个体素的特征来自把它投影到多张渲染图上、取视觉编码器 DINOv2 在那里的特征的平均，再由一个稀疏的自编码器压成潜向量。生成分两步，各用一个流匹配 Transformer：先生成“哪些体素有东西”（形状的骨架），再在这些体素上生成潜向量（细节和外观）；最后按需要解码成高斯泼溅、辐射场或网格。它在 50 万个三维资产上训练，最大 20 亿参数。TRELLIS.2（2025-12，40 亿参数，MIT 许可开源）把 \(1024^3\) 分辨率的资产压缩成约 9600 个潜 token，在 H100 上约 17 秒生成带 PBR 材质（physically based rendering：基础色、粗糙度、金属度、透明度这些按物理规律定义的表面属性）的网格。</p>
+
+<h3 id="ff-geo">几何线：用一个网络代替 SfM</h3>
+<p><b>不要相机：DUSt3R（2023-12）。</b>前面所有方法都假设相机已知，而真实照片的相机要靠 COLMAP 先算，纹理少、照片少时经常失败。DUSt3R 不估相机，让网络对两张图的每个像素直接输出一个三维坐标，都表示在第一台相机的坐标系里，叫<dfn data-t="pointmap">点图</dfn>（pointmap）。相机反过来从点图里解出来：</p>
 <div class="fx">
 \[ \htmlClass{sym-P}{X^{1,1}},\ \htmlClass{sym-P}{X^{2,1}}\in\mathbb R^{H\times W\times 3},\qquad \htmlClass{sym-f}{f^*} = \arg\min_f\ \sum_{(u,v)}\Big\|\,(u - c_x,\ v - c_y) - f\,\Big(\frac{X_{uv}}{Z_{uv}},\ \frac{Y_{uv}}{Z_{uv}}\Big)\Big\| \]
   <div class="fx-read">网络对两张图各输出一张“每个像素一个三维点”的图，两张都表示在第一台相机的坐标系里。点和像素一一对应，所以焦距就是让针孔投影最好地对上这些像素的那个 \(f\)；第二台相机的位姿同理，由两组对应的三维点求一个旋转加平移。</div>
@@ -287,20 +301,28 @@
   </dl>
   <div class="fx-eg">回到玩具：点图在像素 (445, 302.5) 处给出 \((0.5, 0.25, 2)\)，于是 \(f = (445 - 320)/(0.5/2) = 500\)，深度就是 \(Z = 2\)。一张点图同时含有深度和焦距，配合第二张图的点图还含有相对位姿：SfM 里的特征匹配、三角化和光束法平差，被一个网络的一次输出替代了。</div>
 </div>
-<p>重建只能还原看得见的部分。要从一句话或一张图得到完整、可编辑的资产，需要真正的三维生成模型。思路和第 <a class="xref" data-ref="image"></a> 章的<span class="term" data-t="latent-diffusion">潜空间扩散</span>一样：先把三维资产压进一个潜空间，再在里面做扩散或流匹配。难点是三维的潜空间该长什么样。微软的 TRELLIS（2024-12）用<dfn data-t="structured-latent">结构化三维潜空间</dfn>（structured latent）：只在物体表面附近的稀疏体素上放潜向量；生成时先生成“哪些体素有东西”，再生成每个体素的潜向量，最后可以解码成辐射场、高斯泼溅或网格。它在 50 万个三维资产上训练，最大 20 亿参数。TRELLIS.2（2025-12，40 亿参数，MIT 许可开源）把 1024³ 分辨率的资产压缩成约 9600 个潜 token，在 H100 上约 17 秒生成带 PBR 材质（基础色、粗糙度、金属度、透明度）的网格。据报道，腾讯的 Hunyuan3D 系列在纹理和材质上领先；Meta 的 SAM 3D（2025-11）则侧重从真实照片里重建单个物体和人体。</p>
+<p>也就是说，SfM 的三步（特征匹配、三角化、光束法平差）被一个网络的一次输出替代了。多于两张图时，再把两两的点图对齐到同一个坐标系。</p>
+<p><b>一次看几百张：VGGT（2025-03，CVPR 2025 最佳论文）。</b>DUSt3R 一次只看两张，图一多就要两两配对再全局对齐。VGGT 是一个约 12 亿参数的 Transformer：每张图切成 <span class="term" data-t="patch">patch</span>，在“帧内注意力”和“所有帧之间的全局注意力”之间交替 24 轮，一次前向同时输出每张图的相机参数、深度图、点图和点在帧间的轨迹，正是 SfM 的全部输出。在 H100 上，主干网络处理 10 张图 0.14 秒、100 张 3.1 秒，多数指标上超过需要后处理优化的方法。它的输出也常被拿来初始化 3DGS，代替 COLMAP。之后的工作在比谁更简单、更稳：Depth Anything 3（字节, 2025-11）用一个普通 Transformer 只预测深度和光线，就超过了 VGGT。</p>
+<details class="deep"><summary>VGGT 之后的两项工作：去掉参考帧，补上真实尺度</summary><div class="in">
+<p><b>π³（2025-07）。</b>DUSt3R 和 VGGT 都把一切表示在“第一张图”的坐标系里，换一张图当参考，结果会变。π³ 去掉了这个设定，对输入图的顺序不敏感。</p>
+<p><b>MapAnything（Meta, 2025-09）。</b>SfM 一节说过，只靠照片只能恢复到“差一个整体缩放”。MapAnything 可以接受相机内参、位姿、深度等额外输入，并输出带真实尺度的几何；照片本身解不掉的那个缩放，要靠额外输入或训练数据里学到的先验补上。</p>
+<p><b>这告诉我们：</b>几何线在 VGGT 之后不再是“能不能做”，而是在去掉人为设定、补上尺度这些细节上竞争。</p>
+</div></details>
 
 <h2 id="worlds">从物体到世界</h2>
-<p>2025–26 年，三维生成从“一个物体”扩展到“一个可以走进去的场景”。World Labs 的 Marble（2025-11 正式上线）从文字、图片、视频或粗略的三维布局生成可漫游的场景，导出为高斯泼溅（完整版约 200 万个高斯）、网格或视频；2026-01 推出 API，2026-04 的 Marble 1.1 改进了光照和细节，Plus 版能在一次生成里自动向外扩展场景。腾讯的 HunyuanWorld 1.0（2025-07，开源）先生成一张 360° 全景图，按语义拆成天空、背景和物体几层，再估计深度、把每层变成网格。两者都是显式三维：几何天然一致，可以导进游戏引擎和仿真器，但场景是静态的。另一条路是让视频模型按用户的动作逐帧“想象”出世界（Genie 3、腾讯的 HY-World 1.5），能实时交互，几何却不保证一致。这场路线之争在第 <a class="xref" data-ref="world-models"></a> 章展开。</p>
+<p>2025–26 年，三维生成从“一个物体”扩展到“一个可以走进去的场景”。World Labs 的 Marble（2025-11 正式上线）从文字、图片、视频或粗略的三维布局生成可漫游的场景，导出为高斯泼溅（完整版约 200 万个高斯）、网格或视频。腾讯的 HunyuanWorld 1.0（2025-07，开源）先生成一张 360° 全景图，按语义拆成天空、背景和物体几层，再估计深度、把每层变成网格。两者都是显式三维：几何天然一致，可以导进游戏引擎和仿真器，但场景是静态的。另一条路是让视频模型按用户的动作逐帧生成世界（Genie 3、腾讯的 HY-World 1.5，也叫 WorldPlay），能实时交互，靠记忆改善几何一致性，但没有显式几何的保证。两条路线的比较在第 <a class="xref" data-ref="world-models"></a> 章。</p>
 
 <h2 id="reasoning">多模态模型的空间推理</h2>
-<p>另一头是理解：给多模态模型看一段室内漫游视频，它能说清“沙发离电视多远”吗？人做这类题时，会在脑中把看到的东西放进一张统一的平面图，叫<dfn data-t="cognitive-map">认知地图</dfn>（cognitive map）。</p>
+<p>前两个问题都在造三维。第三个问题反过来：不重建，直接给多模态模型看一段室内漫游视频，它能说清“沙发离电视多远”吗？</p>
+<p>回到玩具场景。只给一帧，问“红球离相机多远”，答不出：红球在这条光线上的哪一处，照片都一模一样（2 米还是 3 米，「从零开始」一节算过）。能用的只有两样：走动时的视差，和“球一般多大”这类常识。人在房间里走一圈，会在脑中把看到的东西放进一张统一的平面图，叫<dfn data-t="cognitive-map">认知地图</dfn>（cognitive map）。要做到这一点，得先把多帧里的同一件东西对上号，放进同一个坐标系，再去量：这正是 SfM 和 VGGT 做的事。多模态模型没有这一步。它的视觉编码器多半用图文对比学习训练，目标是认出“这是沙发”，对数量和空间关系不敏感（第 <a class="xref" data-ref="vlm"></a> 章）；每帧的 token 送进语言模型以后，深度和尺度只能靠“沙发一般两米宽”这类常识去猜。</p>
+<p>于是有三种补法：加大量空间问答数据去训练（下面的 Cambrian-S）；让模型先写出认知地图再回答；把几何模型接进来，例如 Spatial-MLLM（2025-05）在原有的视觉编码器旁边加了一个用 VGGT 主干初始化的“空间编码器”，两路特征合并后再交给语言模型。三种补法背后是同一个分歧：几何能不能从海量二维数据里自己长出来，还是必须显式地给。</p>
 <aside class="dispute">
-  <h4>大模型懂空间吗</h4>
+  <h4>空间能力能从二维数据里长出来吗</h4>
   <dl>
-    <dt>质疑</dt><dd>“Thinking in Space”（VSI-Bench, 2024-12）用 288 段室内漫游视频出了 5000 多道题：数椅子、估距离和房间大小、判断“从门口走到冰箱先左转还是右转”。人类平均 79%（400 题的子集），当时最好的 Gemini-1.5 Pro 是 45.4%，GPT-4o 是 34.0%，12 个开源模型里有 7 个低于随机猜测。思维链、自洽性这些语言上的推理技巧都没有帮助；让模型先显式画出认知地图再回答，距离题的成绩提高了。瓶颈不在语言推理，而在把看到的东西放进统一的空间坐标。第 <a class="xref" data-ref="vlm"></a> 章的视觉盲点（数量、精确位置）在三维中被放大。</dd>
-    <dt>进展</dt><dd>专门的训练提升很快：Cambrian-S（2025-11）用 59 万条空间问答训练的 7B 模型在 VSI-Bench 上达到 67.5%，比 Gemini 2.5 Pro 高 16 个百分点以上。另一些工作接入 VGGT 这类三维重建模块，或者让模型调用工具先建图。</dd>
-    <dt>反方</dt><dd>同一团队同时发表的另一篇论文发现，部分进步来自“不看视频也能答”的捷径：只用题目文字在测试集上做交叉验证训练，不看画面的准确率就能提高 30 多个百分点；估物体大小的题几乎完全可以靠“这类东西通常多大”的常识答对。去掉这类题后（VSI-Bench-Debiased），一个在空间数据上训练过的模型从 44.7% 降到 32.0%。在要求跨多张图对齐视角的 MMSI-Bench 上，GPT-5 约 40%，人类 97%。</dd>
-    <dt>现在怎么看</dt><dd>空间推理仍是多模态模型最弱的能力之一，也是具身智能（第 <a class="xref" data-ref="embodied"></a> 章）的关键瓶颈；评测本身也很容易被语言先验污染。靠扩大二维数据能不能学会，还是需要显式的三维表示和三维数据，尚无定论。</dd>
+    <dt>主张</dt><dd>几何要显式地给。“Thinking in Space”（VSI-Bench, 2024-12）用 288 段室内漫游视频出了 5000 多道题：数椅子、估距离和房间大小、判断“从门口走到冰箱先左转还是右转”。人类平均 79%（400 题的子集），当时最好的 Gemini-1.5 Pro 是 45.4%。思维链、自洽性这些语言上的推理技巧都没有帮助；让模型先显式画出认知地图再回答，距离题的成绩提高了。瓶颈不在语言推理，而在把看到的东西放进统一的坐标。</dd>
+    <dt>证据</dt><dd>Spatial-MLLM 加入 VGGT 的几何特征后，报告在多个空间推理基准上取得当时最好的成绩。</dd>
+    <dt>反方</dt><dd>二维数据加专门的训练就够。Cambrian-S（2025-11）不加任何三维输入，用 59 万条空间问答训练的 7B 模型在 VSI-Bench 上达到 67.5%，比 Gemini 2.5 Pro 高 16 个百分点以上。</dd>
+    <dt>现在怎么看</dt><dd>两边的分数都要打折扣。同一团队的另一篇论文发现，这类基准有“不看画面也能答”的捷径：只用题目文字、在测试集上做交叉验证训练，不看画面的模型在 VSI-Bench 上比它自己的零样本得分高约 18 个百分点（2026-10 修订版；初版报告的是 31.4）；估物体大小的题，一个只看文字的诊断器几乎全靠“这类东西平均多大”来猜（这个特征的重要性 0.968）。去掉这类题以后（VSI-Bench-Debiased），一个在空间数据上微调过的 LLaVA-Video-7B，不看视频时的得分从 44.7% 降到 32.0%，看视频时从 57.1% 降到 48.7%，看与不看的差距从 12.4 扩大到 16.7 个百分点。在要求跨多张图对齐视角的 MMSI-Bench 上，GPT-5 约 40%，人类 97%。空间推理仍是多模态模型最弱的能力之一，也是具身智能需要的能力（第 <a class="xref" data-ref="embodied"></a> 章的机器人系统里，专门有一个具身推理模型负责理解空间）；只靠二维数据能不能学会，尚无定论。</dd>
   </dl>
 </aside>
 
@@ -310,7 +332,6 @@
   <li><b class="m">高斯泼溅和 NeRF 是完全不同的东西。</b>两者用同一个体渲染（alpha 合成）公式，区别在于表示（显式椭球还是神经网络）和计算顺序（从高斯出发光栅化，还是从像素出发沿光线采样）。</li>
   <li><b class="m">NeRF 的位置编码和 Transformer 的位置编码是一回事。</b>写法都是一串正弦余弦，目的不同：Transformer 的<span class="term" data-t="pos-enc">位置编码</span>告诉模型 token 的顺序（第 <a class="xref" data-ref="transformer"></a> 章）；NeRF 的傅里叶特征是为了绕开频谱偏置，让网络学得动高频细节。去掉前者，模型分不清词序；去掉后者，场景变糊。</li>
   <li><b class="m">能生成逼真视频的模型就懂三维空间。</b>视频模型不保证几何一致，绕回原处时场景可能已经变了（第 <a class="xref" data-ref="world-models"></a> 章的记忆问题）；能生成也不等于能理解，上面的空间推理基准就是例子。</li>
-  <li><b class="m">三维重建需要标定好的相机和长时间计算。</b>DUSt3R、VGGT 等能从随手拍的一组照片在几秒内恢复相机和几何，它们的输出也常被拿来初始化 3DGS，代替 COLMAP。</li>
 </ul>
 
 <h2 id="history">演进史</h2>
@@ -341,10 +362,11 @@
     <h4>从网络到表格，再到光栅化</h4>
     <dl class="hist-why">
       <dt>卡在哪</dt><dd>大网络每次查询都贵，空气里的采样都是浪费。</dd>
-      <dt>怎么解决</dt><dd>Plenoxels 去掉网络、直接优化体素；Instant-NGP 用多分辨率哈希表，训练缩到几秒到几分钟；3DGS 改用显式高斯和分块光栅化，1080p 下 100 帧/秒以上。</dd>
+      <dt>怎么解决</dt><dd>Plenoxels 去掉网络、直接优化体素；Instant-NGP 用多分辨率哈希表，训练缩到几秒到几分钟；3DGS 改用显式高斯和分块光栅化，1080p 下实时（≥30 帧/秒），在 Mip-NeRF 360 的测试分辨率下平均 134 帧/秒。</dd>
       <dt>代价</dt><dd>显式表示占几百 MB；仍是逐场景优化，要几十上百张照片和 SfM 相机。</dd>
-      <dt>引出</dt><dd>没有照片、只有一句话的时候怎么办？</dd>
+      <dt>引出</dt><dd>重建仍然需要几十上百张照片和逐场景的优化。</dd>
     </dl>
+    <details class="hist-branch"><summary><span class="bt alive">进入标准</span>高斯泼溅成为交换格式</summary><div>2026-02，Khronos 发布 glTF 高斯泼溅扩展（KHR_gaussian_splatting）的候选版，2026-09 正式批准；2026-03 的 OpenUSD 26.03 加入了原生的高斯泼溅图元。文件也在变小：Niantic 开源的 SPZ 格式能把原始文件压小约 90%。</div></details>
     <details class="hist-branch"><summary><span class="bt dead">被取代</span>Plenoxels：稀疏体素 + 球谐</summary><div>证明了神经网络不是 NeRF 成功的必要条件，但每个场景 2.1 GB，细节受限于格子的分辨率，很快被哈希网格和高斯取代。它留下的球谐颜色被 3DGS 直接沿用。</div></details>
     <details class="hist-branch"><summary><span class="bt debate">争论</span>3DGS 是不是“正确”的体渲染</summary><div>3DGS 按高斯中心的深度排序，再在二维里合成。高斯互相穿插时，按中心排的顺序在某些像素上是错的，转动视角时会看到闪烁（popping）。StopThePop（2024）在每个像素上重新排序，另一些工作改回沿光线追踪高斯。速度和物理上的正确性怎么取舍，还没有定论。</div></details>
   </div>
@@ -352,7 +374,7 @@
     <div class="hist-date">2022-09 → 2023</div>
     <h4>SDS：借二维扩散模型生成三维</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>三维数据比图文数据少几个数量级，文生三维没有足够的训练数据。</dd>
+      <dt>卡在哪</dt><dd>上面的方法都要照片；想从一句话生成三维，三维数据又比图文数据少几个数量级。这条线和上一个节点同一时期，直接建在 NeRF 上。</dd>
       <dt>怎么解决</dt><dd>DreamFusion 用 SDS 把二维扩散模型当打分器，从随机视角优化 NeRF；Zero-1-to-3、MVDream 让老师知道视角，缓解雅努斯问题；VSD 改善过饱和。</dd>
       <dt>代价</dt><dd>每个提示词优化约 1.5 小时；求众数带来过饱和、过度平滑和多脸。</dd>
       <dt>引出</dt><dd>能不能把“逐个优化”换成“一次前向”？</dd>
@@ -360,33 +382,51 @@
     <details class="hist-branch"><summary><span class="bt dead">不再是主流</span>逐提示词优化的文生三维</summary><div>2023 年大量论文在 SDS 上改损失、换表示，但每个结果都要优化几十分钟到几小时。前馈重建和三维潜空间生成出现后，这条路退出了主流；“用二维模型给三维打分”的思路仍用在三维编辑和精修里。</div></details>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2023-11 → 2025</div>
-    <h4>前馈重建：LRM、DUSt3R、VGGT</h4>
+    <div class="hist-date">2023-11 → 2025-12</div>
+    <h4>前馈生成：从 LRM 到三维潜空间</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>逐场景、逐提示词优化太慢，而且依赖 COLMAP 算出的相机。</dd>
-      <dt>怎么解决</dt><dd>LRM 一张图 5 秒出 NeRF；DUSt3R 用点图同时得到深度和相机；VGGT 一次前向处理上百张图，100 张约 3 秒。</dd>
-      <dt>代价</dt><dd>回归只能给出平均，看不见的部分是糊的；需要大规模多视角数据训练。</dd>
-      <dt>引出</dt><dd>看不见的部分要“生成”，而不是“回归”。</dd>
+      <dt>卡在哪</dt><dd>SDS 每个提示词要优化一个多小时，还带着求众数的毛病。</dd>
+      <dt>怎么解决</dt><dd>LRM 一张图 5 秒出 NeRF；先用多视角扩散生成几个视角、再交给 LRM 类模型重建；TRELLIS 在结构化三维潜空间里做流匹配，TRELLIS.2 约 17 秒生成带材质的网格。</dd>
+      <dt>代价</dt><dd>需要大规模三维数据；拓扑和材质仍常需人工修整。</dd>
+      <dt>引出</dt><dd>从一个物体扩展到一整个可以走进去的场景。</dd>
     </dl>
   </div>
   <div class="hist-node">
-    <div class="hist-date">2024-12 → 2026</div>
-    <h4>三维潜空间生成，从物体到世界</h4>
+    <div class="hist-date">2023-12 → 2025-11</div>
+    <h4>前馈几何：DUSt3R、VGGT（与上一节点并行）</h4>
     <dl class="hist-why">
-      <dt>卡在哪</dt><dd>需要完整、可编辑、带材质的资产，以及整个场景；格式不统一，难以进入游戏、影视和工业流程。</dd>
-      <dt>怎么解决</dt><dd>TRELLIS 系列在结构化三维潜空间里做扩散和流匹配；Marble、HunyuanWorld 生成可漫游的场景；glTF（2026-02 候选版）与 OpenUSD（2026-03）把高斯泼溅纳入标准。</dd>
-      <dt>代价</dt><dd>拓扑和材质仍常需人工修整；生成的世界是静态的。</dd>
+      <dt>卡在哪</dt><dd>所有重建方法都依赖 COLMAP 算出的相机，纹理少、照片少时经常失败。</dd>
+      <dt>怎么解决</dt><dd>DUSt3R 用点图同时得到深度和相机；VGGT 一次前向处理上百张图，主干网络 100 张约 3 秒；Depth Anything 3 只预测深度和光线就超过了 VGGT。</dd>
+      <dt>代价</dt><dd>需要大规模多视角数据训练；真实尺度仍要靠先验或额外输入。</dd>
+      <dt>引出</dt><dd>几何特征可以直接接进多模态模型：Spatial-MLLM（2025-05）用 VGGT 的主干做空间编码器。</dd>
+    </dl>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2025-07 → 2026</div>
+    <h4>世界生成：显式三维的场景</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>游戏、仿真和机器人需要整个场景，而不是一个物体。</dd>
+      <dt>怎么解决</dt><dd>HunyuanWorld 1.0 从全景图分层建网格；Marble 从文字、图片或视频生成可漫游的高斯泼溅场景。</dd>
+      <dt>代价</dt><dd>场景是静态的；视频世界模型（Genie 3、HY-World 1.5）能实时交互，但没有显式几何的保证。</dd>
       <dt>引出</dt><dd>如果场景不仅能看，还能按动作实时变化，就成了世界模型（第 <a class="xref" data-ref="world-models"></a> 章）。</dd>
     </dl>
-    <details class="hist-branch"><summary><span class="bt alive">与视频路线竞争</span>显式三维的世界生成</summary><div>Marble、HunyuanWorld 用显式三维表示生成可漫游的场景，几何一致、可导出；视频世界模型（Genie 3、HY-World 1.5）能实时交互，但几何不保证一致。两条路线在第 <a class="xref" data-ref="world-models"></a> 章交汇。</div></details>
+  </div>
+  <div class="hist-node">
+    <div class="hist-date">2024-12 → 2026-10</div>
+    <h4>空间推理：先量出差距，再查评测本身</h4>
+    <dl class="hist-why">
+      <dt>卡在哪</dt><dd>多模态模型在二维图像上的分数很高，没人系统地量过它们懂不懂三维空间。</dd>
+      <dt>怎么解决</dt><dd>VSI-Bench（2024-12）用室内漫游视频出题，模型远低于人类；Cambrian-S（2025-11）靠空间问答数据、Spatial-MLLM 靠几何编码器把分数拉高。</dd>
+      <dt>代价</dt><dd>基准里有“不看画面也能答”的捷径（2025-11，2026-10 修订），一部分进步是虚的。</dd>
+      <dt>引出</dt><dd>几何要显式地给，还是能从二维数据里长出来，仍是开放问题。</dd>
+    </dl>
   </div>
 </div>
 
 <h2 id="quiz">自测</h2>
-<details class="quiz"><summary>1. 光线依次经过三层，\(\alpha = (0.3,\ 0.5,\ 0.8)\)，颜色分别是红、绿、蓝。各自的权重是多少？背景还能透出多少？</summary><div class="ans">红：\(0.3\)；绿：\(0.7\times 0.5 = 0.35\)；蓝：\(0.7\times 0.5\times 0.8 = 0.28\)；背景：\(0.7\times 0.5\times 0.2 = 0.07\)。四者之和为 1（体渲染推导第 3 步的“权重之和”）。</div></details>
+<details class="quiz"><summary>1. 动手算：光线依次经过三层，\(\alpha = (0.3,\ 0.5,\ 0.8)\)，颜色分别是红、绿、蓝。各自的权重是多少？背景还能透出多少？如果第一层换成密度 \(\sigma = 2\)、长 \(\delta = 0.5\) 的均匀雾，它的 \(\alpha\) 是多少？雾的长度加倍呢？</summary><div class="ans">红：\(0.3\)；绿：\(0.7\times 0.5 = 0.35\)；蓝：\(0.7\times 0.5\times 0.8 = 0.28\)；背景：\(0.7\times 0.5\times 0.2 = 0.07\)。四者之和为 1（体渲染推导第 3 步的“权重之和”）。雾：\(\alpha = 1 - e^{-1}\approx 0.63\)；长度加倍：\(1 - e^{-2}\approx 0.86\)，不是简单的两倍，因为透过率按指数衰减：第二段只能挡住第一段剩下的那 37% 里的 63%。</div></details>
 <details class="quiz"><summary>2. 动手算：相机放在世界坐标 \((2, 0, 2)\)，向左转 90°、朝 \(-x\) 方向看，此时 \(R\) 的三行依次是 \((0,0,1)\)、\((0,1,0)\)、\((-1,0,0)\)；\(f = 500\)，画面中心 (320, 240)。红球 \((0.5, 0.25, 2)\) 落在哪个像素？</summary><div class="ans">相机坐标 \(\mathbf X_c = R(\mathbf X_w - C) = R\,(-1.5,\ 0.25,\ 0) = (0,\ 0.25,\ 1.5)\)。\(u = 500\times 0/1.5 + 320 = 320\)，\(v = 500\times 0.25/1.5 + 240\approx 323.3\)。红球在这台相机正前方 1.5 米，所以落在画面的竖直中线上。用 \(\mathbf t = -RC = (-2, 0, 2)\) 和 \(R\mathbf X_w + \mathbf t\) 算，结果相同。</div></details>
-<details class="quiz"><summary>3. 密度 \(\sigma = 2\)（每单位长度），一段长 \(\delta = 0.5\) 的均匀雾挡住多少光？长度加倍呢？</summary><div class="ans">\(\alpha = 1 - e^{-1}\approx 0.63\)。长度加倍：\(1 - e^{-2}\approx 0.86\)，不是简单的两倍，因为透过率按指数衰减：第二段只能挡住第一段剩下的那 37% 里的 63%。</div></details>
-<details class="quiz"><summary>4. 为什么 SDS 需要从随机视角渲染？如果只从正面渲染，会得到什么？随机视角又为什么会带来雅努斯问题？</summary><div class="ans">SDS 只能约束被渲染出来的那些视角。只从正面渲染，三维模型只需正面看起来对，侧面和背面可以是任何形状（常常是扁平的“纸片”或一团雾）。随机视角迫使每个角度都合理；但每个视角各自被推向二维模型的众数，而二维模型不知道这是背面，众数都是正脸，于是长出多张脸。</div></details>
+<details class="quiz"><summary>3. 动手算：第一张照片里红球在像素 (445, 302.5)，同一条光线后面墙上的点也在这个像素。相机向右平移一段不知道多长的距离 \(B\) 后再拍一张：红球出现在 \(u = 195\)，墙上那个点出现在 \(u = 320\)（\(f = 500\)）。红球和墙上的点各有多深？只有第一张照片能回答吗？知道 \(B = 1\) 米以后呢？这和多模态模型答不好“多远”有什么关系？</summary><div class="ans">只有第一张：不能，光线上任何一点 \((0.25s,\ 0.125s,\ s)\) 都落在这个像素。两张：视差分别是 \(445 - 195 = 250\) 和 \(445 - 320 = 125\) 像素，由 \(Z = fB/d\)，红球深 \(2B\)，墙上的点深 \(4B\)：只知道墙比红球远一倍，绝对距离差一个整体缩放。知道 \(B = 1\) 米，才得到 2 米和 4 米。多模态模型既不在帧之间对齐同一个点（没有视差这一步），也不知道相机走了多远，只能靠“这类东西一般多大”的常识来定尺度。</div></details>
 
 <h2 id="reading">必读</h2>
 <ol class="reading">
@@ -398,9 +438,9 @@
   <li><a href="https://arxiv.org/abs/2412.14171">Thinking in Space</a>（Yang 等, 2024）与 <a href="https://arxiv.org/abs/2511.04655">Benchmark Designers Should “Train on the Test Set”</a>（2025）<span class="why">多模态模型的空间推理短板，以及评测怎样被语言先验污染。</span></li>
 </ol>
 
-<div class="nextq">三维场景能看、能走进去，但还不会“动”。如果一个模型能根据你的动作实时生成下一刻的世界，它就成了一个可以玩、可以用来训练机器人的模拟器：世界模型。下一章（第 <a class="xref" data-ref="world-models"></a> 章）。</div>
+<div class="nextq">三维场景能看、能走进去，但还不会“动”；多模态模型也还说不清空间里的距离。如果一个模型能根据你的动作实时生成下一刻的世界，并且绕回原处时还记得刚才看到的东西，它就成了一个可以玩、可以用来训练机器人的模拟器：世界模型。下一章（第 <a class="xref" data-ref="world-models"></a> 章）。</div>
 
-<p class="src">资料：<a href="https://openaccess.thecvf.com/content_cvpr_2016/html/Schonberger_Structure-From-Motion_Revisited_CVPR_2016_paper.html">COLMAP（Structure-from-Motion Revisited）</a> · <a href="https://arxiv.org/abs/1806.08734">On the Spectral Bias of Neural Networks</a> · <a href="https://arxiv.org/abs/1906.00425">Basri 等：不同频率的收敛速度</a> · <a href="https://arxiv.org/abs/2201.05989">Instant-NGP</a> · <a href="https://arxiv.org/abs/2112.05131">Plenoxels</a> · <a href="https://arxiv.org/abs/2106.10689">NeuS</a> · <a href="https://arxiv.org/abs/2402.00525">StopThePop</a> · <a href="https://arxiv.org/abs/2303.11328">Zero-1-to-3</a> · <a href="https://arxiv.org/abs/2308.16512">MVDream</a> · <a href="https://arxiv.org/abs/2305.16213">ProlificDreamer（VSD）</a> · <a href="https://arxiv.org/abs/2307.05663">Objaverse-XL</a> · <a href="https://arxiv.org/abs/2311.04400">LRM</a> · <a href="https://arxiv.org/abs/2507.13347">π³</a> · <a href="https://arxiv.org/abs/2509.13414">MapAnything</a> · <a href="https://arxiv.org/abs/2511.10647">Depth Anything 3</a> · <a href="https://arxiv.org/abs/2412.01506">TRELLIS</a> · <a href="https://github.com/microsoft/TRELLIS.2">TRELLIS.2</a> · <a href="https://arxiv.org/abs/2512.14692">TRELLIS.2 技术报告</a> · <a href="https://ai.meta.com/blog/sam-3d/">SAM 3D</a> · <a href="https://www.3daistudio.com/state-of-ai-3d-generation-2026">2026 年 AI 3D 生成现状</a> · <a href="https://www.worldlabs.ai/blog/marble-world-model">Marble</a> · <a href="https://radiancefields.com/world-labs-formally-launches-marble-a-generative-world-model">Marble 导出格式（Radiance Fields）</a> · <a href="https://www.worldlabs.ai/blog/announcing-the-world-api">World API</a> · <a href="https://docs.worldlabs.ai/marble/release-notes">Marble 发布说明</a> · <a href="https://arxiv.org/abs/2507.21809">HunyuanWorld 1.0</a> · <a href="https://github.com/Tencent-Hunyuan/HY-WorldPlay">HY-World 1.5</a> · <a href="https://www.khronos.org/news/press/gltf-gaussian-splatting-press-release">Khronos glTF 高斯泼溅扩展</a> · <a href="https://www.cgchannel.com/2026/02/3d-gaussian-splats-are-being-added-to-the-gltf-standard/">glTF 加入高斯泼溅（CG Channel）</a> · <a href="https://aousd.org/blog/openusd-v26-03/">OpenUSD v26.03</a> · <a href="https://arxiv.org/abs/2511.04670">Cambrian-S</a> · <a href="https://arxiv.org/abs/2505.23764">MMSI-Bench</a> · <a href="https://arxiv.org/abs/2508.13142">空间智能综合评测（EASI）</a> · <a href="https://arxiv.org/abs/2508.09977">3DGS 应用综述</a> · <a href="https://arxiv.org/abs/2602.03907">HY3D-Bench</a>。</p>
+<p class="src">资料：<a href="https://openaccess.thecvf.com/content_cvpr_2016/html/Schonberger_Structure-From-Motion_Revisited_CVPR_2016_paper.html">COLMAP（Structure-from-Motion Revisited）</a> · <a href="https://arxiv.org/abs/1806.08734">On the Spectral Bias of Neural Networks</a> · <a href="https://arxiv.org/abs/1906.00425">Basri 等：不同频率的收敛速度</a> · <a href="https://arxiv.org/abs/2201.05989">Instant-NGP</a> · <a href="https://arxiv.org/abs/2112.05131">Plenoxels</a> · <a href="https://arxiv.org/abs/2106.10689">NeuS</a> · <a href="https://arxiv.org/abs/2402.00525">StopThePop</a> · <a href="https://arxiv.org/abs/2303.11328">Zero-1-to-3</a> · <a href="https://arxiv.org/abs/2308.16512">MVDream</a> · <a href="https://arxiv.org/abs/2305.16213">ProlificDreamer（VSD）</a> · <a href="https://arxiv.org/abs/2307.05663">Objaverse-XL</a> · <a href="https://arxiv.org/abs/2311.04400">LRM</a> · <a href="https://arxiv.org/abs/2507.13347">π³</a> · <a href="https://arxiv.org/abs/2509.13414">MapAnything</a> · <a href="https://arxiv.org/abs/2511.10647">Depth Anything 3</a> · <a href="https://arxiv.org/abs/2412.01506">TRELLIS</a> · <a href="https://github.com/microsoft/TRELLIS.2">TRELLIS.2</a> · <a href="https://arxiv.org/abs/2512.14692">TRELLIS.2 技术报告</a> · <a href="https://www.worldlabs.ai/blog/marble-world-model">Marble</a> · <a href="https://radiancefields.com/world-labs-formally-launches-marble-a-generative-world-model">Marble 导出格式（Radiance Fields）</a> · <a href="https://arxiv.org/abs/2507.21809">HunyuanWorld 1.0</a> · <a href="https://github.com/Tencent-Hunyuan/HY-WorldPlay">HY-World 1.5（WorldPlay）</a> · <a href="https://www.khronos.org/news/press/gltf-gaussian-splatting-press-release">Khronos glTF 高斯泼溅扩展</a> · <a href="https://github.com/KhronosGroup/glTF/tree/main/extensions/2.0/Khronos/KHR_gaussian_splatting">KHR_gaussian_splatting（2026-09 批准）</a> · <a href="https://github.com/nianticlabs/spz">SPZ</a> · <a href="https://aousd.org/blog/openusd-v26-03/">OpenUSD v26.03</a> · <a href="https://arxiv.org/abs/2511.04670">Cambrian-S</a> · <a href="https://arxiv.org/abs/2505.23747">Spatial-MLLM</a> · <a href="https://arxiv.org/abs/2505.23764">MMSI-Bench</a> · <a href="https://arxiv.org/abs/2508.13142">空间智能综合评测（EASI）</a> · <a href="https://arxiv.org/abs/2508.09977">3DGS 应用综述</a> · <a href="https://arxiv.org/abs/2602.03907">HY3D-Bench</a>。</p>
 
 <footer id="pager"></footer>
 </div></main>

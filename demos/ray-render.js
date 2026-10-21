@@ -38,7 +38,7 @@ A.defineDemo('ray-render', function (mount) {
     // transmittance
     ctx.strokeStyle = A.css('--ink'); ctx.lineWidth = 2; ctx.beginPath();
     fine.samples.forEach((s, i) => (i ? ctx.lineTo(ax.X(s.t), ax.Y(s.T)) : ctx.moveTo(ax.X(s.t), ax.Y(s.T)))); ctx.stroke();
-    A.text(ctx, '透射率 T(t)', ax.X(0.02), ax.Y(1) + 12, { size: 11.5, weight: 600 });
+    A.text(ctx, '透过率 T(t)（黑线）', ax.X(0.02), ax.Y(1) + 12, { size: 11.5, weight: 600 });
     // weights at coarse samples
     const maxw = Math.max(...coarse.samples.map((s) => s.w), 1e-6);
     coarse.samples.forEach((s) => { const h = s.w / maxw * 0.9; ctx.fillStyle = rgb(s.c); ctx.fillRect(ax.X(s.t) - 2.5, ax.Y(h), 5, ax.Y(0) - ax.Y(h)); });
@@ -55,7 +55,7 @@ A.defineDemo('ray-render', function (mount) {
     const B = BLOBS();
     [['红 / 绿 / 蓝雾团的贡献', fine.contrib.map((x) => A.pct(x, 0)).join(' / ')], ['透过全部雾看到的背景', A.pct(fine.bg, 0)], ['采样不足的颜色误差', Math.hypot(...fine.col.map((x, i) => x - coarse.col[i])).toFixed(3)]]
       .forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '16px' } }, v))));
-    hint.innerHTML = '光线从相机出发，每走一小段，就有一部分光被这里的雾“挡住”并贡献这里的颜色：被挡住的比例 α = 1 − e<sup>−σΔt</sup>，剩下继续往前走的比例就是透射率 T。越靠前的雾越“先下手”：浓度调高时，最前面的那团雾几乎挡住全部光线，后面的颜色和白色背景都看不见；浓度调低时，三种颜色和背景混在一起。把红色雾团拖到后面，像素的颜色随之改变：顺序很重要。NeRF 沿每条光线采样几十到上百个点这样累加；3D 高斯泼溅把场景表示成几百万个半透明的高斯椭球，按深度排序后用同一个公式混合，但不用沿光线逐点采样，所以能实时渲染。采样点太少时，细薄的雾会被漏掉或算错。';
+    hint.innerHTML = '光线从相机出发，每走一小段，就有一部分光被这里的雾“挡住”并贡献这里的颜色：被挡住的比例 α = 1 − e<sup>−σΔt</sup>，剩下继续往前走的比例就是透过率 T。浅色填充是三团雾的密度（缩放后画在同一根纵轴上，只看形状）。越靠前的雾越“先下手”：浓度调高时，最前面的那团雾几乎挡住全部光线，后面的颜色和白色背景都看不见；浓度调低时，三种颜色和背景混在一起。把红色雾团拖到后面，像素的颜色随之改变：顺序很重要。NeRF 沿每条光线采样几十到上百个点这样累加；采样点太少时，细薄的雾会被漏掉或算错（看右边两个色块的差别）。';
     view.redraw();
   }
   draw();
