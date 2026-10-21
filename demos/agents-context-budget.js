@@ -5,7 +5,7 @@ A.defineDemo('agents-context-budget', function (mount) {
   const ctl = A.el('div', { class: 'controls' }); bd.append(ctl);
   const view = A.seg(ctl, [{ v: 'cost', t: '累计成本' }, { v: 'ctx', t: '每次调用的上下文' }], 'cost', () => redraw(), '纵轴');
   const dS = A.slider(ctl, { label: '每步新增 Δ（输出 + 工具结果）', min: 500, max: 5000, step: 100, value: 2000, fmt: (v) => A.human(v) + ' token', on: () => recompute(true), width: 200 });
-  const tS = A.slider(ctl, { label: '触发清理 / 压缩的阈值', min: 30000, max: 190000, step: 5000, value: 150000, fmt: (v) => Math.round(v / 1000) + 'K', on: () => recompute(false), width: 190 });
+  const tS = A.slider(ctl, { label: '触发清理 / 压缩的阈值', min: 30000, max: 190000, step: 5000, value: 70000, fmt: (v) => Math.round(v / 1000) + 'K', on: () => recompute(false), width: 190 });
   const nS = A.slider(ctl, { label: '任务步数 n', min: 50, max: 500, step: 10, value: 300, fmt: (v) => v + ' 步', on: () => recompute(false), width: 160 });
   const cbox = A.el('div', { class: 'ctl', style: { minWidth: 'auto' } }); ctl.append(cbox);
   const cache = A.check(cbox, '前缀缓存', true, () => recompute(true));
@@ -62,10 +62,11 @@ A.defineDemo('agents-context-budget', function (mount) {
     const D = dS.value, uc = cache.checked, pts = [];
     for (let T = 30000; T <= 190000; T += 5000) { const r = sim('compact', 600, D, T, uc); pts.push([T, r.cost / 600]); }
     let best = pts[0]; pts.forEach((p) => { if (p[1] < best[1]) best = p; });
-    // 公式：X* = sqrt(2 c Δ / ρ)，c ≈ ρW + (o + 1 − ρ)s（不缓存时 c ≈ W + o·s），W = S + X，迭代求解
+    // 公式：一次压缩的成本 c = ρX + c0，其中 ρX 摊到每步是与 X 无关的常数，
+    // 所以 X* = sqrt(2 c0 Δ / ρ)，c0 = ρS + (o + 1 − ρ)s（不缓存时 ρ = 1，c0 = S + o·s），W* = S + X*
     const rho = uc ? RHO : 1, S = C0 + SUM;
-    let W = 70000; for (let it = 0; it < 30; it++) { const c = rho * W + (PO + (uc ? 1 - rho : 0)) * SUM; W = S + Math.sqrt((2 * c * D) / rho); }
-    sweep = { pts, best, wf: W };
+    const c0 = rho * S + (PO + 1 - rho) * SUM;
+    sweep = { pts, best, wf: S + Math.sqrt((2 * c0 * D) / rho) };
   }
   function recompute(resweep) {
     const n = nS.value, D = dS.value, T = tS.value, uc = cache.checked;
@@ -121,7 +122,7 @@ A.defineDemo('agents-context-budget', function (mount) {
     A.text(ctx, '什么时候压缩最省', box.x - 46, 12, { size: 12.5, weight: 650 });
     const xf = ax.X(A.clamp(sweep.wf, 30000, 190000));
     ctx.save(); ctx.strokeStyle = cs[3]; ctx.setLineDash([5, 4]); ctx.lineWidth = 1.5; ctx.beginPath(); ctx.moveTo(xf, box.y); ctx.lineTo(xf, box.y + box.h); ctx.stroke(); ctx.restore();
-    A.text(ctx, '公式预测 ' + Math.round(sweep.wf / 1000) + 'K', xf + 5, box.y + 8, { size: 11, color: cs[3] });
+    A.text(ctx, '公式估计 ' + Math.round(sweep.wf / 1000) + 'K', xf + 5, box.y + box.h - 10, { size: 11, color: cs[3] });
     ctx.save(); ctx.strokeStyle = cs[0]; ctx.lineWidth = 2.4; ctx.beginPath();
     sweep.pts.forEach((p, i) => { const x = ax.X(p[0]), y = ax.Y(p[1]); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
     ctx.stroke(); ctx.restore();
@@ -157,8 +158,8 @@ A.defineDemo('agents-context-budget', function (mount) {
     const msgs = [];
     msgs.push(nf ? `不管理时，上下文每步涨 ${A.human(dS.value)}，第 ${nf} 步超过 200K 窗口，任务直接失败。假如窗口无限大（灰色点线），累计成本是一条向上弯的抛物线，${n} 步要 ${A.human(R.inf.cost)}，是摘要压缩的 ${(R.inf.cost / R.compact.cost).toFixed(1)} 倍。` : `${n} 步之内不管理也装得下，但累计成本是一条向上弯的抛物线：步数翻倍，成本约变成四倍。`);
     msgs.push('清理和压缩都把上下文限制在阈值以下（切到“每次调用的上下文”看锯齿），累计成本变成直线。');
-    msgs.push(cache.checked ? `右图：开着缓存时，最省的触发点约在 ${Math.round(b[0] / 1000)}K。太早压缩，摘要要反复写、新前缀要反复全价处理；太晚，每步都在读一大段（虽然打了折的）旧内容。最优点附近很平，阈值差一倍，成本只差百分之几。` : `关掉缓存后，最省的触发点提前到约 ${Math.round(b[0] / 1000)}K：每个旧 token 都按全价重读，攒着不压缩的代价变大了。这就是推导里的 \\(X^* = \\sqrt{2c\\Delta/\\rho}\\)：\\(\\rho\\) 从 0.1 变成 1，压缩间隔缩到约三分之一。`);
-    msgs.push('成本不是唯一的考虑：每压缩一次就丢一些细节，实际系统通常比成本最优点压缩得更晚。');
+    msgs.push(cache.checked ? `右图：开着缓存时，最省的触发点约在 ${Math.round(b[0] / 1000)}K。太早压缩，摘要要反复写、新前缀要反复全价处理；太晚，每步都在读一大段（虽然打了折的）旧内容。最低点附近比较平：阈值偏离最优四成以内，成本只多约 5%；差一倍（35K 或 140K），要多 20–35%。把阈值拖到 150K 试试。` : `关掉缓存后，最省的触发点提前到约 ${Math.round(b[0] / 1000)}K：每个旧 token 都按全价重读，攒着不压缩的代价变大了。这时 70K 已经比最优贵约 30%。`);
+    msgs.push('这是玩具参数下的形状，不是哪个产品的推荐值：摘要会丢细节，上下文越长模型越容易漏看，这两件事都不在这个模型里。');
     hint.innerHTML = msgs.join('');
     A.renderMath(hint);
   }

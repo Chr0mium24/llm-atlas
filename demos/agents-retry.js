@@ -14,7 +14,7 @@ A.defineDemo('agents-retry', function (mount) {
   const legend = A.el('div', { class: 'legend' }); bd.append(legend);
   const stats = A.el('div', { class: 'stats' }); bd.append(stats);
   const hint = A.el('p', { class: 'hint' }); bd.append(hint);
-  legend.innerHTML = '<span><i style="background:var(--grid)"></i>第一次就做对</span><span><i style="background:var(--s2)"></i>做错了，被检查发现，重做后过关</span><span><i style="background:var(--bad)"></i>做错了没被发现（或重试用完），任务失败</span><span>每一行是一次运行，每一列是一步</span>';
+  legend.innerHTML = '<span><i style="background:var(--grid)"></i>第一次就做对</span><span><i style="background:var(--s2)"></i>做错了，被检查发现，重做后过关</span><span><i style="background:var(--bad)"></i>做错了没被发现（或重试用完），任务失败（格上有 ×）</span><span>每一行是一次运行，每一列是一步</span>';
 
   let seed = 7, U = null, Z = null;
   function gen() {
@@ -94,6 +94,10 @@ A.defineDemo('agents-retry', function (mount) {
           const s = row[i]; if (s < 0) break;
           ctx.fillStyle = s === 0 ? ok : s === 1 ? fix : bad;
           ctx.fillRect(x0 + i * cw, y, Math.max(1, cw - (cw > 4 ? 1 : 0)), ROWH - 1);
+          if (s === 2) { // 失败格加一个 ×，深色主题下和橙色格也分得开
+            const cx = x0 + i * cw + Math.max(1, cw - 1) / 2, cy = y + (ROWH - 1) / 2, h = Math.max(2.5, Math.min(ROWH, Math.max(cw, 6)) / 2 - 1);
+            ctx.save(); ctx.strokeStyle = A.css('--ink'); ctx.lineWidth = 1.4; ctx.beginPath(); ctx.moveTo(cx - h, cy - h); ctx.lineTo(cx + h, cy + h); ctx.moveTo(cx + h, cy - h); ctx.lineTo(cx - h, cy + h); ctx.stroke(); ctx.restore();
+          }
         }
       });
     });
@@ -128,7 +132,7 @@ A.defineDemo('agents-retry', function (mount) {
     ];
     items.forEach(([k, v]) => stats.append(A.el('div', { class: 'stat' }, A.el('div', { class: 'k' }, k), A.el('div', { class: 'v', style: { fontSize: '17px' }, html: v }))));
     A.renderMath(stats);
-    let msg = `每一步以 ${A.pct(p, 1)} 的概率做对。左边没有检查，一步错就全盘失败，${n} 步全对的概率是 \\(p^n\\) = ${A.pct(T.L, 0)}。右边每一步都检查：做错时以 ${Math.round(r * 100)}% 的概率被发现（橙色格），重做一次通常就过了；只有“错了且没被发现”（红色格）才致命。每步的致命错误率从 ${A.pct(1 - p, 1)} 降到 ${A.pct(1 - T.Pm, 2)}，半衰期从 ${half(T.halfL)} 变成 ${half(T.halfR)}。橙色格很少：平均每步只多花 ${((T.E - 1) * 100).toFixed(1)}% 的尝试，真正的成本是每一步都要跑一次检查。`;
+    let msg = `每一步以 ${A.pct(p, 1)} 的概率做对。左边没有检查，一步错就全盘失败，${n} 步全对的概率是 \\(p^n\\) = ${A.pct(T.L, 0)}${het.checked ? `（按基准错误率；难度不同时混合后的理论值是 ${A.pct(T.mixL, 0)}）` : ''}。右边每一步都检查：做错时以 ${Math.round(r * 100)}% 的概率被发现（橙色格），重做一次通常就过了；只有“错了且没被发现”（红色带 × 的格）才致命。每步的致命错误率从 ${A.pct(1 - p, 1)} 降到 ${A.pct(1 - T.Pm, 2)}，半衰期从 ${half(T.halfL)} 变成 ${half(T.halfR)}。橙色格很少：平均每步只多花 ${((T.E - 1) * 100).toFixed(1)}% 的尝试，真正的成本是每一步都要跑一次检查。`;
     if (mSeg.value === 1 && r > 0.3) msg += ' 把重试上限改成“不限”，成功率几乎不变：错误连续出现两次的概率是 \\(q^2\\)，已经很小。';
     if (het.checked) msg += ` 打开“难度不同”后，每次运行的错误率按对数正态分布随机，约三分之二的运行落在基准的 1/3 到 3 倍之间。左边看得最清楚：有的运行一路走到底，有的很快就断。这一组的平均错误率是 ${A.pct(T.meanEps, 1)}，如果所有运行都按这个平均值算，${n} 步只剩 ${A.pct(T.expMeanL, 0)}；按混合实际算是 ${A.pct(T.mixL, 0)}。难度不均时，整体衰减比任何单一的指数都慢。`;
     hint.innerHTML = msg;
